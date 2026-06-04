@@ -430,7 +430,7 @@ const str=v=>{const s=(v==null?'':String(v)).trim();return s===''?null:s;};
 const num=v=>{if(v==null||v==='')return null;const n=Number(v);return isNaN(n)?null:n;};
 
 // ====================== KONTROL PLANI ======================
-let PLAN=[];
+let PLAN=[]; let PLAN_SEL='';
 async function renderPlan(){
   const root=$('#tab-plan');
   root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
@@ -484,7 +484,16 @@ async function renderPlan(){
   // mevcut maddeler — stok bazlı grup
   if(!PLAN.length){ root.append(el('div',{class:'card'},el('div',{class:'empty'},'Henüz kontrol planı yok. Yukarıdan Excel ile içe aktar veya manuel ekle.'))); return; }
   const byStock={}; PLAN.forEach(p=>{(byStock[p.stock_code]=byStock[p.stock_code]||[]).push(p);});
-  Object.entries(byStock).forEach(([sc,items])=>{
+  const stockKeys=Object.keys(byStock).sort();
+  if(!PLAN_SEL || !byStock[PLAN_SEL]) PLAN_SEL=stockKeys[0];
+  // plan seçici (birden fazla plan olunca buradan seç)
+  const planSel=el('select',{class:'inp',onchange:e=>{PLAN_SEL=e.target.value;renderPlan();}});
+  stockKeys.forEach(k=>{const o=el('option',{value:k},`${k} — ${(byStock[k][0].stock_name||'').slice(0,45)} (${byStock[k].length} madde)`); if(k===PLAN_SEL)o.selected=true; planSel.append(o);});
+  root.append(el('div',{class:'card'},el('div',{class:'row'},
+    el('div',{class:'field grow'},el('label',{class:'lab'},`Görüntülenecek Kontrol Planı — ${stockKeys.length} plan kayıtlı`),planSel)
+  )));
+  // sadece seçili planı göster
+  [[PLAN_SEL, byStock[PLAN_SEL]]].forEach(([sc,items])=>{
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px'},
       el('h3',{style:'margin:0'},`${sc} — ${esc(items[0].stock_name||'')} (${items.length} madde)`),
