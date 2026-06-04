@@ -404,17 +404,32 @@ async function renderPlan(){
   const planStocks=[...new Set(PLAN.map(p=>p.stock_code))];
   const allStocks=[...new Set([...prodStocks.map(x=>x[0]),...planStocks])];
 
+  // ---- Excel içe aktarma kartı ----
+  const impCard=el('div',{class:'card'},
+    el('h3',{},'📄 Kontrol Planını Excel’den İçe Aktar'),
+    el('p',{style:'color:var(--muted);margin:-6px 0 14px;font-size:13px'},'Standart "Serial Control Plan" Excel dosyasını seç (operasyon no, hedef, limit, yöntem otomatik okunur). Plandaki kod (örn. 6FA.881.989) ile LeanSys stok kodu (örn. 700.0.454) farklı olduğu için, planın hangi stok koduna bağlanacağını seç.'),
+    el('div',{class:'row'},
+      el('div',{class:'field grow'},el('label',{class:'lab'},'Excel dosyası'),el('input',{type:'file',accept:'.xlsx,.xls',class:'inp',id:'planFile'})),
+      field('Hedef Stok Kodu','plan_stock','örn. 700.0.454',prodStocks.map(x=>x[0])),
+      el('button',{class:'btn sm',style:'flex:0',onclick:importPlan},'İçe Aktar')
+    )
+  );
+  root.append(impCard);
+
+  // ---- Manuel ekleme kartı ----
   const addCard=el('div',{class:'card'},
-    el('h3',{},'Kontrol Planı Maddesi Ekle'),
-    el('p',{style:'color:var(--muted);margin:-6px 0 14px;font-size:13px'},'Her ürün (Stok Kodu) için kontrolde bakılacak maddeleri tanımla. Seri başı, proses ve son kontrolde aynı maddeler kullanılır.'),
+    el('h3',{},'Kontrol Planı Maddesi Ekle (Manuel)'),
+    el('p',{style:'color:var(--muted);margin:-6px 0 14px;font-size:13px'},'Seri başı = Proses (aynı maddeler); son kontrol de aynı plandan ilerler. Op No verirsen, kontrol girişinde sadece o operasyonun maddeleri gelir.'),
     el('div',{class:'row'},
       field('Stok Kodu','pi_stock','örn. 700.0.454',allStocks),
+      el('div',{class:'field',style:'flex:0;min-width:80px'},el('label',{class:'lab'},'Op No'),el('input',{class:'inp',id:'pi_op',placeholder:'3'})),
       field('Ölçülecek Değer','pi_name','örn. BOŞALTMALAR'),
       field('Nitel Hedef','pi_hedef','örn. TEMİZLENECEK'),
       field('Yöntem','pi_method','örn. Gözle')
     ),
     el('div',{class:'row',style:'margin-top:10px'},
       field('Hedef','pi_target',''),
+      field('Birim','pi_unit','mm'),
       field('Alt Limit','pi_lo',''),
       field('Üst Limit','pi_hi',''),
       field('Örnekleme','pi_sample','1'),
@@ -426,24 +441,26 @@ async function renderPlan(){
   root.append(addCard);
 
   // mevcut maddeler — stok bazlı grup
-  if(!PLAN.length){ root.append(el('div',{class:'card'},el('div',{class:'empty'},'Henüz kontrol planı yok. Yukarıdan ekle.'))); return; }
+  if(!PLAN.length){ root.append(el('div',{class:'card'},el('div',{class:'empty'},'Henüz kontrol planı yok. Yukarıdan Excel ile içe aktar veya manuel ekle.'))); return; }
   const byStock={}; PLAN.forEach(p=>{(byStock[p.stock_code]=byStock[p.stock_code]||[]).push(p);});
   Object.entries(byStock).forEach(([sc,items])=>{
     const card=el('div',{class:'card'});
-    card.append(el('h3',{},`${sc} — ${esc(items[0].stock_name||'')} (${items.length} madde)`));
+    card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px'},
+      el('h3',{style:'margin:0'},`${sc} — ${esc(items[0].stock_name||'')} (${items.length} madde)`),
+      el('button',{class:'btn sm danger',onclick:()=>delPlanStock(sc)},'Bu planı sil')
+    ));
     const tb=el('table');
-    tb.append(el('thead',{},el('tr',{},...['#','Ölçülecek Değer','Nitel Hedef','Yöntem','Hedef','Alt','Üst','Örnek','Tip',''].map(h=>el('th',{},h)))));
+    tb.append(el('thead',{},el('tr',{},...['Op','#','Ölçülecek Değer','Nitel Hedef / Hedef','Yöntem','Limit','Örnek','Tip',''].map(h=>el('th',{},h)))));
     const body=el('tbody');
-    items.forEach((it,i)=>body.append(el('tr',{},
-      el('td',{},String(i+1)),
+    items.forEach((it)=>body.append(el('tr',{},
+      el('td',{},it.op_no==null?'—':String(it.op_no)),
+      el('td',{},String(it.seq??'')),
       el('td',{},it.measure_name),
-      el('td',{},it.nitel_hedef||''),
+      el('td',{},it.is_qualitative?(it.nitel_hedef||''):((it.target||'')+(it.unit?' '+it.unit:''))),
       el('td',{},it.method||''),
-      el('td',{},it.target||''),
-      el('td',{},it.lower_limit||''),
-      el('td',{},it.upper_limit||''),
+      el('td',{},(it.lower_limit||it.upper_limit)?`${it.lower_limit||'-'}…${it.upper_limit||'-'}`:''),
       el('td',{},String(it.sample_size??1)),
-      el('td',{},it.is_qualitative?'Nitel':'Ölçüm'),
+      el('td',{},el('span',{class:'pill '+(it.is_qualitative?'gray':'seri')},it.is_qualitative?'Nitel':'Ölçüm')),
       el('td',{},el('button',{class:'btn sm danger',onclick:()=>delPlanItem(it.id)},'Sil'))
     )));
     tb.append(body); card.append(el('div',{class:'tbl-wrap'},tb));
@@ -465,10 +482,12 @@ async function addPlanItem(){
   if(!stock||!name){toast('Stok Kodu ve Ölçülecek Değer zorunlu.','err');return;}
   const stockName=(PRODS.find(p=>p.stock_code===stock)||{}).stock_name||null;
   const rec={stock_code:stock,stock_name:stockName,measure_name:name,
+    op_no:Number($('#pi_op').value)||null,
     nitel_hedef:$('#pi_hedef').value.trim()||null,method:$('#pi_method').value.trim()||null,
-    target:$('#pi_target').value.trim()||null,lower_limit:$('#pi_lo').value.trim()||null,
+    target:$('#pi_target').value.trim()||null,unit:$('#pi_unit').value.trim()||null,
+    lower_limit:$('#pi_lo').value.trim()||null,
     upper_limit:$('#pi_hi').value.trim()||null,sample_size:Number($('#pi_sample').value)||1,
-    is_qualitative:$('#pi_qual').value==='true',seq:PLAN.filter(p=>p.stock_code===stock).length};
+    is_qualitative:$('#pi_qual').value==='true',seq:PLAN.filter(p=>p.stock_code===stock).length+1};
   const {error}=await sb.from('control_plan_items').insert(rec);
   if(error){toast(esc(error.message),'err');return;}
   toast('Madde eklendi.','ok'); renderPlan();
@@ -479,11 +498,82 @@ async function delPlanItem(id){
   if(error){toast(esc(error.message),'err');return;}
   renderPlan();
 }
+async function delPlanStock(sc){
+  if(!confirm(sc+' için TÜM kontrol planı maddeleri silinsin mi?'))return;
+  const {error}=await sb.from('control_plan_items').delete().eq('stock_code',sc);
+  if(error){toast(esc(error.message),'err');return;}
+  toast('Plan silindi.','ok'); renderPlan();
+}
+
+// ---- Serial Control Plan Excel parse & import ----
+function cleanCell(v){ if(v==null)return null; const s=String(v).replace(/\s+/g,' ').trim(); return (s===''||s==='-')?null:s; }
+function parsePlanExcel(rows){
+  const norm=s=>(s==null?'':String(s)).toLowerCase().replace(/\s+/g,' ').trim();
+  const hi=rows.findIndex(r=>r&&r.some(c=>norm(c)==='value to be checked'));
+  if(hi<0) return {err:'Bu dosya beklenen "Serial Control Plan" formatında değil (başlık satırı bulunamadı).'};
+  const hdr=rows[hi].map(norm);
+  const col=n=>hdr.indexOf(n);
+  const cSeq=col('sequence number'),cOp=col('operation number'),cProc=col('process control'),
+        cFin=col('final control'),cVal=col('value to be checked'),cQt=col('quantitative target'),
+        cQl=col('qualitative target'),cLo=col('lower limit'),cHi=col('upper limit'),
+        cSamp=col('sample size'),cMethod=col('control method');
+  const items=[];
+  for(let r=hi+1;r<rows.length;r++){
+    const row=rows[r]; if(!row)continue;
+    const val=cleanCell(cVal>=0?row[cVal]:null); if(!val)continue;
+    const qt=cleanCell(cQt>=0?row[cQt]:null);
+    const isNum=qt!=null && isFinite(Number(qt));   // nicel hedef sayıysa → ölçüm, değilse → nitel
+    const samp=cleanCell(cSamp>=0?row[cSamp]:null);
+    items.push({
+      seq:Number(cleanCell(cSeq>=0?row[cSeq]:null))||items.length+1,
+      op_no:Number(cleanCell(cOp>=0?row[cOp]:null))||null,
+      measure_name:val,
+      is_qualitative:!isNum,
+      target:isNum?qt:null,
+      unit:isNum?cleanCell(cQl>=0?row[cQl]:null):null,        // nicel satırda bu sütun BİRİM taşır (°C, mm...)
+      nitel_hedef:isNum?null:cleanCell(cQl>=0?row[cQl]:null), // nitel satırda hedef AÇIKLAMASI
+      lower_limit:isNum?cleanCell(cLo>=0?row[cLo]:null):null,
+      upper_limit:isNum?cleanCell(cHi>=0?row[cHi]:null):null,
+      sample_size:(samp&&isFinite(Number(samp)))?Number(samp):1,
+      method:cleanCell(cMethod>=0?row[cMethod]:null),
+      process_control: cProc<0 ? true : !!cleanCell(row[cProc]),
+      final_control:   cFin<0  ? true : !!cleanCell(row[cFin])
+    });
+  }
+  return {items};
+}
+async function importPlan(){
+  const f=$('#planFile').files[0];
+  const stock=$('#plan_stock').value.trim();
+  if(!f){toast('Önce Excel dosyası seç.','err');return;}
+  if(!stock){toast('Bu plan hangi Stok Koduna ait? (örn. 700.0.454) seç.','err');return;}
+  try{
+    const buf=await f.arrayBuffer();
+    const wb=XLSX.read(buf,{cellDates:false});
+    const ws=wb.Sheets[wb.SheetNames[0]];
+    const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:null});
+    const {items,err}=parsePlanExcel(rows);
+    if(err){toast(err,'err');return;}
+    if(!items.length){toast('Plan maddesi bulunamadı.','err');return;}
+    if(!confirm(`${items.length} madde "${stock}" stok koduna yüklenecek. Bu stok için varsa mevcut plan silinip yenisiyle değiştirilecek. Devam?`))return;
+    const stockName=(PRODS.find(p=>p.stock_code===stock)||{}).stock_name||null;
+    await sb.from('control_plan_items').delete().eq('stock_code',stock);
+    const recs=items.map(it=>({...it,stock_code:stock,stock_name:stockName,active:true}));
+    const {error}=await sb.from('control_plan_items').insert(recs);
+    if(error)throw error;
+    toast(`${items.length} kontrol maddesi yüklendi.`,'ok'); renderPlan();
+  }catch(e){ toast('İçe aktarma hatası: '+esc(e.message),'err'); }
+}
 
 // ====================== KONTROL GİRİŞİ (MODAL) ======================
 async function openControl(p){
-  const {data:plan}=await sb.from('control_plan_items').select('*').eq('stock_code',p.stock_code).eq('active',true).order('seq');
-  const items=plan||[];
+  const {data:plan}=await sb.from('control_plan_items').select('*').eq('stock_code',p.stock_code).eq('active',true).order('op_no',{nullsFirst:true}).order('seq');
+  let items=plan||[];
+  // üretimin operasyonuna ait maddeler varsa sadece onları göster (yoksa tüm plan)
+  if(p.op_no!=null){
+    const opItems=items.filter(it=>String(it.op_no)===String(p.op_no));
+    if(opItems.length) items=opItems;
+  }
   const {data:recs}=await sb.from('control_records').select('*').eq('production_id',p.id).order('checked_at');
   const existing=recs||[];
 
@@ -537,7 +627,7 @@ async function openControl(p){
         const st=state[it.id];
         const head=el('div',{class:'head'},
           el('div',{},el('div',{class:'nm'},it.measure_name),
-            el('div',{class:'det'},[it.nitel_hedef,it.method,it.target&&('Hedef: '+it.target),
+            el('div',{class:'det'},[it.nitel_hedef,it.method,it.target&&('Hedef: '+it.target+(it.unit?' '+it.unit:'')),
               (it.lower_limit||it.upper_limit)&&(`Limit: ${it.lower_limit||'-'}…${it.upper_limit||'-'}`),
               'Örnek: '+(it.sample_size??1)].filter(Boolean).join(' · ')))
         );
