@@ -873,8 +873,8 @@ async function renderKayitlar(){
   if(!recs.length)body.append(el('tr',{},el('td',{colspan:13},el('div',{class:'empty'},`Bu aşamada (${STAGES[KAYIT_STAGE]}) kayıt yok.`))));
   recs.forEach(r=>{
     const pr=pmap[r.production_id]||{};
-    body.append(el('tr',{style:'cursor:pointer','data-s':`${r.stock_code} ${r.stock_name} ${r.machine_code} ${pr.customer||''}`.toLowerCase(),onclick:()=>editRecord(r)},
-      el('td',{},fmtDT(r.checked_at)),
+    body.append(el('tr',{style:'cursor:pointer','data-s':`${r.stock_code} ${r.stock_name} ${r.machine_code} ${pr.customer||''}`.toLowerCase(),onclick:()=>editRecord(r,pr)},
+      el('td',{},fmtDate(pr.prod_date||pr.start_time||r.checked_at)),
       el('td',{},String(r.shift??pr.shift??'')),
       el('td',{},pr.customer||''),
       el('td',{},r.stock_code||''),
@@ -887,7 +887,7 @@ async function renderKayitlar(){
       el('td',{},pr.machine_name||''),
       el('td',{},el('span',{class:'pill '+(r.overall_result==='RET'?'ret':'ok')},r.overall_result||'—')),
       el('td',{style:'white-space:nowrap',onclick:e=>e.stopPropagation()},
-        el('button',{class:'btn sm',onclick:()=>editRecord(r)},'Aç'),
+        el('button',{class:'btn sm',onclick:()=>editRecord(r,pr)},'Aç'),
         el('button',{class:'btn sm danger',style:'margin-left:6px',onclick:()=>delRecord(r.id)},'Sil'))
     ));
   });
@@ -901,17 +901,20 @@ function normalizeVals(raw){
     return {...v, sample_size:1, samples:[{value:v.value||null, ok, note:null, by:null}]};
   });
 }
-function editRecord(r){
+async function editRecord(r,prod){
   const root=$('#modalRoot');
   const vals=normalizeVals(JSON.parse(JSON.stringify(r.vals||[])));
   let stage=r.stage, oper=r.operator||'';
+  // üretim bilgisi (tarih vb. kayıtta üretimle aynı görünsün)
+  if(!prod && r.production_id){ const {data}=await sb.from('productions').select('*').eq('id',r.production_id).maybeSingle(); prod=data||null; }
   function render(){
     root.innerHTML='';
     const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
     const m=el('div',{class:'modal',style:'position:relative;max-width:1120px'});
     m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
     m.append(el('h3',{},`${STAGES[stage]} Kontrol Kaydı`));
-    m.append(el('div',{class:'meta',html:`<b>${esc(r.stock_code)}</b> — ${esc(r.stock_name||'')}<br>${esc(r.machine_code||'')} · ${fmtDT(r.checked_at)}`}));
+    const pdate=prod?(fmtDate(prod.prod_date||prod.start_time)+(prod.start_time?' '+fmtTime(prod.start_time)+(prod.end_time?'–'+fmtTime(prod.end_time):''):'')):fmtDT(r.checked_at);
+    m.append(el('div',{class:'meta',html:`<b>${esc(r.stock_code)}</b> — ${esc(r.stock_name||'')}<br>${esc(r.machine_code||'')}${prod&&prod.customer?' · '+esc(prod.customer):''}${prod&&prod.quantity!=null?' · '+prod.quantity+' '+esc(prod.unit||''):''} · ${pdate}`}));
     const stageSel=sel('er_stage',Object.entries(STAGES)); stageSel.value=stage; stageSel.onchange=e=>stage=e.target.value;
     m.append(el('div',{class:'row',style:'margin-bottom:14px'},
       el('div',{class:'field',style:'flex:0;min-width:170px'},el('label',{class:'lab'},'Aşama'),stageSel),
@@ -938,12 +941,12 @@ function editRecord(r){
         }});
         const noteInp=el('input',{class:'cell-inp',style:'width:140px',value:smp.note||'',oninput:e=>smp.note=e.target.value.trim()||null});
         const row=el('tr',{},
-          el('td',{style:'min-width:130px;font-weight:600'},s===0?v.measure_name:''),
-          el('td',{},s===0?((v.target||'')+(v.unit?' '+v.unit:''))||'-':''),
-          el('td',{style:'max-width:220px;color:var(--muted);font-size:12px'},s===0?(v.nitel_hedef||'-'):''),
-          el('td',{},s===0?(v.lower_limit||'-'):''),
-          el('td',{},s===0?(v.upper_limit||'-'):''),
-          el('td',{},s===0?(v.method||'-'):''),
+          el('td',{style:'min-width:130px;font-weight:600'},v.measure_name),
+          el('td',{},((v.target||'')+(v.unit?' '+v.unit:''))||'-'),
+          el('td',{style:'max-width:220px;color:var(--muted);font-size:12px'},v.nitel_hedef||'-'),
+          el('td',{},v.lower_limit||'-'),
+          el('td',{},v.upper_limit||'-'),
+          el('td',{},v.method||'-'),
           el('td',{style:'text-align:center;color:var(--muted)'},`${s+1}/${smps.length}`),
           el('td',{},qual?el('span',{style:'color:var(--muted)'},'—'):measInp),
           el('td',{},tgl),
