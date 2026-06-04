@@ -290,7 +290,7 @@ function switchTab(name){
   if(name==='plan')renderPlan();
   if(name==='admin')renderAdmin();
 }
-document.querySelectorAll('nav.tabs button').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
+document.querySelectorAll('nav.tabs button').forEach(b=>b.onclick=()=>{ if(b.dataset.tab==='kayitlar')KAYIT_PROD=null; switchTab(b.dataset.tab); });
 
 // ====================== ÜRETİMLER ======================
 let PRODS=[];
@@ -330,18 +330,20 @@ async function renderUretimler(){
 function buildProdTable(rows){
   const tb=el('table');
   tb.append(el('thead',{},el('tr',{},
-    ...['Tarih','Makine','Ürün','Miktar','Başlama','Bitiş','Operatör','Op','Kontroller',''].map(h=>el('th',{},h))
+    ...['Tarih','Makine','Cari','Ürün','İş Emri','Miktar','Başlama','Bitiş','Operatör','Op','Kontroller',''].map(h=>el('th',{},h))
   )));
   const body=el('tbody',{id:'prodBody'});
-  if(!rows.length) body.append(el('tr',{},el('td',{colspan:10},el('div',{class:'empty'},'Henüz üretim yok. Yukarıdan Excel içe aktar.'))));
+  if(!rows.length) body.append(el('tr',{},el('td',{colspan:12},el('div',{class:'empty'},'Henüz üretim yok. Yukarıdan Excel içe aktar.'))));
   rows.forEach(p=>body.append(prodRow(p)));
   tb.append(body); return tb;
 }
 function prodRow(p){
-  return el('tr',{'data-s':(`${p.machine_name} ${p.stock_code} ${p.stock_name} ${p.operator}`).toLowerCase()},
+  return el('tr',{'data-s':(`${p.machine_name} ${p.stock_code} ${p.stock_name} ${p.operator} ${p.customer||''} ${p.work_order||''}`).toLowerCase()},
     el('td',{},fmtDate(p.prod_date)),
     el('td',{},el('div',{},p.machine_name||''),el('div',{class:'det',style:'color:var(--muted);font-size:11px'},p.machine_code||'')),
+    el('td',{style:'font-size:12px'},p.customer||''),
     el('td',{},el('div',{},p.stock_code||''),el('div',{class:'det',style:'color:var(--muted);font-size:11px'},(p.stock_name||'').slice(0,32))),
+    el('td',{style:'font-size:12px'},p.work_order||''),
     el('td',{},`${p.quantity??''} ${p.unit||''}`),
     el('td',{},fmtTime(p.start_time)),
     el('td',{},fmtTime(p.end_time)),
@@ -369,11 +371,17 @@ async function loadControlCounts(){
   PRODS.forEach(p=>{
     const cell=$('#cc-'+p.id); if(!cell)return;
     const st=map[p.id]||[];
-    if(!st.length){cell.innerHTML='<span class="pill gray">—</span>';return;}
-    const sb_=st.filter(x=>x==='seri_basi').length, pr=st.filter(x=>x==='proses').length, so=st.filter(x=>x==='son').length;
-    cell.innerHTML=`${sb_?'<span class="pill seri">SB</span> ':''}${pr?'<span class="pill proses">P×'+pr+'</span> ':''}${so?'<span class="pill son">SON</span>':''}`;
+    cell.innerHTML='';
+    if(!st.length){cell.append(el('span',{class:'pill gray'},'—'));return;}
+    const gi=st.filter(x=>x==='giris').length, sb_=st.filter(x=>x==='seri_basi').length, pr=st.filter(x=>x==='proses').length, so=st.filter(x=>x==='son').length;
+    const mk=(cls,txt,stage)=>el('span',{class:'pill '+cls,style:'cursor:pointer;margin-right:4px',title:'Bu üretimin '+STAGES[stage]+' kayıtlarını gör',onclick:e=>{e.stopPropagation();gotoRecords(p.id,stage);}},txt);
+    if(gi)cell.append(mk('gray','G×'+gi,'giris'));
+    if(sb_)cell.append(mk('seri','SB','seri_basi'));
+    if(pr)cell.append(mk('proses','P×'+pr,'proses'));
+    if(so)cell.append(mk('son','SON','son'));
   });
 }
+function gotoRecords(prodId,stage){ KAYIT_PROD=prodId; KAYIT_STAGE=stage; KAYIT_FILT={start:'',end:'',stock:''}; switchTab('kayitlar'); }
 
 // ---- Excel parse & import ----
 const HEADER_MAP={
@@ -956,11 +964,13 @@ async function runBulkAuto(prods,plan,cyc,skipExisting,status,go){
 // ====================== KONTROL KAYITLARI ======================
 let KAYIT_STAGE='seri_basi';
 let KAYIT_FILT={start:'',end:'',stock:''};
+let KAYIT_PROD=null;   // belirli bir üretimin kayıtlarına odaklanma
 async function renderKayitlar(){
   const root=$('#tab-kayitlar');
   root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
   // kayıtlar (aşamaya göre) + üretim bilgileri (cari, başlama/bitiş, miktar, makine adı)
   let q=sb.from('control_records').select('*').eq('stage',KAYIT_STAGE).order('checked_at',{ascending:false}).limit(2000);
+  if(KAYIT_PROD) q=q.eq('production_id',KAYIT_PROD);
   if(KAYIT_FILT.stock) q=q.eq('stock_code',KAYIT_FILT.stock);
   if(KAYIT_FILT.start) q=q.gte('checked_at',KAYIT_FILT.start);
   if(KAYIT_FILT.end) q=q.lte('checked_at',KAYIT_FILT.end+'T23:59:59');
@@ -974,6 +984,14 @@ async function renderKayitlar(){
       onclick:()=>{KAYIT_STAGE=k;renderKayitlar();}}, label+' Kayıtları'));
   });
   root.append(tabs);
+  // belirli üretim odağı (Üretimler'den tıklanınca)
+  if(KAYIT_PROD){
+    const fp=pmap[KAYIT_PROD]||{};
+    root.append(el('div',{class:'msg info',style:'display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap'},
+      el('span',{html:`📌 Yalnızca <b>${esc(fp.machine_code||'')} · ${esc(fp.stock_code||'')}</b> üretiminin kayıtları (${fmtDate(fp.prod_date||fp.start_time)})`}),
+      el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{KAYIT_PROD=null;renderKayitlar();}},'✕ Tüm kayıtları göster')
+    ));
+  }
   // filtreler
   const stocks=[...new Set((prodsD||[]).map(p=>p.stock_code).filter(Boolean))];
   const filt=el('div',{class:'card'},
