@@ -978,6 +978,13 @@ function resolutionFor(it){
 function randn(){ let u=0,v=0; while(!u)u=Math.random(); while(!v)v=Math.random(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
 function genMeasure(it){
   const lo=Number(it.lower_limit),hi=Number(it.upper_limit),t=Number(it.target),res=resolutionFor(it);
+  const d=res>=1?0:(res>=0.1?1:(res>=0.01?2:3));
+  // özel: Yanma Hızı → kompozit (PE+PP) = 50, PE = 0
+  const nm=deTr(it.measure_name||'');
+  if(/yanma/.test(nm)){
+    if(/kompozit|pe\+pp|pp\+pe/.test(nm)) return (50).toFixed(d);
+    if(/\bpe\b/.test(nm)) return (0).toFixed(d);
+  }
   let mean=isFinite(t)?t:(isFinite(lo)&&isFinite(hi)?(lo+hi)/2:(isFinite(lo)?lo:(isFinite(hi)?hi:0)));
   let std=(isFinite(lo)&&isFinite(hi))?(hi-lo)/6:Math.max(res,Math.abs(mean)*0.01);
   if(!(std>0))std=0;                                   // tolerans 0 → sabit (hedef)
@@ -987,7 +994,6 @@ function genMeasure(it){
   val=Math.round(val/res)*res;
   if(isFinite(lo)&&val<lo)val=Math.ceil((lo-1e-9)/res)*res;
   if(isFinite(hi)&&val>hi)val=Math.floor((hi+1e-9)/res)*res;
-  const d=res>=1?0:(res>=0.1?1:(res>=0.01?2:3));
   return (val).toFixed(d);
 }
 function genSamples(it,n){ const out=[]; for(let i=0;i<n;i++)out.push(it.is_qualitative?{value:null,ok:true}:{value:genMeasure(it),ok:true}); return out; }
