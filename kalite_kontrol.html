@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kalite Kontrol Sistemi</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --bg:#0f172a; --panel:#1e293b; --panel2:#243449; --line:#334155;
+    --txt:#e2e8f0; --muted:#94a3b8; --accent:#2563eb; --accent2:#1d4ed8;
+    --ok:#16a34a; --ret:#dc2626; --warn:#d97706;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--txt);font-size:14px}
+  button{cursor:pointer;font-family:inherit}
+  input,select,textarea{font-family:inherit;font-size:14px}
+  .hidden{display:none!important}
+
+  /* AUTH */
+  #auth{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+  .auth-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:32px;width:100%;max-width:380px}
+  .auth-card h1{margin:0 0 4px;font-size:22px}
+  .auth-card p.sub{margin:0 0 22px;color:var(--muted);font-size:13px}
+  .field{margin-bottom:14px}
+  .field label{display:block;margin-bottom:6px;color:var(--muted);font-size:12px}
+  .field input{width:100%;padding:11px 12px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--txt)}
+  .btn{padding:11px 16px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-weight:600;width:100%}
+  .btn:hover{background:var(--accent2)}
+  .btn.sec{background:var(--panel2);border:1px solid var(--line)}
+  .btn.sm{width:auto;padding:7px 13px;font-size:13px}
+  .btn.danger{background:var(--ret)}
+  .link{background:none;border:none;color:var(--accent);text-decoration:underline;font-size:13px;padding:0;margin-top:14px}
+  .msg{padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:14px}
+  .msg.err{background:#451a1a;color:#fca5a5;border:1px solid #7f1d1d}
+  .msg.ok{background:#14321f;color:#86efac;border:1px solid #166534}
+  .msg.info{background:#1e293b;color:#93c5fd;border:1px solid #1e3a8a}
+
+  /* APP */
+  header.top{display:flex;align-items:center;gap:14px;padding:12px 18px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+  header.top h2{margin:0;font-size:17px;white-space:nowrap}
+  header.top .sp{flex:1}
+  .who{color:var(--muted);font-size:12px;text-align:right;line-height:1.3}
+  nav.tabs{display:flex;gap:4px;padding:0 12px;background:var(--panel);border-bottom:1px solid var(--line);overflow-x:auto;position:sticky;top:57px;z-index:19}
+  nav.tabs button{padding:12px 16px;background:none;border:none;border-bottom:3px solid transparent;color:var(--muted);font-weight:600;white-space:nowrap}
+  nav.tabs button.active{color:var(--txt);border-bottom-color:var(--accent)}
+  main{padding:18px;max-width:1200px;margin:0 auto}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+  .card h3{margin:0 0 14px;font-size:16px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+  .row .field{margin-bottom:0}
+  .grow{flex:1;min-width:160px}
+  label.lab{display:block;margin-bottom:5px;color:var(--muted);font-size:12px}
+  input.inp,select.inp,textarea.inp{width:100%;padding:9px 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--txt)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:8px 9px;text-align:left;border-bottom:1px solid var(--line);vertical-align:middle}
+  th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.3px;position:sticky;top:0;background:var(--panel)}
+  tr:hover td{background:var(--panel2)}
+  .tbl-wrap{overflow-x:auto;max-height:65vh;overflow-y:auto;border:1px solid var(--line);border-radius:10px}
+  .pill{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:700}
+  .pill.ok{background:#14321f;color:#86efac}
+  .pill.ret{background:#451a1a;color:#fca5a5}
+  .pill.gray{background:var(--panel2);color:var(--muted)}
+  .pill.seri{background:#1e3a5f;color:#93c5fd}
+  .pill.proses{background:#3b2f12;color:#fcd34d}
+  .pill.son{background:#2d1b4e;color:#c4b5fd}
+  .empty{text-align:center;color:var(--muted);padding:40px 10px}
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+  .stat{display:inline-flex;flex-direction:column;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 16px;min-width:110px}
+  .stat b{font-size:22px}
+  .stat span{color:var(--muted);font-size:12px}
+
+  /* MODAL */
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-start;justify-content:center;padding:24px;z-index:50;overflow-y:auto}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;width:100%;max-width:760px;margin:auto}
+  .modal h3{margin:0 0 4px}
+  .modal .meta{color:var(--muted);font-size:13px;margin-bottom:16px}
+  .close-x{position:absolute;top:14px;right:18px;background:none;border:none;color:var(--muted);font-size:24px}
+  .ctrl-item{border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px;background:var(--panel2)}
+  .ctrl-item .head{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+  .ctrl-item .nm{font-weight:700}
+  .ctrl-item .det{color:var(--muted);font-size:12px}
+  .okret{display:flex;gap:6px}
+  .okret button{padding:8px 16px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--muted);font-weight:700}
+  .okret button.ok.on{background:var(--ok);color:#fff;border-color:var(--ok)}
+  .okret button.ret.on{background:var(--ret);color:#fff;border-color:var(--ret)}
+  @media(max-width:640px){
+    header.top h2{font-size:15px}
+    .who{font-size:11px}
+    main{padding:12px}
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ AUTH ============ -->
+<div id="auth">
+  <div class="auth-card">
+    <h1>Kalite Kontrol</h1>
+    <p class="sub">Seri başı · Proses · Son kontrol kayıt sistemi</p>
+    <div id="authMsg"></div>
+    <div class="field"><label>E-posta</label><input id="email" type="email" autocomplete="email"></div>
+    <div class="field"><label>Şifre</label><input id="password" type="password" autocomplete="current-password"></div>
+    <button class="btn" id="loginBtn">Giriş Yap</button>
+    <button class="link" id="toRegister">Hesabın yok mu? Kayıt ol</button><br>
+    <button class="link hidden" id="toLogin">Zaten hesabın var mı? Giriş yap</button>
+    <button class="link" id="forgotBtn">Şifremi unuttum</button>
+  </div>
+</div>
+
+<!-- ============ APP ============ -->
+<div id="app" class="hidden">
+  <header class="top">
+    <h2>🔬 Kalite Kontrol</h2>
+    <div class="sp"></div>
+    <div class="who"><div id="whoEmail"></div><div id="whoRole"></div></div>
+    <button class="btn sec sm" id="logoutBtn">Çıkış</button>
+  </header>
+  <nav class="tabs">
+    <button data-tab="uretimler" class="active">📋 Üretimler</button>
+    <button data-tab="kayitlar">✅ Kontrol Kayıtları</button>
+    <button data-tab="plan">📐 Kontrol Planı</button>
+    <button data-tab="admin" id="adminTab">👤 Kullanıcılar</button>
+  </nav>
+  <main>
+    <!-- approval gate -->
+    <div id="pending" class="card hidden">
+      <div class="msg info" style="margin:0">⏳ Hesabın <b>admin onayı</b> bekliyor. Onaylanınca verilere erişebileceksin.</div>
+    </div>
+
+    <div id="tab-uretimler"></div>
+    <div id="tab-kayitlar" class="hidden"></div>
+    <div id="tab-plan" class="hidden"></div>
+    <div id="tab-admin" class="hidden"></div>
+  </main>
+</div>
+
+<div id="modalRoot"></div>
+
+<script>
+// ====================== CONFIG ======================
+const SUPABASE_URL  = 'https://nnubrxbpthmkitueixbh.supabase.co';
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5udWJyeGJwdGhta2l0dWVpeGJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1NjI2MDIsImV4cCI6MjA5NjEzODYwMn0.CHZUOylf_q8kkOQbFf9VWZ6-doUTlynmAhahM2EuImE';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
+let ME = null;           // {id,email}
+let PROFILE = null;      // {approved,is_admin}
+const STAGES = {seri_basi:'Seri Başı', proses:'Proses', son:'Son Kontrol'};
+const STAGE_CLS = {seri_basi:'seri', proses:'proses', son:'son'};
+
+// ====================== HELPERS ======================
+const $ = s => document.querySelector(s);
+const el = (tag, props={}, ...kids) => {
+  const e = document.createElement(tag);
+  for(const k in props){
+    if(k==='class') e.className=props[k];
+    else if(k==='html') e.innerHTML=props[k];
+    else if(k.startsWith('on')) e.addEventListener(k.slice(2),props[k]);
+    else e.setAttribute(k,props[k]);
+  }
+  kids.flat().forEach(c=>e.append(c?.nodeType?c:document.createTextNode(c??'')));
+  return e;
+};
+const esc = s => (s??'').toString().replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmtDate = d => d? new Date(d).toLocaleDateString('tr-TR'):'';
+const fmtDT = d => d? new Date(d).toLocaleString('tr-TR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'';
+const fmtTime = d => d? new Date(d).toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'}):'';
+function toast(msg, type='ok'){
+  const t = el('div',{class:'msg '+type, html:msg});
+  Object.assign(t.style,{position:'fixed',bottom:'20px',left:'50%',transform:'translateX(-50%)',zIndex:999,boxShadow:'0 6px 20px rgba(0,0,0,.4)',maxWidth:'90%'});
+  document.body.append(t); setTimeout(()=>t.remove(),3500);
+}
+function authMsg(msg,type='err'){ $('#authMsg').innerHTML = msg?`<div class="msg ${type}">${msg}</div>`:''; }
+
+// ====================== AUTH FLOW ======================
+let isRegister=false;
+$('#toRegister').onclick=()=>{isRegister=true;$('#loginBtn').textContent='Kayıt Ol';$('#toRegister').classList.add('hidden');$('#toLogin').classList.remove('hidden');authMsg('');};
+$('#toLogin').onclick=()=>{isRegister=false;$('#loginBtn').textContent='Giriş Yap';$('#toLogin').classList.add('hidden');$('#toRegister').classList.remove('hidden');authMsg('');};
+
+$('#loginBtn').onclick=async()=>{
+  const email=$('#email').value.trim().toLowerCase(), password=$('#password').value;
+  if(!email||!password){authMsg('E-posta ve şifre gir.');return;}
+  $('#loginBtn').disabled=true;
+  try{
+    if(isRegister){
+      const {error}=await sb.auth.signUp({email,password});
+      if(error)throw error;
+      authMsg('Kayıt başarılı! Giriş yapılıyor…','ok');
+      const {error:e2}=await sb.auth.signInWithPassword({email,password});
+      if(e2)throw e2;
+    }else{
+      const {error}=await sb.auth.signInWithPassword({email,password});
+      if(error)throw error;
+    }
+  }catch(e){ authMsg(translateAuthErr(e.message)); $('#loginBtn').disabled=false; }
+};
+$('#forgotBtn').onclick=async()=>{
+  const email=$('#email').value.trim().toLowerCase();
+  if(!email){authMsg('Önce e-postanı yaz.');return;}
+  const {error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:location.href});
+  authMsg(error?translateAuthErr(error.message):'Şifre sıfırlama bağlantısı e-postana gönderildi.', error?'err':'ok');
+};
+function translateAuthErr(m){
+  if(/Invalid login/i.test(m))return'E-posta veya şifre hatalı.';
+  if(/already registered/i.test(m))return'Bu e-posta zaten kayıtlı. Giriş yap.';
+  if(/at least 6/i.test(m))return'Şifre en az 6 karakter olmalı.';
+  return esc(m);
+}
+$('#logoutBtn').onclick=async()=>{await sb.auth.signOut();location.reload();};
+
+let BOOTED=false;
+function boot(session){
+  if(BOOTED || !session?.user) return;
+  BOOTED=true;
+  ME={id:session.user.id,email:session.user.email};
+  setTimeout(afterLogin,0);   // auth callback dışına çık (re-entrancy/döngü önlenir)
+}
+sb.auth.onAuthStateChange((_e,session)=>{ boot(session); });
+(async()=>{ const {data}=await sb.auth.getSession(); boot(data.session); })();
+
+async function afterLogin(){
+  let {data:prof}=await sb.from('profiles').select('*').eq('id',ME.id).maybeSingle();
+  if(!prof){ // fallback: profil tetikleyici gecikmesi
+    await new Promise(r=>setTimeout(r,800));
+    ({data:prof}=await sb.from('profiles').select('*').eq('id',ME.id).maybeSingle());
+  }
+  PROFILE=prof||{approved:false,is_admin:false};
+  $('#auth').classList.add('hidden'); $('#app').classList.remove('hidden');
+  $('#whoEmail').textContent=ME.email;
+  $('#whoRole').textContent=PROFILE.is_admin?'Yönetici':(PROFILE.approved?'Onaylı':'Onay bekliyor');
+  if(!PROFILE.is_admin) $('#adminTab').classList.add('hidden');
+  if(!PROFILE.approved && !PROFILE.is_admin){
+    $('#pending').classList.remove('hidden');
+    document.querySelector('nav.tabs').classList.add('hidden');
+    return;
+  }
+  switchTab('uretimler');
+}
+
+// ====================== TABS ======================
+function switchTab(name){
+  document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
+  ['uretimler','kayitlar','plan','admin'].forEach(t=>$('#tab-'+t).classList.toggle('hidden',t!==name));
+  if(name==='uretimler')renderUretimler();
+  if(name==='kayitlar')renderKayitlar();
+  if(name==='plan')renderPlan();
+  if(name==='admin')renderAdmin();
+}
+document.querySelectorAll('nav.tabs button').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
+
+// ====================== ÜRETİMLER ======================
+let PRODS=[];
+async function renderUretimler(){
+  const root=$('#tab-uretimler');
+  root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
+  const {data,error}=await sb.from('productions').select('*').order('start_time',{ascending:false}).limit(500);
+  if(error){root.innerHTML=`<div class="card"><div class="msg err">${esc(error.message)}</div></div>`;return;}
+  PRODS=data||[];
+  root.innerHTML='';
+  // import card
+  const imp=el('div',{class:'card'},
+    el('h3',{},'LeanSys Üretim Verisi İçe Aktar'),
+    el('p',{class:'det',style:'color:var(--muted);margin:-6px 0 14px;font-size:13px'},'LeanSys → Dışa Aktar ile aldığın Excel (.xlsx) dosyasını seç. Tekrar yüklesen de aynı üretim iki kez eklenmez.'),
+    el('div',{class:'row'},
+      el('input',{type:'file',accept:'.xlsx,.xls',class:'inp grow',id:'prodFile'}),
+      el('button',{class:'btn sm',style:'flex:0',onclick:importProds},'İçe Aktar')
+    )
+  );
+  root.append(imp);
+  // stats + filters
+  const stockSet=[...new Set(PRODS.map(p=>p.stock_code).filter(Boolean))];
+  const filt=el('div',{class:'card'},
+    el('div',{class:'toolbar'},
+      el('div',{class:'stat'},el('b',{},String(PRODS.length)),el('span',{},'Üretim kaydı')),
+      el('div',{class:'stat'},el('b',{},String(stockSet.length)),el('span',{},'Farklı ürün')),
+      el('div',{class:'grow'}),
+      el('input',{class:'inp',id:'prodSearch',placeholder:'🔍 makine / ürün / operatör ara…',style:'max-width:280px',oninput:filterProdRows})
+    ),
+    el('div',{class:'tbl-wrap'},buildProdTable(PRODS))
+  );
+  root.append(filt);
+}
+function buildProdTable(rows){
+  const tb=el('table');
+  tb.append(el('thead',{},el('tr',{},
+    ...['Tarih','Makine','Ürün','Miktar','Başlama','Bitiş','Operatör','Op','Kontroller',''].map(h=>el('th',{},h))
+  )));
+  const body=el('tbody',{id:'prodBody'});
+  if(!rows.length) body.append(el('tr',{},el('td',{colspan:10},el('div',{class:'empty'},'Henüz üretim yok. Yukarıdan Excel içe aktar.'))));
+  rows.forEach(p=>body.append(prodRow(p)));
+  tb.append(body); return tb;
+}
+function prodRow(p){
+  return el('tr',{'data-s':(`${p.machine_name} ${p.stock_code} ${p.stock_name} ${p.operator}`).toLowerCase()},
+    el('td',{},fmtDate(p.prod_date)),
+    el('td',{},el('div',{},p.machine_name||''),el('div',{class:'det',style:'color:var(--muted);font-size:11px'},p.machine_code||'')),
+    el('td',{},el('div',{},p.stock_code||''),el('div',{class:'det',style:'color:var(--muted);font-size:11px'},(p.stock_name||'').slice(0,32))),
+    el('td',{},`${p.quantity??''} ${p.unit||''}`),
+    el('td',{},fmtTime(p.start_time)),
+    el('td',{},fmtTime(p.end_time)),
+    el('td',{},p.operator||''),
+    el('td',{},String(p.op_no??'')),
+    el('td',{id:'cc-'+p.id},'…'),
+    el('td',{},el('button',{class:'btn sm',onclick:()=>openControl(p)},'Kontrol Gir'))
+  );
+}
+function filterProdRows(){
+  const q=$('#prodSearch').value.toLowerCase();
+  document.querySelectorAll('#prodBody tr').forEach(tr=>{
+    tr.style.display=(!q||(tr.dataset.s||'').includes(q))?'':'none';
+  });
+}
+// kontrol sayıları (üretim başına kaç kontrol var)
+async function loadControlCounts(){
+  if(!PRODS.length)return;
+  const ids=PRODS.map(p=>p.id);
+  const {data}=await sb.from('control_records').select('production_id,stage').in('production_id',ids);
+  const map={};
+  (data||[]).forEach(r=>{(map[r.production_id]=map[r.production_id]||[]).push(r.stage);});
+  PRODS.forEach(p=>{
+    const cell=$('#cc-'+p.id); if(!cell)return;
+    const st=map[p.id]||[];
+    if(!st.length){cell.innerHTML='<span class="pill gray">—</span>';return;}
+    const sb_=st.filter(x=>x==='seri_basi').length, pr=st.filter(x=>x==='proses').length, so=st.filter(x=>x==='son').length;
+    cell.innerHTML=`${sb_?'<span class="pill seri">SB</span> ':''}${pr?'<span class="pill proses">P×'+pr+'</span> ':''}${so?'<span class="pill son">SON</span>':''}`;
+  });
+}
+
+// ---- Excel parse & import ----
+const HEADER_MAP={
+  'makine kodu':'machine_code','makine adı':'machine_name','makine adi':'machine_name',
+  'cari adı':'customer','cari adi':'customer','stok kodu':'stock_code','stok adı':'stock_name','stok adi':'stock_name',
+  'miktar':'quantity','br':'unit','tarih':'prod_date','vardiya':'shift','başlama':'start_time','baslama':'start_time',
+  'bitiş':'end_time','bitis':'end_time','süre':'duration_min','sure':'duration_min','operatör':'operator','operator':'operator',
+  'op.no':'op_no','op no':'op_no','iş emri':'work_order','is emri':'work_order','müşteri sip no':'customer_order_no',
+  'sip seri':'order_serial','sip sıra':'order_seq','sip sira':'order_seq'
+};
+function normHdr(s){return (s||'').toString().trim().toLowerCase().replace(/\s+/g,' ');}
+async function importProds(){
+  const f=$('#prodFile').files[0];
+  if(!f){toast('Önce dosya seç.','err');return;}
+  try{
+    const buf=await f.arrayBuffer();
+    const wb=XLSX.read(buf,{cellDates:true});
+    const ws=wb.Sheets[wb.SheetNames[0]];
+    const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:null});
+    // başlık satırını bul
+    let hi=rows.findIndex(r=>r&&r.some(c=>normHdr(c)==='makine kodu'));
+    if(hi<0){toast('Başlık satırı bulunamadı (Makine Kodu).','err');return;}
+    const hdr=rows[hi].map(normHdr);
+    const idx={}; hdr.forEach((h,i)=>{ if(HEADER_MAP[h]!==undefined) idx[HEADER_MAP[h]]=i; });
+    if(idx.machine_code===undefined||idx.stock_code===undefined){toast('Gerekli sütunlar yok.','err');return;}
+    const out=[];
+    for(let r=hi+1;r<rows.length;r++){
+      const row=rows[r]; if(!row)continue;
+      const mc=row[idx.machine_code]; const sc=idx.stock_code!=null?row[idx.stock_code]:null;
+      if(!mc||/^makine grup/i.test(String(mc)))continue;       // grup başlığı / boş
+      if(!sc)continue;
+      const g=k=>idx[k]!=null?row[idx[k]]:null;
+      const toISO=v=>v instanceof Date?v.toISOString():(v?new Date(v).toISOString():null);
+      const start=toISO(g('start_time')), end=toISO(g('end_time'));
+      const dt=g('prod_date'); const pdate=dt instanceof Date?dt.toISOString().slice(0,10):(dt?String(dt):null);
+      const rec={
+        machine_code:String(mc).trim(), machine_name:str(g('machine_name')), customer:str(g('customer')),
+        stock_code:String(sc).trim(), stock_name:str(g('stock_name')),
+        quantity:num(g('quantity')), unit:str(g('unit')), prod_date:pdate, shift:num(g('shift')),
+        start_time:start, end_time:end, duration_min:num(g('duration_min')), operator:str(g('operator')),
+        op_no:num(g('op_no')), work_order:str(g('work_order')), customer_order_no:str(g('customer_order_no')),
+        order_serial:str(g('order_serial')), order_seq:str(g('order_seq')),
+        fingerprint:`${String(mc).trim()}|${start||''}|${String(sc).trim()}|${num(g('op_no'))??''}`
+      };
+      out.push(rec);
+    }
+    if(!out.length){toast('İçe aktarılacak satır bulunamadı.','err');return;}
+    const {error,count}=await sb.from('productions').upsert(out,{onConflict:'fingerprint',ignoreDuplicates:true,count:'exact'});
+    if(error)throw error;
+    toast(`${out.length} satır işlendi (tekrarlar atlandı).`,'ok');
+    renderUretimler();
+  }catch(e){ toast('İçe aktarma hatası: '+esc(e.message),'err'); }
+}
+const str=v=>{const s=(v==null?'':String(v)).trim();return s===''?null:s;};
+const num=v=>{if(v==null||v==='')return null;const n=Number(v);return isNaN(n)?null:n;};
+
+// ====================== KONTROL PLANI ======================
+let PLAN=[];
+async function renderPlan(){
+  const root=$('#tab-plan');
+  root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
+  const {data}=await sb.from('control_plan_items').select('*').order('stock_code').order('seq');
+  PLAN=data||[];
+  root.innerHTML='';
+  // ürün seçimi: üretimlerdeki stok kodları
+  const prodStocks=[...new Map(PRODS.map(p=>[p.stock_code,p.stock_name])).entries()].filter(x=>x[0]);
+  const planStocks=[...new Set(PLAN.map(p=>p.stock_code))];
+  const allStocks=[...new Set([...prodStocks.map(x=>x[0]),...planStocks])];
+
+  const addCard=el('div',{class:'card'},
+    el('h3',{},'Kontrol Planı Maddesi Ekle'),
+    el('p',{style:'color:var(--muted);margin:-6px 0 14px;font-size:13px'},'Her ürün (Stok Kodu) için kontrolde bakılacak maddeleri tanımla. Seri başı, proses ve son kontrolde aynı maddeler kullanılır.'),
+    el('div',{class:'row'},
+      field('Stok Kodu','pi_stock','örn. 700.0.454',allStocks),
+      field('Ölçülecek Değer','pi_name','örn. BOŞALTMALAR'),
+      field('Nitel Hedef','pi_hedef','örn. TEMİZLENECEK'),
+      field('Yöntem','pi_method','örn. Gözle')
+    ),
+    el('div',{class:'row',style:'margin-top:10px'},
+      field('Hedef','pi_target',''),
+      field('Alt Limit','pi_lo',''),
+      field('Üst Limit','pi_hi',''),
+      field('Örnekleme','pi_sample','1'),
+      el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Tip'),
+        sel('pi_qual',[['true','Nitel (OK/RET)'],['false','Ölçüm (sayısal)']])),
+      el('button',{class:'btn sm',style:'flex:0',onclick:addPlanItem},'+ Ekle')
+    )
+  );
+  root.append(addCard);
+
+  // mevcut maddeler — stok bazlı grup
+  if(!PLAN.length){ root.append(el('div',{class:'card'},el('div',{class:'empty'},'Henüz kontrol planı yok. Yukarıdan ekle.'))); return; }
+  const byStock={}; PLAN.forEach(p=>{(byStock[p.stock_code]=byStock[p.stock_code]||[]).push(p);});
+  Object.entries(byStock).forEach(([sc,items])=>{
+    const card=el('div',{class:'card'});
+    card.append(el('h3',{},`${sc} — ${esc(items[0].stock_name||'')} (${items.length} madde)`));
+    const tb=el('table');
+    tb.append(el('thead',{},el('tr',{},...['#','Ölçülecek Değer','Nitel Hedef','Yöntem','Hedef','Alt','Üst','Örnek','Tip',''].map(h=>el('th',{},h)))));
+    const body=el('tbody');
+    items.forEach((it,i)=>body.append(el('tr',{},
+      el('td',{},String(i+1)),
+      el('td',{},it.measure_name),
+      el('td',{},it.nitel_hedef||''),
+      el('td',{},it.method||''),
+      el('td',{},it.target||''),
+      el('td',{},it.lower_limit||''),
+      el('td',{},it.upper_limit||''),
+      el('td',{},String(it.sample_size??1)),
+      el('td',{},it.is_qualitative?'Nitel':'Ölçüm'),
+      el('td',{},el('button',{class:'btn sm danger',onclick:()=>delPlanItem(it.id)},'Sil'))
+    )));
+    tb.append(body); card.append(el('div',{class:'tbl-wrap'},tb));
+    root.append(card);
+  });
+}
+function field(label,id,ph,list){
+  const inp=el('input',{class:'inp',id,placeholder:ph||''});
+  const wrap=el('div',{class:'field grow'},el('label',{class:'lab'},label),inp);
+  if(list&&list.length){
+    const dl=el('datalist',{id:id+'_dl'}); list.forEach(v=>dl.append(el('option',{value:v})));
+    inp.setAttribute('list',id+'_dl'); wrap.append(dl);
+  }
+  return wrap;
+}
+function sel(id,opts){const s=el('select',{class:'inp',id});opts.forEach(([v,t])=>s.append(el('option',{value:v},t)));return s;}
+async function addPlanItem(){
+  const stock=$('#pi_stock').value.trim(), name=$('#pi_name').value.trim();
+  if(!stock||!name){toast('Stok Kodu ve Ölçülecek Değer zorunlu.','err');return;}
+  const stockName=(PRODS.find(p=>p.stock_code===stock)||{}).stock_name||null;
+  const rec={stock_code:stock,stock_name:stockName,measure_name:name,
+    nitel_hedef:$('#pi_hedef').value.trim()||null,method:$('#pi_method').value.trim()||null,
+    target:$('#pi_target').value.trim()||null,lower_limit:$('#pi_lo').value.trim()||null,
+    upper_limit:$('#pi_hi').value.trim()||null,sample_size:Number($('#pi_sample').value)||1,
+    is_qualitative:$('#pi_qual').value==='true',seq:PLAN.filter(p=>p.stock_code===stock).length};
+  const {error}=await sb.from('control_plan_items').insert(rec);
+  if(error){toast(esc(error.message),'err');return;}
+  toast('Madde eklendi.','ok'); renderPlan();
+}
+async function delPlanItem(id){
+  if(!confirm('Bu kontrol maddesi silinsin mi?'))return;
+  const {error}=await sb.from('control_plan_items').delete().eq('id',id);
+  if(error){toast(esc(error.message),'err');return;}
+  renderPlan();
+}
+
+// ====================== KONTROL GİRİŞİ (MODAL) ======================
+async function openControl(p){
+  const {data:plan}=await sb.from('control_plan_items').select('*').eq('stock_code',p.stock_code).eq('active',true).order('seq');
+  const items=plan||[];
+  const {data:recs}=await sb.from('control_records').select('*').eq('production_id',p.id).order('checked_at');
+  const existing=recs||[];
+
+  const root=$('#modalRoot');
+  const state={}; // item.id -> {value, result}
+  items.forEach(it=>state[it.id]={value:'',result:it.is_qualitative?null:''});
+
+  let stage='seri_basi';
+  const hasSeri=existing.some(r=>r.stage==='seri_basi');
+  if(hasSeri)stage='proses';
+
+  function lastProsesInfo(){
+    const ps=existing.filter(r=>r.stage==='proses'||r.stage==='seri_basi').sort((a,b)=>new Date(b.checked_at)-new Date(a.checked_at));
+    if(!ps.length)return'';
+    const mins=Math.round((Date.now()-new Date(ps[0].checked_at))/60000);
+    const warn=mins>=60;
+    return `<span class="pill ${warn?'ret':'gray'}">Son kontrolden ${mins} dk geçti${warn?' — proses zamanı!':''}</span>`;
+  }
+
+  function render(){
+    root.innerHTML='';
+    const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
+    const m=el('div',{class:'modal',style:'position:relative'});
+    m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
+    m.append(el('h3',{},'Kalite Kontrol Girişi'));
+    m.append(el('div',{class:'meta',html:
+      `<b>${esc(p.stock_code)}</b> — ${esc(p.stock_name||'')}<br>`+
+      `${esc(p.machine_name||'')} (${esc(p.machine_code||'')}) · ${esc(p.operator||'')} · ${fmtDate(p.prod_date)} · Miktar: ${p.quantity??''} ${p.unit||''}`}));
+
+    // mevcut kontroller özeti
+    if(existing.length){
+      const sumr=el('div',{style:'margin-bottom:14px;display:flex;gap:6px;flex-wrap:wrap'});
+      existing.forEach(r=>sumr.append(el('span',{class:'pill '+STAGE_CLS[r.stage],title:fmtDT(r.checked_at)},
+        `${STAGES[r.stage]} ${fmtTime(r.checked_at)} ${r.overall_result==='RET'?'⛔':'✔'}`)));
+      m.append(sumr);
+    }
+    m.append(el('div',{style:'margin-bottom:12px'},el('span',{html:lastProsesInfo()})));
+
+    // aşama seçimi
+    const stageSel=sel('m_stage',Object.entries(STAGES));
+    stageSel.value=stage; stageSel.onchange=()=>{stage=stageSel.value;};
+    m.append(el('div',{class:'row',style:'margin-bottom:14px'},
+      el('div',{class:'field',style:'flex:0;min-width:180px'},el('label',{class:'lab'},'Kontrol Aşaması'),stageSel),
+      el('div',{class:'field grow'},el('label',{class:'lab'},'Operatör / Kontrol eden'),el('input',{class:'inp',id:'m_oper',value:p.operator||''}))
+    ));
+
+    if(!items.length){
+      m.append(el('div',{class:'msg info'},`Bu ürün (<b>${esc(p.stock_code)}</b>) için kontrol planı tanımlı değil. Önce «Kontrol Planı» sekmesinden madde ekle.`));
+    }else{
+      items.forEach(it=>{
+        const st=state[it.id];
+        const head=el('div',{class:'head'},
+          el('div',{},el('div',{class:'nm'},it.measure_name),
+            el('div',{class:'det'},[it.nitel_hedef,it.method,it.target&&('Hedef: '+it.target),
+              (it.lower_limit||it.upper_limit)&&(`Limit: ${it.lower_limit||'-'}…${it.upper_limit||'-'}`),
+              'Örnek: '+(it.sample_size??1)].filter(Boolean).join(' · ')))
+        );
+        const ci=el('div',{class:'ctrl-item'});
+        ci.append(head);
+        const ctrls=el('div',{class:'row'});
+        if(it.is_qualitative){
+          const okB=el('button',{class:'ok',onclick:()=>{st.result='OK';paint();}},'OK');
+          const retB=el('button',{class:'ret',onclick:()=>{st.result='RET';paint();}},'RET');
+          const grp=el('div',{class:'okret'},okB,retB);
+          function paint(){okB.classList.toggle('on',st.result==='OK');retB.classList.toggle('on',st.result==='RET');}
+          ctrls.append(el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Sonuç'),grp));
+        }else{
+          ctrls.append(el('div',{class:'field grow'},el('label',{class:'lab'},'Ölçüm değeri'),
+            el('input',{class:'inp',value:st.value,oninput:e=>{st.value=e.target.value;
+              // limit kontrolü otomatik OK/RET
+              const v=Number(e.target.value),lo=Number(it.lower_limit),hi=Number(it.upper_limit);
+              if(e.target.value!==''&&!isNaN(v)){
+                let ok=true; if(it.lower_limit&&!isNaN(lo)&&v<lo)ok=false; if(it.upper_limit&&!isNaN(hi)&&v>hi)ok=false;
+                st.result=ok?'OK':'RET'; e.target.style.borderColor=ok?'var(--ok)':'var(--ret)';
+              }}})));
+        }
+        ci.append(ctrls);
+        m.append(ci);
+      });
+    }
+    m.append(el('div',{class:'field',style:'margin-top:8px'},el('label',{class:'lab'},'Not (opsiyonel)'),el('textarea',{class:'inp',id:'m_note',rows:'2'})));
+    const saveBtn=el('button',{class:'btn',style:'margin-top:8px',onclick:()=>saveControl(p,items,state,stageSel.value)},'💾 Kontrolü Kaydet');
+    if(!items.length)saveBtn.disabled=true;
+    m.append(saveBtn);
+    bg.append(m); root.append(bg);
+  }
+  render();
+}
+async function saveControl(p,items,state,stage){
+  const oper=$('#m_oper').value.trim()||null;
+  const vals=items.map(it=>({plan_item_id:it.id,measure_name:it.measure_name,
+    value:state[it.id].value||null,result:state[it.id].result||null}));
+  const missing=vals.filter(v=>!v.result);
+  if(missing.length && !confirm(`${missing.length} madde için sonuç (OK/RET) girilmedi. Yine de kaydedilsin mi?`))return;
+  const overall=vals.some(v=>v.result==='RET')?'RET':'OK';
+  const rec={production_id:p.id,stock_code:p.stock_code,stock_name:p.stock_name,machine_code:p.machine_code,
+    work_order:p.work_order,stage,operator:oper,shift:p.shift,vals,overall_result:overall,
+    note:$('#m_note').value.trim()||null};
+  const {error}=await sb.from('control_records').insert(rec);
+  if(error){toast(esc(error.message),'err');return;}
+  toast(`${STAGES[stage]} kontrolü kaydedildi (${overall}).`, overall==='RET'?'err':'ok');
+  $('#modalRoot').innerHTML='';
+  if(!$('#tab-kayitlar').classList.contains('hidden'))renderKayitlar();
+  loadControlCounts();
+}
+
+// ====================== KONTROL KAYITLARI ======================
+async function renderKayitlar(){
+  const root=$('#tab-kayitlar');
+  root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
+  const {data}=await sb.from('control_records').select('*').order('checked_at',{ascending:false}).limit(1000);
+  const recs=data||[];
+  root.innerHTML='';
+  const n=recs.length, ret=recs.filter(r=>r.overall_result==='RET').length;
+  const tools=el('div',{class:'card'},
+    el('div',{class:'toolbar'},
+      el('div',{class:'stat'},el('b',{},String(n)),el('span',{},'Toplam kontrol')),
+      el('div',{class:'stat'},el('b',{style:'color:var(--ok)'},String(n-ret)),el('span',{},'OK')),
+      el('div',{class:'stat'},el('b',{style:'color:var(--ret)'},String(ret)),el('span',{},'RET')),
+      el('div',{class:'grow'}),
+      el('button',{class:'btn sm',style:'flex:0',onclick:()=>exportRecords(recs)},'⬇ Excel’e Aktar'),
+      el('input',{class:'inp',id:'recSearch',placeholder:'🔍 ürün / makine ara…',style:'max-width:240px',oninput:e=>{
+        const q=e.target.value.toLowerCase();
+        document.querySelectorAll('#recBody tr').forEach(tr=>tr.style.display=(!q||(tr.dataset.s||'').includes(q))?'':'none');
+      }})
+    )
+  );
+  root.append(tools);
+  const tb=el('table');
+  tb.append(el('thead',{},el('tr',{},...['Zaman','Aşama','Ürün','Makine','Operatör','Sonuç','RET maddeler','Detay'].map(h=>el('th',{},h)))));
+  const body=el('tbody',{id:'recBody'});
+  if(!recs.length)body.append(el('tr',{},el('td',{colspan:8},el('div',{class:'empty'},'Henüz kontrol kaydı yok.'))));
+  recs.forEach(r=>{
+    const retItems=(r.vals||[]).filter(v=>v.result==='RET').map(v=>v.measure_name).join(', ');
+    body.append(el('tr',{'data-s':`${r.stock_code} ${r.stock_name} ${r.machine_code}`.toLowerCase()},
+      el('td',{},fmtDT(r.checked_at)),
+      el('td',{},el('span',{class:'pill '+STAGE_CLS[r.stage]},STAGES[r.stage])),
+      el('td',{},el('div',{},r.stock_code||''),el('div',{style:'color:var(--muted);font-size:11px'},(r.stock_name||'').slice(0,28))),
+      el('td',{},r.machine_code||''),
+      el('td',{},r.operator||''),
+      el('td',{},el('span',{class:'pill '+(r.overall_result==='RET'?'ret':'ok')},r.overall_result||'—')),
+      el('td',{style:'color:var(--ret);font-size:12px'},retItems),
+      el('td',{},el('button',{class:'btn sm',onclick:()=>showRecDetail(r)},'Gör'))
+    ));
+  });
+  tb.append(body); root.append(el('div',{class:'card'},el('div',{class:'tbl-wrap'},tb)));
+}
+function showRecDetail(r){
+  const root=$('#modalRoot');
+  const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
+  const m=el('div',{class:'modal',style:'position:relative;max-width:620px'});
+  m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
+  m.append(el('h3',{},`${STAGES[r.stage]} Kontrolü`));
+  m.append(el('div',{class:'meta',html:`<b>${esc(r.stock_code)}</b> — ${esc(r.stock_name||'')}<br>${esc(r.machine_code||'')} · ${esc(r.operator||'')} · ${fmtDT(r.checked_at)}`}));
+  const tb=el('table');
+  tb.append(el('thead',{},el('tr',{},...['Ölçülecek Değer','Değer','Sonuç'].map(h=>el('th',{},h)))));
+  const body=el('tbody');
+  (r.vals||[]).forEach(v=>body.append(el('tr',{},
+    el('td',{},v.measure_name),el('td',{},v.value||'—'),
+    el('td',{},el('span',{class:'pill '+(v.result==='RET'?'ret':(v.result==='OK'?'ok':'gray'))},v.result||'—')))));
+  tb.append(body); m.append(el('div',{class:'tbl-wrap'},tb));
+  if(r.note)m.append(el('p',{style:'margin-top:12px;color:var(--muted)'},'Not: '+r.note));
+  bg.append(m); root.append(bg);
+}
+function exportRecords(recs){
+  const rows=[];
+  recs.forEach(r=>(r.vals||[]).forEach(v=>rows.push({
+    'Zaman':fmtDT(r.checked_at),'Aşama':STAGES[r.stage],'Stok Kodu':r.stock_code,'Stok Adı':r.stock_name,
+    'Makine':r.machine_code,'Operatör':r.operator,'Ölçülecek Değer':v.measure_name,'Değer':v.value,
+    'Sonuç':v.result,'Genel Sonuç':r.overall_result,'Not':r.note
+  })));
+  if(!rows.length){toast('Aktarılacak kayıt yok.','err');return;}
+  const ws=XLSX.utils.json_to_sheet(rows);const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'Kontroller');
+  XLSX.writeFile(wb,'kalite_kontrol_kayitlari.xlsx');
+}
+
+// ====================== ADMIN (KULLANICILAR) ======================
+async function renderAdmin(){
+  const root=$('#tab-admin');
+  if(!PROFILE.is_admin){root.innerHTML='<div class="card"><div class="empty">Yetkin yok.</div></div>';return;}
+  root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
+  const {data}=await sb.from('profiles').select('*').order('created_at',{ascending:false});
+  const users=data||[];
+  root.innerHTML='';
+  const tb=el('table');
+  tb.append(el('thead',{},el('tr',{},...['E-posta','Kayıt','Durum','Rol','İşlem'].map(h=>el('th',{},h)))));
+  const body=el('tbody');
+  users.forEach(u=>{
+    const actions=el('td',{});
+    if(!u.approved)actions.append(el('button',{class:'btn sm',onclick:()=>setUser(u.id,{approved:true})},'Onayla'));
+    else actions.append(el('button',{class:'btn sm sec',onclick:()=>setUser(u.id,{approved:false})},'Onayı Kaldır'));
+    if(!u.is_admin)actions.append(el('button',{class:'btn sm sec',style:'margin-left:6px',onclick:()=>setUser(u.id,{is_admin:true,approved:true})},'Admin Yap'));
+    body.append(el('tr',{},
+      el('td',{},u.email),
+      el('td',{},fmtDate(u.created_at)),
+      el('td',{},el('span',{class:'pill '+(u.approved?'ok':'gray')},u.approved?'Onaylı':'Bekliyor')),
+      el('td',{},u.is_admin?'Yönetici':'Kullanıcı'),
+      actions
+    ));
+  });
+  tb.append(body);
+  root.append(el('div',{class:'card'},el('h3',{},'Kullanıcı Yönetimi'),el('div',{class:'tbl-wrap'},tb)));
+}
+async function setUser(id,patch){
+  const {error}=await sb.from('profiles').update(patch).eq('id',id);
+  if(error){toast(esc(error.message),'err');return;}
+  toast('Güncellendi.','ok'); renderAdmin();
+}
+
+// üretim kontrol sayıları, sekme açılınca yüklensin
+const _origRenderU=renderUretimler;
+renderUretimler=async function(){await _origRenderU();await loadControlCounts();};
+</script>
+</body>
+</html>
