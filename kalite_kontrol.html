@@ -88,7 +88,7 @@
 
   /* MODAL */
   .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-start;justify-content:center;padding:24px;z-index:50;overflow-y:auto}
-  .modal{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;width:100%;max-width:760px;margin:auto}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;width:100%;max-width:1000px;margin:auto}
   .modal h3{margin:0 0 4px}
   .modal .meta{color:var(--muted);font-size:13px;margin-bottom:16px}
   .close-x{position:absolute;top:14px;right:18px;background:none;border:none;color:var(--muted);font-size:24px}
@@ -361,7 +361,7 @@ function prodRow(p){
     el('td',{},fmtTime(p.end_time)),
     el('td',{},p.operator||''),
     el('td',{},String(p.op_no??'')),
-    el('td',{id:'cc-'+p.id},'…'),
+    el('td',{id:'cc-'+p.id,style:'white-space:nowrap'},'…'),
     el('td',{}, can('enter')
       ? el('button',{class:'btn sm',onclick:()=>openControl(p)},'Kontrol Gir')
       : el('span',{style:'color:var(--muted);font-size:12px'},'—'))
@@ -752,7 +752,7 @@ async function openControl(p){
     root.innerHTML='';
     const items=itemsForStage(stage);
     const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
-    const m=el('div',{class:'modal',style:'position:relative;max-width:1120px'});
+    const m=el('div',{class:'modal',style:'position:relative;max-width:1360px'});
     m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
     m.append(el('h3',{},'Kalite Kontrol Girişi'));
     m.append(el('div',{class:'meta',html:
@@ -935,7 +935,7 @@ async function openBulkAuto(){
   const machines={}; prods.forEach(p=>{ const k=p.machine_code||'?'; if(!machines[k])machines[k]={code:k,name:p.machine_name,unit:p.unit,count:0}; machines[k].count++; });
   const cyc={};
   const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
-  const m=el('div',{class:'modal',style:'position:relative;max-width:700px'});
+  const m=el('div',{class:'modal',style:'position:relative;max-width:860px'});
   m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
   m.append(el('h3',{},'🎲 Otomatik Kontrol Üret'));
   m.append(el('p',{class:'meta'},`${secili?'🎯 '+prods.length+' SEÇİLİ üretim':prods.length+' üretim (planı olan tümü)'}. Her makine için çevrim süresini (saniye/birim) gir; bitiş = başlangıç + adet × çevrim olarak hesaplanıp üretime yazılır, sonra plandaki örnekleme sıklığına göre Seri Başı + saatlik Proses + Son kayıtları üretilir (hepsi uygun, rastgele). Hiç satır seçmezsen tüm üretimlere uygulanır.`));
@@ -1079,7 +1079,7 @@ async function editRecord(r,prod){
   function render(){
     root.innerHTML='';
     const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
-    const m=el('div',{class:'modal',style:'position:relative;max-width:1120px'});
+    const m=el('div',{class:'modal',style:'position:relative;max-width:1360px'});
     m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
     m.append(el('h3',{},`${STAGES[stage]} Kontrol Kaydı`));
     const pdate=prod?(fmtDate(prod.prod_date||prod.start_time)+(prod.start_time?' '+fmtTime(prod.start_time)+(prod.end_time?'–'+fmtTime(prod.end_time):''):'')):fmtDT(r.checked_at);
