@@ -28,6 +28,7 @@
   .autozone .auto-menu{display:none;position:absolute;top:36px;right:0;flex-direction:column;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px;box-shadow:0 6px 18px rgba(0,0,0,.4);z-index:7;white-space:nowrap;min-width:200px}
   .autozone.open .auto-menu{display:flex}
   .autozone .auto-menu .btn{justify-content:flex-start}
+  .card.collapsed{padding:6px 18px}
   *{box-sizing:border-box}
   body{margin:0;font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--txt);font-size:14px}
   button{cursor:pointer;font-family:inherit}
@@ -381,12 +382,12 @@ async function renderUretimler(){
         el('button',{class:'btn sm',style:'flex:0',onclick:importProds},'İçe Aktar')
       )
     );
+    const title=el('h3',{class:collapsed?'hidden':'',style:'margin:0;margin-right:auto'},'LeanSys Üretim Verisi İçe Aktar');
+    const card=el('div',{class:'card'+(collapsed?' collapsed':'')});
     const tgl=el('button',{class:'autozone-handle',style:'flex:0',title:'İçe aktarmayı gizle/göster',
-      onclick:e=>{ const c=body.classList.toggle('hidden'); localStorage.setItem('kk_imp_collapse',c?'1':'0'); e.currentTarget.textContent=c?'▸':'▾'; }}, collapsed?'▸':'▾');
-    root.append(el('div',{class:'card'},
-      el('div',{style:'display:flex;justify-content:space-between;align-items:center;gap:10px'+(collapsed?'':';margin-bottom:8px')},
-        el('h3',{style:'margin:0'},'LeanSys Üretim Verisi İçe Aktar'), tgl),
-      body));
+      onclick:e=>{ const c=body.classList.toggle('hidden'); title.classList.toggle('hidden',c); card.classList.toggle('collapsed',c); localStorage.setItem('kk_imp_collapse',c?'1':'0'); e.currentTarget.textContent=c?'▸':'▾'; }}, collapsed?'▸':'▾');
+    card.append(el('div',{style:'display:flex;justify-content:flex-end;align-items:center;gap:10px'+(collapsed?'':';margin-bottom:8px')}, title, tgl), body);
+    root.append(card);
   }
   // stats + filtreler (tarih + stok kodu)
   const stockSet=[...new Set(PRODS.map(p=>p.stock_code).filter(Boolean))];
