@@ -19,12 +19,12 @@
   }
   body.light th{background:var(--panel)}
   .theme-btn{width:38px;height:34px;padding:0;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--txt);font-size:17px;line-height:1;flex:0 0 auto}
-  /* gizli otomatik araç: tutamaç; üzerine gelince buton çıkar */
+  /* gizli otomatik araç: ok tutamacı; SADECE tıklayınca açılır (hover yok) */
   .autozone{position:relative;display:inline-flex;flex:0 0 auto}
-  .autozone .autozone-handle{display:inline-flex;align-items:center;justify-content:center;width:34px;height:32px;color:var(--muted);border:1px dashed var(--line);border-radius:8px;font-size:16px;cursor:pointer;user-select:none}
-  .autozone .auto-btn{display:none;position:absolute;top:0;right:0;white-space:nowrap;z-index:6;box-shadow:0 4px 14px rgba(0,0,0,.35)}
-  .autozone:hover .auto-btn,.autozone.open .auto-btn{display:inline-block}
-  .autozone:hover .autozone-handle,.autozone.open .autozone-handle{visibility:hidden}
+  .autozone .autozone-handle{display:inline-flex;align-items:center;justify-content:center;gap:3px;height:32px;padding:0 10px;color:var(--muted);border:1px solid var(--line);background:var(--panel2);border-radius:8px;font-size:14px;cursor:pointer;user-select:none}
+  .autozone .auto-btn{display:none;position:absolute;top:36px;right:0;white-space:nowrap;z-index:6;box-shadow:0 6px 18px rgba(0,0,0,.4)}
+  .autozone.open .auto-btn{display:inline-block}
+  .autozone.open .autozone-handle{border-color:var(--accent);color:var(--accent)}
   *{box-sizing:border-box}
   body{margin:0;font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--txt);font-size:14px}
   button{cursor:pointer;font-family:inherit}
@@ -187,6 +187,7 @@ function toggleTheme(){ applyTheme(document.body.classList.contains('light')?'da
 function can(p){ return !!(PROFILE && (PROFILE.is_admin || PROFILE['can_'+p])); }
 applyTheme((function(){try{return localStorage.getItem('kk_theme')}catch(e){return null}})()||'dark');
 document.addEventListener('click',e=>{ if(e.target&&(e.target.id==='themeBtnTop'||e.target.id==='themeBtnAuth')) toggleTheme(); });
+document.addEventListener('click',()=>document.querySelectorAll('.autozone.open').forEach(z=>z.classList.remove('open')));  // dışına tıklayınca kapat
 
 // ====================== HELPERS ======================
 const $ = s => document.querySelector(s);
@@ -326,8 +327,8 @@ async function renderUretimler(){
       el('div',{class:'stat'},el('b',{},String(PRODS.length)),el('span',{},'Üretim kaydı')),
       el('div',{class:'stat'},el('b',{},String(stockSet.length)),el('span',{},'Farklı ürün')),
       el('div',{class:'grow'}),
-      can('auto')?el('div',{class:'autozone',title:'Otomatik kontrol (üzerine gel)',onclick:e=>e.currentTarget.classList.toggle('open')},
-        el('span',{class:'autozone-handle'},'⋯'),
+      can('auto')?el('div',{class:'autozone'},
+        el('button',{class:'autozone-handle',title:'Otomatik kontrol',onclick:e=>{e.stopPropagation();e.currentTarget.parentElement.classList.toggle('open');}},'🎲 ▾'),
         el('button',{class:'btn sm auto-btn',onclick:e=>{e.stopPropagation();openBulkAuto();}},'🎲 Otomatik Kontrol Üret')
       ):'',
       el('input',{class:'inp',id:'prodSearch',placeholder:'🔍 makine / ürün / operatör ara…',style:'max-width:280px',oninput:filterProdRows})
