@@ -1232,7 +1232,7 @@ async function editRecord(r,prod){
     if(!canEdit) m.append(el('div',{class:'msg info',style:'margin-bottom:12px'},'🔒 Salt görünüm — bu kaydı yalnızca <b>admin</b> düzenleyebilir. Düzeltmek için kaydı <b>silip yeniden girebilirsin</b>.'));
     // her madde, örnekleme kadar satır
     const tb=el('table');
-    tb.append(el('thead',{},el('tr',{},...['Ölçülecek Değer','Hedef Nicel','Hedef Nitel','Alt Limit','Üst Limit','Yöntem','Örnek #','Ölçüm','Uygun','Açıklama','Kalan Süre'].map(h=>el('th',{},h)))));
+    tb.append(el('thead',{},el('tr',{},...['Ölçülecek Değer','Hedef Nicel','Hedef Nitel','Alt Limit','Üst Limit','Yöntem','Örnek #','Ölçüm','Uygun','Açıklama','Ölçümcü','Kalan Süre'].map(h=>el('th',{},h)))));
     const body=el('tbody');
     vals.forEach(v=>{
       const smps=v.samples&&v.samples.length?v.samples:[{value:null,ok:null,note:null}];
@@ -1250,6 +1250,7 @@ async function editRecord(r,prod){
           paint();
         }});
         const noteInp=el('input',{class:'cell-inp',style:'width:140px',value:smp.note||'',disabled:canEdit?undefined:true,oninput:e=>smp.note=e.target.value.trim()||null});
+        const byInp=el('input',{class:'cell-inp',style:'width:120px',value:smp.by||oper||'',disabled:canEdit?undefined:true,oninput:e=>smp.by=e.target.value.trim()||null});
         const row=el('tr',{},
           el('td',{style:'min-width:130px;font-weight:600'},v.measure_name),
           el('td',{},((v.target||'')+(v.unit?' '+v.unit:''))||'-'),
@@ -1261,6 +1262,7 @@ async function editRecord(r,prod){
           el('td',{},qual?el('span',{style:'color:var(--muted)'},'—'):measInp),
           el('td',{},tgl),
           el('td',{},noteInp),
+          el('td',{},byInp),
           kalanGunCell(v,startMap,firstDone[v.measure_name]||r.checked_at)
         );
         paint();
