@@ -1181,23 +1181,26 @@ function parsePeriodDays(text){
 function kalanGunCell(v,startMap,autoFirst){
   const per=parsePeriodDays(v.nitel_hedef);
   if(per<=1) return el('td',{style:'color:var(--muted);text-align:center'},'—');  // 24 saatten uzun periyotları göster
-  const pill=el('span',{class:'pill'});
+  const editable=can('plan');
+  const pill=el('span',{class:'pill',style:editable?'cursor:pointer':''});
   function recompute(dStr){
-    if(!dStr){ pill.className='pill gray'; pill.textContent='ilk tarih gir'; pill.title=''; return; }
+    if(!dStr){ pill.className='pill gray'; pill.textContent='⏳ ilk tarih?'; pill.title=editable?'İlk tarih girmek için tıkla':''; return; }
     const fd=new Date(dStr+'T00:00:00'), due=new Date(fd.getTime()+per*86400000);
     const left=Math.ceil((due.getTime()-Date.now())/86400000);
     pill.className='pill '+(left<0?'ret':(left<=30?'proses':'ok'));
     pill.textContent='⏳ '+(left<0?(Math.abs(left)+' gün geçti'):(left+' gün'));
-    pill.title=`İlk: ${fmtDate(dStr)} · Sonraki: ${fmtDate(due)} (${per} gün periyot)`;
+    pill.title=`İlk: ${fmtDate(dStr)} · Sonraki: ${fmtDate(due)} (${per} gün)`+(editable?' — düzenlemek için tıkla':'');
   }
   const start=(startMap[v.plan_item_id]?String(startMap[v.plan_item_id]).slice(0,10):(autoFirst?String(autoFirst).slice(0,10):''));
-  const dateInp=el('input',{type:'date',class:'cell-inp',style:'width:135px',value:start,disabled:can('plan')?undefined:true,
+  const dateInp=el('input',{type:'date',class:'cell-inp',style:'width:135px',value:start,
     onchange:async e=>{ const d=e.target.value; startMap[v.plan_item_id]=d||null; recompute(d);
       if(v.plan_item_id){ const {error}=await sb.from('control_plan_items').update({periodic_start:d||null}).eq('id',v.plan_item_id);
         error?toast(esc(error.message),'err'):toast('İlk tarih kaydedildi.','ok'); } }});
+  const dwrap=el('div',{class:'hidden',style:'display:flex;flex-direction:column;gap:2px;margin-top:4px'},
+    el('span',{style:'font-size:10px;color:var(--muted)'},'İlk tarih'), dateInp);
   recompute(start);
-  return el('td',{}, el('div',{style:'display:flex;flex-direction:column;gap:3px;min-width:138px'},
-    el('span',{style:'font-size:10px;color:var(--muted)'},'İlk tarih'), dateInp, pill));
+  if(editable) pill.onclick=()=>{ dwrap.classList.toggle('hidden'); if(!dwrap.classList.contains('hidden')){ try{dateInp.showPicker&&dateInp.showPicker();}catch(e){} } };
+  return el('td',{}, el('div',{style:'display:flex;flex-direction:column;align-items:center;min-width:120px'}, pill, dwrap));
 }
 async function editRecord(r,prod){
   const root=$('#modalRoot');
