@@ -55,6 +55,8 @@
   input.inp,select.inp,textarea.inp{width:100%;padding:9px 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--txt)}
   table{width:100%;border-collapse:collapse;font-size:13px}
   th,td{padding:8px 9px;text-align:left;border-bottom:1px solid var(--line);vertical-align:middle}
+  .cell-inp{padding:5px 7px;font-size:13px;border-radius:6px;border:1px solid var(--line);background:var(--panel2);color:var(--txt);max-width:230px}
+  .cell-inp:focus{outline:none;border-color:var(--accent)}
   th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.3px;position:sticky;top:0;background:var(--panel)}
   tr:hover td{background:var(--panel2)}
   .tbl-wrap{overflow-x:auto;max-height:65vh;overflow-y:auto;border:1px solid var(--line);border-radius:10px}
@@ -449,18 +451,21 @@ async function renderPlan(){
       el('h3',{style:'margin:0'},`${sc} — ${esc(items[0].stock_name||'')} (${items.length} madde)`),
       el('button',{class:'btn sm danger',onclick:()=>delPlanStock(sc)},'Bu planı sil')
     ));
+    card.append(el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:12px'},'💡 Hücrelere tıklayıp değiştirebilirsin; başka yere tıklayınca otomatik kaydedilir.'));
     const tb=el('table');
-    tb.append(el('thead',{},el('tr',{},...['Op','#','Ölçülecek Değer','Nitel Hedef / Hedef','Yöntem','Limit','Örnek','Tip',''].map(h=>el('th',{},h)))));
+    tb.append(el('thead',{},el('tr',{},...['Op','Ölçülecek Değer','Hedef','Birim','Nitel Hedef','Yöntem','Alt Limit','Üst Limit','Örnek','Tip',''].map(h=>el('th',{},h)))));
     const body=el('tbody');
     items.forEach((it)=>body.append(el('tr',{},
-      el('td',{},it.op_no==null?'—':String(it.op_no)),
-      el('td',{},String(it.seq??'')),
-      el('td',{},it.measure_name),
-      el('td',{},it.is_qualitative?(it.nitel_hedef||''):((it.target||'')+(it.unit?' '+it.unit:''))),
-      el('td',{},it.method||''),
-      el('td',{},(it.lower_limit||it.upper_limit)?`${it.lower_limit||'-'}…${it.upper_limit||'-'}`:''),
-      el('td',{},String(it.sample_size??1)),
-      el('td',{},el('span',{class:'pill '+(it.is_qualitative?'gray':'seri')},it.is_qualitative?'Nitel':'Ölçüm')),
+      el('td',{},pin(it,'op_no',{num:true,w:'44px'})),
+      el('td',{},pin(it,'measure_name',{w:'150px'})),
+      el('td',{},pin(it,'target',{w:'62px'})),
+      el('td',{},pin(it,'unit',{w:'50px'})),
+      el('td',{},pin(it,'nitel_hedef',{w:'210px'})),
+      el('td',{},pin(it,'method',{w:'120px'})),
+      el('td',{},pin(it,'lower_limit',{w:'64px'})),
+      el('td',{},pin(it,'upper_limit',{w:'64px'})),
+      el('td',{},pin(it,'sample_size',{num:true,w:'50px'})),
+      el('td',{},pin(it,'is_qualitative',{select:true})),
       el('td',{},el('button',{class:'btn sm danger',onclick:()=>delPlanItem(it.id)},'Sil'))
     )));
     tb.append(body); card.append(el('div',{class:'tbl-wrap'},tb));
@@ -477,6 +482,27 @@ function field(label,id,ph,list){
   return wrap;
 }
 function sel(id,opts){const s=el('select',{class:'inp',id});opts.forEach(([v,t])=>s.append(el('option',{value:v},t)));return s;}
+// satır-içi düzenlenebilir hücre
+function pin(it,field,o){
+  o=o||{};
+  if(o.select){
+    const s=el('select',{class:'cell-inp',onchange:e=>updatePlan(it,{is_qualitative:e.target.value==='true'})});
+    [['false','Ölçüm'],['true','Nitel']].forEach(([v,t])=>{const op=el('option',{value:v},t);if(String(!!it[field])===v)op.selected=true;s.append(op);});
+    return s;
+  }
+  return el('input',{class:'cell-inp',value:it[field]??'',style:o.w?('width:'+o.w):'',
+    onchange:e=>{let v=e.target.value.trim();
+      if(o.num) v=(v===''?null:(isFinite(Number(v))?Number(v):null));
+      else v=(v===''?null:v);
+      updatePlan(it,{[field]:v});
+    }});
+}
+async function updatePlan(it,patch){
+  const {error}=await sb.from('control_plan_items').update(patch).eq('id',it.id);
+  if(error){toast(esc(error.message),'err');return;}
+  Object.assign(it,patch);
+  toast('Kaydedildi ✓','ok');
+}
 async function addPlanItem(){
   const stock=$('#pi_stock').value.trim(), name=$('#pi_name').value.trim();
   if(!stock||!name){toast('Stok Kodu ve Ölçülecek Değer zorunlu.','err');return;}
