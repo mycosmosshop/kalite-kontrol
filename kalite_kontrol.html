@@ -1164,12 +1164,35 @@ function normalizeVals(raw){
     return {...v, sample_size:1, samples:[{value:v.value||null, ok, note:null, by:null}]};
   });
 }
+// periyodik maddelerin (yılda 1, 3 yılda 1, vb.) gün cinsinden periyodu
+function parsePeriodDays(text){
+  const t=deTr(text||''); if(!t)return 0; let d=0,m;
+  if(m=t.match(/(\d+)?\s*yil/)) d+=(Number(m[1])||1)*365;
+  if(m=t.match(/(\d+)\s*ay/)) d+=Number(m[1])*30;
+  if(m=t.match(/(\d+)\s*hafta/)) d+=Number(m[1])*7;
+  if(m=t.match(/(\d+)\s*gun/)) d+=Number(m[1]);
+  return d;
+}
+function kalanGunCell(v,firstDone,fallbackDate){
+  const per=parsePeriodDays(v.nitel_hedef);
+  if(per<=0) return el('td',{style:'color:var(--muted);text-align:center'},'—');
+  const fd=firstDone[v.measure_name]||fallbackDate;
+  const due=new Date(new Date(fd).getTime()+per*86400000);
+  const left=Math.ceil((due.getTime()-Date.now())/86400000);
+  const cls=left<0?'ret':(left<=30?'proses':'ok');
+  const txt=left<0?(Math.abs(left)+' gün geçti'):(left+' gün');
+  return el('td',{style:'text-align:center'},el('span',{class:'pill '+cls,title:`İlk: ${fmtDate(fd)} · Sonraki: ${fmtDate(due)} (${per} gün periyot)`},'⏳ '+txt));
+}
 async function editRecord(r,prod){
   const root=$('#modalRoot');
   const vals=normalizeVals(JSON.parse(JSON.stringify(r.vals||[])));
   let stage=r.stage, oper=r.operator||'';
   // üretim bilgisi (tarih vb. kayıtta üretimle aynı görünsün)
   if(!prod && r.production_id){ const {data}=await sb.from('productions').select('*').eq('id',r.production_id).maybeSingle(); prod=data||null; }
+  // periyodik maddeler için "ilk yapılma" tarihleri (bu ürünün tüm kayıtlarından)
+  const firstDone={};
+  { const {data:hist}=await sb.from('control_records').select('checked_at,vals').eq('stock_code',r.stock_code);
+    (hist||[]).forEach(rc=>{ (rc.vals||[]).forEach(vv=>{ const k=vv.measure_name; if(k&&(!firstDone[k]||rc.checked_at<firstDone[k])) firstDone[k]=rc.checked_at; }); }); }
   const canEdit = can('edit');                                     // kullanıcı bazlı: kayıt düzenleme yetkisi
   const canDelete = can('delete') || r.created_by===(ME&&ME.id);
   function render(){
@@ -1187,7 +1210,7 @@ async function editRecord(r,prod){
     if(!canEdit) m.append(el('div',{class:'msg info',style:'margin-bottom:12px'},'🔒 Salt görünüm — bu kaydı yalnızca <b>admin</b> düzenleyebilir. Düzeltmek için kaydı <b>silip yeniden girebilirsin</b>.'));
     // her madde, örnekleme kadar satır
     const tb=el('table');
-    tb.append(el('thead',{},el('tr',{},...['Ölçülecek Değer','Hedef Nicel','Hedef Nitel','Alt Limit','Üst Limit','Yöntem','Örnek #','Ölçüm','Uygun','Açıklama'].map(h=>el('th',{},h)))));
+    tb.append(el('thead',{},el('tr',{},...['Ölçülecek Değer','Hedef Nicel','Hedef Nitel','Alt Limit','Üst Limit','Yöntem','Örnek #','Ölçüm','Uygun','Açıklama','Kalan Süre'].map(h=>el('th',{},h)))));
     const body=el('tbody');
     vals.forEach(v=>{
       const smps=v.samples&&v.samples.length?v.samples:[{value:null,ok:null,note:null}];
@@ -1215,7 +1238,8 @@ async function editRecord(r,prod){
           el('td',{style:'text-align:center;color:var(--muted)'},`${s+1}/${smps.length}`),
           el('td',{},qual?el('span',{style:'color:var(--muted)'},'—'):measInp),
           el('td',{},tgl),
-          el('td',{},noteInp)
+          el('td',{},noteInp),
+          kalanGunCell(v,firstDone,r.checked_at)
         );
         paint();
         body.append(row);
