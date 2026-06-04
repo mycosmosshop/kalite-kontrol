@@ -188,7 +188,8 @@ const el = (tag, props={}, ...kids) => {
     if(k==='class') e.className=props[k];
     else if(k==='html') e.innerHTML=props[k];
     else if(k.startsWith('on')) e.addEventListener(k.slice(2),props[k]);
-    else e.setAttribute(k,props[k]);
+    else if(props[k]===false||props[k]==null) {/* boolean attr: atla (disabled:undefined gibi) */}
+    else e.setAttribute(k,props[k]===true?'':props[k]);
   }
   kids.flat().forEach(c=>e.append(c?.nodeType?c:document.createTextNode(c??'')));
   return e;
@@ -907,6 +908,8 @@ async function editRecord(r,prod){
   let stage=r.stage, oper=r.operator||'';
   // üretim bilgisi (tarih vb. kayıtta üretimle aynı görünsün)
   if(!prod && r.production_id){ const {data}=await sb.from('productions').select('*').eq('id',r.production_id).maybeSingle(); prod=data||null; }
+  const canEdit = !!(PROFILE && PROFILE.is_admin);                 // sadece admin (volkanpekatik) düzenleyebilir
+  const canDelete = canEdit || r.created_by===(ME&&ME.id);
   function render(){
     root.innerHTML='';
     const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
@@ -915,11 +918,12 @@ async function editRecord(r,prod){
     m.append(el('h3',{},`${STAGES[stage]} Kontrol Kaydı`));
     const pdate=prod?(fmtDate(prod.prod_date||prod.start_time)+(prod.start_time?' '+fmtTime(prod.start_time)+(prod.end_time?'–'+fmtTime(prod.end_time):''):'')):fmtDT(r.checked_at);
     m.append(el('div',{class:'meta',html:`<b>${esc(r.stock_code)}</b> — ${esc(r.stock_name||'')}<br>${esc(r.machine_code||'')}${prod&&prod.customer?' · '+esc(prod.customer):''}${prod&&prod.quantity!=null?' · '+prod.quantity+' '+esc(prod.unit||''):''} · ${pdate}`}));
-    const stageSel=sel('er_stage',Object.entries(STAGES)); stageSel.value=stage; stageSel.onchange=e=>stage=e.target.value;
+    const stageSel=sel('er_stage',Object.entries(STAGES)); stageSel.value=stage; if(canEdit)stageSel.onchange=e=>stage=e.target.value; else stageSel.disabled=true;
     m.append(el('div',{class:'row',style:'margin-bottom:14px'},
       el('div',{class:'field',style:'flex:0;min-width:170px'},el('label',{class:'lab'},'Aşama'),stageSel),
-      el('div',{class:'field grow'},el('label',{class:'lab'},'Operatör'),el('input',{class:'inp',id:'er_oper',value:oper,oninput:e=>oper=e.target.value}))
+      el('div',{class:'field grow'},el('label',{class:'lab'},'Operatör'),el('input',{class:'inp',id:'er_oper',value:oper,disabled:canEdit?undefined:true,oninput:e=>oper=e.target.value}))
     ));
+    if(!canEdit) m.append(el('div',{class:'msg info',style:'margin-bottom:12px'},'🔒 Salt görünüm — bu kaydı yalnızca <b>admin</b> düzenleyebilir. Düzeltmek için kaydı <b>silip yeniden girebilirsin</b>.'));
     // her madde, örnekleme kadar satır
     const tb=el('table');
     tb.append(el('thead',{},el('tr',{},...['Ölçülecek Değer','Hedef Nicel','Hedef Nitel','Alt Limit','Üst Limit','Yöntem','Örnek #','Ölçüm','Uygun','Açıklama'].map(h=>el('th',{},h)))));
@@ -932,14 +936,14 @@ async function editRecord(r,prod){
         tgl.innerHTML='<span class="lbl"></span><span class="knob"></span>';
         function paint(){const ok=smp.ok===true;tgl.classList.toggle('ok',ok);tgl.classList.toggle('ret',!ok);tgl.querySelector('.lbl').textContent=ok?'OK':'RET';
           if(measInp)measInp.style.borderColor=ok?'var(--ok)':'var(--ret)';}
-        if(qual) tgl.onclick=()=>{smp.ok=smp.ok===true?false:true;paint();}; else tgl.disabled=true;
-        const measInp = qual?null:el('input',{class:'cell-inp',style:'width:84px',value:smp.value||'',oninput:e=>{
+        if(canEdit && qual) tgl.onclick=()=>{smp.ok=smp.ok===true?false:true;paint();}; else tgl.disabled=true;
+        const measInp = qual?null:el('input',{class:'cell-inp',style:'width:84px',value:smp.value||'',disabled:canEdit?undefined:true,oninput:e=>{
           smp.value=e.target.value.trim()||null;
           const val=Number(e.target.value),lo=Number(v.lower_limit),hi=Number(v.upper_limit);
           if(e.target.value!==''&&!isNaN(val)){let ok=true; if(v.lower_limit&&!isNaN(lo)&&val<lo)ok=false; if(v.upper_limit&&!isNaN(hi)&&val>hi)ok=false; smp.ok=ok;} else smp.ok=false;
           paint();
         }});
-        const noteInp=el('input',{class:'cell-inp',style:'width:140px',value:smp.note||'',oninput:e=>smp.note=e.target.value.trim()||null});
+        const noteInp=el('input',{class:'cell-inp',style:'width:140px',value:smp.note||'',disabled:canEdit?undefined:true,oninput:e=>smp.note=e.target.value.trim()||null});
         const row=el('tr',{},
           el('td',{style:'min-width:130px;font-weight:600'},v.measure_name),
           el('td',{},((v.target||'')+(v.unit?' '+v.unit:''))||'-'),
@@ -957,11 +961,12 @@ async function editRecord(r,prod){
       });
     });
     tb.append(body); m.append(el('div',{class:'tbl-wrap'},tb));
-    m.append(el('div',{class:'field',style:'margin-top:8px'},el('label',{class:'lab'},'Genel Not'),el('textarea',{class:'inp',id:'er_note',rows:'2'},r.note||'')));
-    m.append(el('div',{style:'display:flex;gap:8px;margin-top:10px'},
-      el('button',{class:'btn',onclick:saveEdit},'💾 Kaydet'),
-      el('button',{class:'btn danger',style:'flex:0',onclick:()=>delRecord(r.id)},'🗑 Sil')
-    ));
+    m.append(el('div',{class:'field',style:'margin-top:8px'},el('label',{class:'lab'},'Genel Not'),el('textarea',{class:'inp',id:'er_note',rows:'2',disabled:canEdit?undefined:true},r.note||'')));
+    const btns=el('div',{style:'display:flex;gap:8px;margin-top:10px'});
+    if(canEdit) btns.append(el('button',{class:'btn',onclick:saveEdit},'💾 Kaydet'));
+    if(canDelete) btns.append(el('button',{class:'btn danger',style:'flex:0',onclick:()=>delRecord(r.id)},'🗑 Sil'));
+    if(!canEdit && !canDelete) btns.append(el('button',{class:'btn sec',onclick:()=>root.innerHTML=''},'Kapat'));
+    m.append(btns);
     bg.append(m); root.append(bg);
   }
   async function saveEdit(){
