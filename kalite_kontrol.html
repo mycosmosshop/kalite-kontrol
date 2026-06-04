@@ -85,6 +85,7 @@
   .ctrl-item .det{color:var(--muted);font-size:12px}
   .okret{display:flex;gap:6px}
   .okret button{padding:8px 16px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--muted);font-weight:700}
+  .okret.sm button{padding:5px 11px;font-size:12px}
   .okret button.ok.on{background:var(--ok);color:#fff;border-color:var(--ok)}
   .okret button.ret.on{background:var(--ret);color:#fff;border-color:var(--ret)}
   @media(max-width:640px){
@@ -453,18 +454,27 @@ async function renderPlan(){
     ));
     card.append(el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:12px'},'💡 Hücrelere tıklayıp değiştirebilirsin; başka yere tıklayınca otomatik kaydedilir.'));
     const tb=el('table');
-    tb.append(el('thead',{},el('tr',{},...['Op','Ölçülecek Değer','Hedef','Birim','Nitel Hedef','Yöntem','Alt Limit','Üst Limit','Örnek','Tip',''].map(h=>el('th',{},h)))));
+    tb.append(el('thead',{},el('tr',{},...['Op','Ölçülecek Değer','Proses','Son','Hedef','Birim','Nitel Hedef','Alt Lim.','Üst Lim.','Örnek','Sıklık(dk)','Yöntem','Ekipman','FMEA','Özel Kar.','Yedek Yöntem','Acil Plan','CAPA','Tip',''].map(h=>el('th',{},h)))));
     const body=el('tbody');
     items.forEach((it)=>body.append(el('tr',{},
       el('td',{},pin(it,'op_no',{num:true,w:'44px'})),
       el('td',{},pin(it,'measure_name',{w:'150px'})),
-      el('td',{},pin(it,'target',{w:'62px'})),
+      el('td',{},pin(it,'process_control',{bool:true})),
+      el('td',{},pin(it,'final_control',{bool:true})),
+      el('td',{},pin(it,'target',{w:'58px'})),
       el('td',{},pin(it,'unit',{w:'50px'})),
-      el('td',{},pin(it,'nitel_hedef',{w:'210px'})),
-      el('td',{},pin(it,'method',{w:'120px'})),
-      el('td',{},pin(it,'lower_limit',{w:'64px'})),
-      el('td',{},pin(it,'upper_limit',{w:'64px'})),
+      el('td',{},pin(it,'nitel_hedef',{w:'200px'})),
+      el('td',{},pin(it,'lower_limit',{w:'60px'})),
+      el('td',{},pin(it,'upper_limit',{w:'60px'})),
       el('td',{},pin(it,'sample_size',{num:true,w:'50px'})),
+      el('td',{},pin(it,'sampling_frequency',{w:'60px'})),
+      el('td',{},pin(it,'method',{w:'120px'})),
+      el('td',{},pin(it,'production_equipment',{w:'130px'})),
+      el('td',{},pin(it,'fmea_number',{w:'60px'})),
+      el('td',{},pin(it,'special_characteristic',{w:'70px'})),
+      el('td',{},pin(it,'backup_method',{w:'120px'})),
+      el('td',{},pin(it,'emergency_action_plan',{w:'80px'})),
+      el('td',{},pin(it,'capa_plan',{w:'70px'})),
       el('td',{},pin(it,'is_qualitative',{select:true})),
       el('td',{},el('button',{class:'btn sm danger',onclick:()=>delPlanItem(it.id)},'Sil'))
     )));
@@ -488,6 +498,12 @@ function pin(it,field,o){
   if(o.select){
     const s=el('select',{class:'cell-inp',onchange:e=>updatePlan(it,{is_qualitative:e.target.value==='true'})});
     [['false','Ölçüm'],['true','Nitel']].forEach(([v,t])=>{const op=el('option',{value:v},t);if(String(!!it[field])===v)op.selected=true;s.append(op);});
+    return s;
+  }
+  if(o.bool){
+    const cur = it[field]!==false; // null/undefined/true => Evet
+    const s=el('select',{class:'cell-inp',onchange:e=>updatePlan(it,{[field]:e.target.value==='true'})});
+    [['true','✓'],['false','—']].forEach(([v,t])=>{const op=el('option',{value:v},t);if(String(cur)===v)op.selected=true;s.append(op);});
     return s;
   }
   return el('input',{class:'cell-inp',value:it[field]??'',style:o.w?('width:'+o.w):'',
@@ -542,7 +558,9 @@ function parsePlanExcel(rows){
   const cSeq=col('sequence number'),cOp=col('operation number'),cProc=col('process control'),
         cFin=col('final control'),cVal=col('value to be checked'),cQt=col('quantitative target'),
         cQl=col('qualitative target'),cLo=col('lower limit'),cHi=col('upper limit'),
-        cSamp=col('sample size'),cMethod=col('control method');
+        cSamp=col('sample size'),cFreq=col('sampling frequency'),cEquip=col('production equipment'),
+        cFmea=col('fmea number'),cSpec=col('special characteristic'),cMethod=col('control method'),
+        cBackup=col('back up control method'),cEmer=col('emergency action plan'),cCapa=col('capa plan');
   const items=[];
   for(let r=hi+1;r<rows.length;r++){
     const row=rows[r]; if(!row)continue;
@@ -562,6 +580,13 @@ function parsePlanExcel(rows){
       upper_limit:isNum?cleanCell(cHi>=0?row[cHi]:null):null,
       sample_size:(samp&&isFinite(Number(samp)))?Number(samp):1,
       method:cleanCell(cMethod>=0?row[cMethod]:null),
+      sampling_frequency:cleanCell(cFreq>=0?row[cFreq]:null),
+      production_equipment:cleanCell(cEquip>=0?row[cEquip]:null),
+      fmea_number:cleanCell(cFmea>=0?row[cFmea]:null),
+      special_characteristic:cleanCell(cSpec>=0?row[cSpec]:null),
+      backup_method:cleanCell(cBackup>=0?row[cBackup]:null),
+      emergency_action_plan:cleanCell(cEmer>=0?row[cEmer]:null),
+      capa_plan:cleanCell(cCapa>=0?row[cCapa]:null),
       process_control: cProc<0 ? true : !!cleanCell(row[cProc]),
       final_control:   cFin<0  ? true : !!cleanCell(row[cFin])
     });
@@ -610,21 +635,22 @@ async function openControl(p){
   allItems.forEach(it=>state[it.id]={value:'',result:it.is_qualitative?null:''});
   let operVal=p.operator||'', noteVal='';
 
+  const prosesFreq = Number((allItems.find(it=>it.sampling_frequency)||{}).sampling_frequency)||60;
   let stage = existing.some(r=>r.stage==='seri_basi') ? 'proses' : 'seri_basi';
 
   function lastProsesInfo(){
     const ps=existing.filter(r=>r.stage==='proses'||r.stage==='seri_basi').sort((a,b)=>new Date(b.checked_at)-new Date(a.checked_at));
     if(!ps.length)return'';
     const mins=Math.round((Date.now()-new Date(ps[0].checked_at))/60000);
-    const warn=mins>=60;
-    return `<span class="pill ${warn?'ret':'gray'}">Son kontrolden ${mins} dk geçti${warn?' — proses zamanı!':''}</span>`;
+    const warn=mins>=prosesFreq;
+    return `<span class="pill ${warn?'ret':'gray'}">Son kontrolden ${mins} dk geçti (plan: her ${prosesFreq} dk) ${warn?'— proses zamanı! ⏰':''}</span>`;
   }
 
   function render(){
     root.innerHTML='';
     const items=itemsForStage(stage);
     const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
-    const m=el('div',{class:'modal',style:'position:relative'});
+    const m=el('div',{class:'modal',style:'position:relative;max-width:1120px'});
     m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
     m.append(el('h3',{},'Kalite Kontrol Girişi'));
     m.append(el('div',{class:'meta',html:
@@ -656,36 +682,48 @@ async function openControl(p){
     if(!items.length){
       m.append(el('div',{class:'msg info'},`<b>${STAGES[stage]}</b> için bu üründe (<b>${esc(p.stock_code)}</b>, Op ${p.op_no??'-'}) kontrol planı maddesi yok. «Kontrol Planı» sekmesinden ekle.`));
     }else{
+      const freq=(items.find(it=>it.sampling_frequency)||{}).sampling_frequency;
+      if(freq) m.append(el('div',{style:'margin-bottom:8px;color:var(--muted);font-size:12.5px'},`⏱ Plan örnekleme sıklığı: her ${esc(freq)} dakikada bir ${STAGES[stage].toLowerCase()} kontrolü.`));
+      const tb=el('table');
+      tb.append(el('thead',{},el('tr',{},...['Ölçülecek Değer','Nitel Hedef','Yöntem','Hedef','Alt Limit','Üst Limit','Örnek','Sonuç','Ölçüm','İlerleme'].map(h=>el('th',{},h)))));
+      const body=el('tbody');
       items.forEach(it=>{
         const st=state[it.id];
-        const head=el('div',{class:'head'},
-          el('div',{},el('div',{class:'nm'},it.measure_name),
-            el('div',{class:'det'},[it.nitel_hedef,it.method,it.target&&('Hedef: '+it.target+(it.unit?' '+it.unit:'')),
-              (it.lower_limit||it.upper_limit)&&(`Limit: ${it.lower_limit||'-'}…${it.upper_limit||'-'}`),
-              'Örnek: '+(it.sample_size??1)].filter(Boolean).join(' · ')))
-        );
-        const ci=el('div',{class:'ctrl-item'});
-        ci.append(head);
-        const ctrls=el('div',{class:'row'});
-        if(it.is_qualitative){
-          const okB=el('button',{class:'ok',onclick:()=>{st.result='OK';paint();}},'OK');
-          const retB=el('button',{class:'ret',onclick:()=>{st.result='RET';paint();}},'RET');
-          const grp=el('div',{class:'okret'},okB,retB);
-          function paint(){okB.classList.toggle('on',st.result==='OK');retB.classList.toggle('on',st.result==='RET');}
-          ctrls.append(el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Sonuç'),grp));
-        }else{
-          ctrls.append(el('div',{class:'field grow'},el('label',{class:'lab'},'Ölçüm değeri'),
-            el('input',{class:'inp',value:st.value,oninput:e=>{st.value=e.target.value;
-              // limit kontrolü otomatik OK/RET
-              const v=Number(e.target.value),lo=Number(it.lower_limit),hi=Number(it.upper_limit);
-              if(e.target.value!==''&&!isNaN(v)){
-                let ok=true; if(it.lower_limit&&!isNaN(lo)&&v<lo)ok=false; if(it.upper_limit&&!isNaN(hi)&&v>hi)ok=false;
-                st.result=ok?'OK':'RET'; e.target.style.borderColor=ok?'var(--ok)':'var(--ret)';
-              }}})));
+        const okB=el('button',{type:'button',class:'ok',onclick:()=>{st.result=st.result==='OK'?null:'OK';paint();}},'OK');
+        const retB=el('button',{type:'button',class:'ret',onclick:()=>{st.result=st.result==='RET'?null:'RET';paint();}},'RET');
+        const prog=el('span',{class:'pill gray'});
+        const measInp=el('input',{class:'cell-inp',style:'width:88px',value:st.value,oninput:e=>{
+          st.value=e.target.value;
+          const v=Number(e.target.value),lo=Number(it.lower_limit),hi=Number(it.upper_limit);
+          if(!it.is_qualitative && e.target.value!=='' && !isNaN(v)){
+            let ok=true; if(it.lower_limit&&!isNaN(lo)&&v<lo)ok=false; if(it.upper_limit&&!isNaN(hi)&&v>hi)ok=false;
+            st.result=ok?'OK':'RET';
+          }
+          paint();
+        }});
+        function paint(){
+          okB.classList.toggle('on',st.result==='OK');
+          retB.classList.toggle('on',st.result==='RET');
+          measInp.style.borderColor = st.result==='OK'?'var(--ok)':(st.result==='RET'?'var(--ret)':'var(--line)');
+          prog.textContent=`${st.result?1:0}/${it.sample_size??1}`;
+          prog.className='pill '+(st.result?'ok':'gray');
         }
-        ci.append(ctrls);
-        m.append(ci);
+        const row=el('tr',{},
+          el('td',{style:'min-width:130px;font-weight:600'},it.measure_name),
+          el('td',{style:'max-width:240px;color:var(--muted);font-size:12px'},it.nitel_hedef||'-'),
+          el('td',{},it.method||'-'),
+          el('td',{},((it.target||'')+(it.unit?' '+it.unit:''))||'-'),
+          el('td',{},it.lower_limit||'-'),
+          el('td',{},it.upper_limit||'-'),
+          el('td',{},String(it.sample_size??1)),
+          el('td',{},el('div',{class:'okret sm'},okB,retB)),
+          el('td',{},measInp),
+          el('td',{},prog)
+        );
+        paint();
+        body.append(row);
       });
+      tb.append(body); m.append(el('div',{class:'tbl-wrap'},tb));
     }
     m.append(el('div',{class:'field',style:'margin-top:8px'},el('label',{class:'lab'},'Not (opsiyonel)'),el('textarea',{class:'inp',id:'m_note',rows:'2',oninput:e=>noteVal=e.target.value},noteVal)));
     const saveBtn=el('button',{class:'btn',style:'margin-top:8px',onclick:()=>saveControl(p,items,state,stage)},`💾 Kaydet — ${STAGES[stage]}`);
