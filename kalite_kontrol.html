@@ -25,6 +25,9 @@
   .autozone .auto-btn{display:none;position:absolute;top:36px;right:0;white-space:nowrap;z-index:6;box-shadow:0 6px 18px rgba(0,0,0,.4)}
   .autozone.open .auto-btn{display:inline-block}
   .autozone.open .autozone-handle{border-color:var(--accent);color:var(--accent)}
+  .autozone .auto-menu{display:none;position:absolute;top:36px;right:0;flex-direction:column;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px;box-shadow:0 6px 18px rgba(0,0,0,.4);z-index:7;white-space:nowrap;min-width:200px}
+  .autozone.open .auto-menu{display:flex}
+  .autozone .auto-menu .btn{justify-content:flex-start}
   *{box-sizing:border-box}
   body{margin:0;font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--txt);font-size:14px}
   button{cursor:pointer;font-family:inherit}
@@ -310,6 +313,57 @@ function matchesUF(p){
   if(URETIM_FILT.end && d && d>URETIM_FILT.end) return false;
   return true;
 }
+function closeAutozones(){ document.querySelectorAll('.autozone.open').forEach(z=>z.classList.remove('open')); }
+async function deleteSelectedProds(){
+  const ids=[...document.querySelectorAll('#prodBody .prodChk:checked')].map(c=>Number(c.dataset.id));
+  if(!ids.length){ toast('Önce silinecek üretimleri seç (sol kutucuk).','err'); return; }
+  if(!confirm(`${ids.length} üretim ve bunlara ait TÜM kontrol kayıtları (seri başı/proses/son) silinecek. Emin misin?`)) return;
+  const {error:e1}=await sb.from('control_records').delete().in('production_id',ids);
+  if(e1){ toast('Kontrol kayıtları silinemedi: '+esc(e1.message),'err'); return; }
+  const {error:e2}=await sb.from('productions').delete().in('id',ids);
+  if(e2){ toast('Üretim silinemedi: '+esc(e2.message),'err'); return; }
+  toast(`${ids.length} üretim ve kontrolleri silindi.`,'ok'); renderUretimler();
+}
+async function openManualProd(){
+  const root=$('#modalRoot');
+  const stocks=[...new Set(PRODS.map(p=>p.stock_code).filter(Boolean))];
+  const machineCodes=[...new Set(PRODS.map(p=>p.machine_code).filter(Boolean))];
+  const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
+  const m=el('div',{class:'modal',style:'position:relative;max-width:840px'});
+  m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
+  m.append(el('h3',{},'➕ Manuel Üretim Ekle'));
+  const sm=(label,id,attrs)=>el('div',{class:'field',style:'flex:0;min-width:110px'},el('label',{class:'lab'},label),el('input',Object.assign({class:'inp',id},attrs||{})));
+  m.append(el('div',{class:'row',style:'margin-bottom:10px'},
+    sm('Tarih','mp_date',{type:'date'}), sm('Vardiya','mp_shift',{placeholder:'1'}), sm('Op No','mp_op',{placeholder:'3'}),
+    field('Makine Kodu','mp_mc','910.5.xxx',machineCodes), field('Makine Adı','mp_mn','')
+  ));
+  m.append(el('div',{class:'row',style:'margin-bottom:10px'},
+    field('Stok Kodu','mp_sc','700.0.454',stocks), field('Stok Adı','mp_sn',''), field('Cari','mp_cari',''), sm('İş Emri','mp_wo',{})
+  ));
+  m.append(el('div',{class:'row',style:'margin-bottom:10px'},
+    sm('Miktar','mp_qty',{type:'number',step:'any'}), sm('Birim','mp_unit',{placeholder:'Ad'}),
+    sm('Başlama','mp_start',{type:'time'}), sm('Bitiş','mp_end',{type:'time'}), field('Operatör','mp_oper','')
+  ));
+  m.append(el('button',{class:'btn',style:'margin-top:6px',onclick:saveManual},'💾 Üretimi Ekle'));
+  bg.append(m); root.append(bg);
+  $('#mp_mc').addEventListener('change',()=>{ const pr=PRODS.find(p=>p.machine_code===$('#mp_mc').value.trim()); if(pr&&!$('#mp_mn').value)$('#mp_mn').value=pr.machine_name||''; });
+  $('#mp_sc').addEventListener('change',()=>{ const pr=PRODS.find(p=>p.stock_code===$('#mp_sc').value.trim()); if(pr){ if(!$('#mp_sn').value)$('#mp_sn').value=pr.stock_name||''; if(!$('#mp_cari').value)$('#mp_cari').value=pr.customer||''; } });
+  async function saveManual(){
+    const date=$('#mp_date').value, mc=$('#mp_mc').value.trim(), sc=$('#mp_sc').value.trim();
+    if(!date||!mc||!sc){ toast('Tarih, Makine Kodu ve Stok Kodu zorunlu.','err'); return; }
+    const mkISO=t=> t? new Date(date+'T'+t+':00').toISOString() : null;
+    const start=mkISO($('#mp_start').value), end=mkISO($('#mp_end').value), op=Number($('#mp_op').value)||null;
+    const rec={ prod_date:date, shift:Number($('#mp_shift').value)||null, op_no:op,
+      machine_code:mc, machine_name:$('#mp_mn').value.trim()||null,
+      stock_code:sc, stock_name:$('#mp_sn').value.trim()||null, customer:$('#mp_cari').value.trim()||null,
+      work_order:$('#mp_wo').value.trim()||null, quantity:Number($('#mp_qty').value)||null, unit:$('#mp_unit').value.trim()||null,
+      start_time:start, end_time:end, operator:$('#mp_oper').value.trim()||null,
+      fingerprint:`${mc}|${start||''}|${sc}|${op??''}` };
+    const {error}=await sb.from('productions').upsert(rec,{onConflict:'fingerprint'});
+    if(error){ toast(esc(error.message),'err'); return; }
+    toast('Üretim eklendi.','ok'); root.innerHTML=''; renderUretimler();
+  }
+}
 async function renderUretimler(){
   const root=$('#tab-uretimler');
   root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
@@ -343,9 +397,13 @@ async function renderUretimler(){
       el('button',{class:'btn sm',style:'flex:0',onclick:()=>{URETIM_FILT.stock=$('#uf_stock').value.trim();renderUretimler();}},'Filtrele'),
       aktifFiltre?el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{URETIM_FILT={start:'',end:'',stock:''};renderUretimler();}},'Temizle'):'',
       el('div',{class:'grow'}),
-      can('auto')?el('div',{class:'autozone'},
-        el('button',{class:'autozone-handle',title:'Otomatik kontrol araçları',onclick:e=>{e.stopPropagation();e.currentTarget.parentElement.classList.toggle('open');}},'▾'),
-        el('button',{class:'btn sm auto-btn',onclick:e=>{e.stopPropagation();openBulkAuto();}},'🎲 Otomatik Kontrol Üret')
+      (can('auto')||can('import')||PROFILE.is_admin)?el('div',{class:'autozone'},
+        el('button',{class:'autozone-handle',title:'Üretim araçları',onclick:e=>{e.stopPropagation();e.currentTarget.parentElement.classList.toggle('open');}},'▾'),
+        el('div',{class:'auto-menu',onclick:e=>e.stopPropagation()},
+          can('auto')?el('button',{class:'btn sm',onclick:()=>{closeAutozones();openBulkAuto();}},'🎲 Otomatik Kontrol Üret'):'',
+          can('import')?el('button',{class:'btn sm',onclick:()=>{closeAutozones();openManualProd();}},'➕ Manuel Üretim Ekle'):'',
+          PROFILE.is_admin?el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteSelectedProds();}},'🗑 Seçilenleri Sil'):''
+        )
       ):'',
       el('input',{class:'inp',id:'prodSearch',placeholder:'🔍 ara…',style:'max-width:220px',oninput:filterProdRows})
     ),
