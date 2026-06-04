@@ -748,8 +748,11 @@ async function openControl(p){
         function addSample(){
           if(st.samples.length>=n)return;
           if(!qual && (st.cur.value===''||st.cur.value==null)){toast('Önce ölçüm değeri gir.','err');return;}
-          st.samples.push({value:qual?null:(st.cur.value||null),ok:st.cur.ok===true});
-          st.cur={value:'',ok:false}; meas.value=''; paintTgl(); paintProg();
+          const lastOk=st.cur.ok===true;
+          st.samples.push({value:qual?null:(st.cur.value||null),ok:lastOk});
+          // tamamlandıysa toggle son seçilende kalsın; örnek kaldıysa otomatik RET
+          st.cur={value:'', ok: st.samples.length>=n ? lastOk : false};
+          meas.value=''; paintTgl(); paintProg();
         }
         const row=el('tr',{},
           el('td',{style:'min-width:130px;font-weight:600'},it.measure_name),
