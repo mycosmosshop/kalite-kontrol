@@ -301,6 +301,15 @@ document.querySelectorAll('nav.tabs button').forEach(b=>b.onclick=()=>{ if(b.dat
 
 // ====================== ÜRETİMLER ======================
 let PRODS=[];
+let URETIM_FILT={start:'',end:'',stock:''};
+function ufDate(p){ return p.prod_date || (p.start_time?String(p.start_time).slice(0,10):''); }
+function matchesUF(p){
+  const d=ufDate(p);
+  if(URETIM_FILT.stock && p.stock_code!==URETIM_FILT.stock) return false;
+  if(URETIM_FILT.start && d && d<URETIM_FILT.start) return false;
+  if(URETIM_FILT.end && d && d>URETIM_FILT.end) return false;
+  return true;
+}
 async function renderUretimler(){
   const root=$('#tab-uretimler');
   root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
@@ -320,22 +329,30 @@ async function renderUretimler(){
     );
     root.append(imp);
   }
-  // stats + filters
+  // stats + filtreler (tarih + stok kodu)
   const stockSet=[...new Set(PRODS.map(p=>p.stock_code).filter(Boolean))];
+  const filtered=PRODS.filter(matchesUF);
+  const aktifFiltre=URETIM_FILT.start||URETIM_FILT.end||URETIM_FILT.stock;
   const filt=el('div',{class:'card'},
     el('div',{class:'toolbar'},
-      el('div',{class:'stat'},el('b',{},String(PRODS.length)),el('span',{},'Üretim kaydı')),
+      el('div',{class:'stat'},el('b',{},String(filtered.length)+(filtered.length!==PRODS.length?'/'+PRODS.length:'')),el('span',{},'Üretim')),
       el('div',{class:'stat'},el('b',{},String(stockSet.length)),el('span',{},'Farklı ürün')),
+      el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Başlangıç'),el('input',{type:'date',class:'inp',value:URETIM_FILT.start,onchange:e=>{URETIM_FILT.start=e.target.value;renderUretimler();}})),
+      el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),el('input',{type:'date',class:'inp',value:URETIM_FILT.end,onchange:e=>{URETIM_FILT.end=e.target.value;renderUretimler();}})),
+      field('Stok Kodu','uf_stock','tümü',stockSet),
+      el('button',{class:'btn sm',style:'flex:0',onclick:()=>{URETIM_FILT.stock=$('#uf_stock').value.trim();renderUretimler();}},'Filtrele'),
+      aktifFiltre?el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{URETIM_FILT={start:'',end:'',stock:''};renderUretimler();}},'Temizle'):'',
       el('div',{class:'grow'}),
       can('auto')?el('div',{class:'autozone'},
         el('button',{class:'autozone-handle',title:'Otomatik kontrol araçları',onclick:e=>{e.stopPropagation();e.currentTarget.parentElement.classList.toggle('open');}},'▾'),
         el('button',{class:'btn sm auto-btn',onclick:e=>{e.stopPropagation();openBulkAuto();}},'🎲 Otomatik Kontrol Üret')
       ):'',
-      el('input',{class:'inp',id:'prodSearch',placeholder:'🔍 makine / ürün / operatör ara…',style:'max-width:280px',oninput:filterProdRows})
+      el('input',{class:'inp',id:'prodSearch',placeholder:'🔍 ara…',style:'max-width:220px',oninput:filterProdRows})
     ),
-    el('div',{class:'tbl-wrap'},buildProdTable(PRODS))
+    el('div',{class:'tbl-wrap'},buildProdTable(filtered))
   );
   root.append(filt);
+  if(URETIM_FILT.stock)$('#uf_stock').value=URETIM_FILT.stock;
 }
 function buildProdTable(rows){
   const tb=el('table');
@@ -850,8 +867,11 @@ async function openControl(p){
       tb.append(body); m.append(el('div',{class:'tbl-wrap'},tb));
     }
     m.append(el('div',{class:'field',style:'margin-top:8px'},el('label',{class:'lab'},'Not (opsiyonel)'),el('textarea',{class:'inp',id:'m_note',rows:'2',oninput:e=>noteVal=e.target.value},noteVal)));
-    const btnRow=el('div',{style:'display:flex;gap:8px;margin-top:8px;flex-wrap:wrap'});
-    if(items.length && can('auto')) btnRow.append(el('button',{class:'btn sec',style:'flex:0',onclick:autoFillStage,title:'Bu aşamayı uygun rastgele değerlerle doldur'},'🎲 Otomatik doldur'));
+    const btnRow=el('div',{style:'display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center'});
+    if(items.length && can('auto')) btnRow.append(el('div',{class:'autozone'},
+      el('button',{class:'autozone-handle',title:'Otomatik doldur araçları',onclick:e=>{e.stopPropagation();e.currentTarget.parentElement.classList.toggle('open');}},'▾'),
+      el('button',{class:'btn sm auto-btn',onclick:e=>{e.stopPropagation();autoFillStage();}},'🎲 Otomatik doldur')
+    ));
     const saveBtn=el('button',{class:'btn',onclick:()=>saveControl(p,items,state,stage,sampleFor)},`💾 Kaydet — ${STAGES[stage]}`);
     if(!items.length)saveBtn.disabled=true;
     btnRow.append(saveBtn);
@@ -931,20 +951,22 @@ async function openBulkAuto(){
   root.innerHTML='<div class="modal-bg"><div class="modal"><div class="empty">Yükleniyor…</div></div></div>';
   const {data:planAll}=await sb.from('control_plan_items').select('*').eq('active',true);
   const plan=planAll||[]; const planStocks=new Set(plan.map(x=>x.stock_code));
-  // seçili üretimler (yoksa planı olan tümü)
+  // seçili üretimler; yoksa o anki FİLTRE (tarih/stok) kapsamı; o da yoksa planı olan tümü
   const selIds=new Set([...document.querySelectorAll('#prodBody .prodChk:checked')].map(c=>Number(c.dataset.id)));
-  let prods=PRODS.filter(p=>planStocks.has(p.stock_code));
+  let prods=PRODS.filter(matchesUF).filter(p=>planStocks.has(p.stock_code));
+  const aktifFiltre=URETIM_FILT.start||URETIM_FILT.end||URETIM_FILT.stock;
   const secili = selIds.size>0;
   if(secili) prods=prods.filter(p=>selIds.has(p.id));
   root.innerHTML='';
-  if(!prods.length){ toast(secili?'Seçili üretimlerin planı yok.':'Planı tanımlı üretim yok. Önce kontrol planı ekle.','err'); return; }
+  if(!prods.length){ toast(secili?'Seçili üretimlerin planı yok.':'Bu kapsamda planı tanımlı üretim yok.','err'); return; }
   const machines={}; prods.forEach(p=>{ const k=p.machine_code||'?'; if(!machines[k])machines[k]={code:k,name:p.machine_name,unit:p.unit,count:0}; machines[k].count++; });
   const cyc={};
   const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
   const m=el('div',{class:'modal',style:'position:relative;max-width:860px'});
   m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
   m.append(el('h3',{},'🎲 Otomatik Kontrol Üret'));
-  m.append(el('p',{class:'meta'},`${secili?'🎯 '+prods.length+' SEÇİLİ üretim':prods.length+' üretim (planı olan tümü)'}. Her makine için çevrim süresini (saniye/birim) gir; bitiş = başlangıç + adet × çevrim olarak hesaplanıp üretime yazılır, sonra plandaki örnekleme sıklığına göre Seri Başı + saatlik Proses + Son kayıtları üretilir (hepsi uygun, rastgele). Hiç satır seçmezsen tüm üretimlere uygulanır.`));
+  const kapsam = secili ? ('🎯 '+prods.length+' SEÇİLİ üretim') : (aktifFiltre ? ('🔎 Filtreli kapsam — '+prods.length+' üretim'+(URETIM_FILT.stock?' · '+URETIM_FILT.stock:'')+((URETIM_FILT.start||URETIM_FILT.end)?' · '+(URETIM_FILT.start||'…')+'–'+(URETIM_FILT.end||'…'):'')) : (prods.length+' üretim (planı olan tümü)'));
+  m.append(el('p',{class:'meta'},`${kapsam}. Her makine için çevrim süresini (saniye/birim) gir; bitiş = başlangıç + adet × çevrim olarak hesaplanıp üretime yazılır, sonra plandaki örnekleme sıklığına göre Seri Başı + saatlik Proses + Son kayıtları üretilir (hepsi uygun, rastgele). Satır seçersen sadece seçilenlere; filtre uygularsan filtre kapsamına uygulanır.`));
   Object.values(machines).forEach(mc=>{
     m.append(el('div',{class:'row',style:'margin-bottom:8px'},
       el('div',{class:'field grow'},el('label',{class:'lab'},`${mc.code} — ${esc(mc.name||'')} · ${mc.count} üretim · birim: ${esc(mc.unit||'-')}`),
