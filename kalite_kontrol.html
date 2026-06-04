@@ -19,6 +19,12 @@
   }
   body.light th{background:var(--panel)}
   .theme-btn{width:38px;height:34px;padding:0;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--txt);font-size:17px;line-height:1;flex:0 0 auto}
+  /* gizli otomatik araç: tutamaç; üzerine gelince buton çıkar */
+  .autozone{position:relative;display:inline-flex;flex:0 0 auto}
+  .autozone .autozone-handle{display:inline-flex;align-items:center;justify-content:center;width:34px;height:32px;color:var(--muted);border:1px dashed var(--line);border-radius:8px;font-size:16px;cursor:pointer;user-select:none}
+  .autozone .auto-btn{display:none;position:absolute;top:0;right:0;white-space:nowrap;z-index:6;box-shadow:0 4px 14px rgba(0,0,0,.35)}
+  .autozone:hover .auto-btn,.autozone.open .auto-btn{display:inline-block}
+  .autozone:hover .autozone-handle,.autozone.open .autozone-handle{visibility:hidden}
   *{box-sizing:border-box}
   body{margin:0;font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--txt);font-size:14px}
   button{cursor:pointer;font-family:inherit}
@@ -320,7 +326,10 @@ async function renderUretimler(){
       el('div',{class:'stat'},el('b',{},String(PRODS.length)),el('span',{},'Üretim kaydı')),
       el('div',{class:'stat'},el('b',{},String(stockSet.length)),el('span',{},'Farklı ürün')),
       el('div',{class:'grow'}),
-      can('auto')?el('button',{class:'btn sm',style:'flex:0',onclick:openBulkAuto,title:'Tüm üretimlere otomatik (uygun) kontrol kaydı üret'},'🎲 Otomatik Kontrol Üret'):'',
+      can('auto')?el('div',{class:'autozone',title:'Otomatik kontrol (üzerine gel)',onclick:e=>e.currentTarget.classList.toggle('open')},
+        el('span',{class:'autozone-handle'},'⋯'),
+        el('button',{class:'btn sm auto-btn',onclick:e=>{e.stopPropagation();openBulkAuto();}},'🎲 Otomatik Kontrol Üret')
+      ):'',
       el('input',{class:'inp',id:'prodSearch',placeholder:'🔍 makine / ürün / operatör ara…',style:'max-width:280px',oninput:filterProdRows})
     ),
     el('div',{class:'tbl-wrap'},buildProdTable(PRODS))
