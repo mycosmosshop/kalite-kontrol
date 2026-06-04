@@ -330,15 +330,17 @@ async function renderUretimler(){
 function buildProdTable(rows){
   const tb=el('table');
   tb.append(el('thead',{},el('tr',{},
+    el('th',{},el('input',{type:'checkbox',title:'Görünenleri seç',onchange:e=>{document.querySelectorAll('#prodBody .prodChk').forEach(c=>{const tr=c.closest('tr'); if(tr.style.display!=='none')c.checked=e.target.checked;});}})),
     ...['Tarih','Makine','Cari','Ürün','İş Emri','Miktar','Başlama','Bitiş','Operatör','Op','Kontroller',''].map(h=>el('th',{},h))
   )));
   const body=el('tbody',{id:'prodBody'});
-  if(!rows.length) body.append(el('tr',{},el('td',{colspan:12},el('div',{class:'empty'},'Henüz üretim yok. Yukarıdan Excel içe aktar.'))));
+  if(!rows.length) body.append(el('tr',{},el('td',{colspan:13},el('div',{class:'empty'},'Henüz üretim yok. Yukarıdan Excel içe aktar.'))));
   rows.forEach(p=>body.append(prodRow(p)));
   tb.append(body); return tb;
 }
 function prodRow(p){
   return el('tr',{'data-s':(`${p.machine_name} ${p.stock_code} ${p.stock_name} ${p.operator} ${p.customer||''} ${p.work_order||''}`).toLowerCase()},
+    el('td',{},el('input',{type:'checkbox',class:'prodChk','data-id':p.id})),
     el('td',{},fmtDate(p.prod_date)),
     el('td',{},el('div',{},p.machine_name||''),el('div',{class:'det',style:'color:var(--muted);font-size:11px'},p.machine_code||'')),
     el('td',{style:'font-size:12px'},p.customer||''),
@@ -913,16 +915,20 @@ async function openBulkAuto(){
   root.innerHTML='<div class="modal-bg"><div class="modal"><div class="empty">Yükleniyor…</div></div></div>';
   const {data:planAll}=await sb.from('control_plan_items').select('*').eq('active',true);
   const plan=planAll||[]; const planStocks=new Set(plan.map(x=>x.stock_code));
-  const prods=PRODS.filter(p=>planStocks.has(p.stock_code));
+  // seçili üretimler (yoksa planı olan tümü)
+  const selIds=new Set([...document.querySelectorAll('#prodBody .prodChk:checked')].map(c=>Number(c.dataset.id)));
+  let prods=PRODS.filter(p=>planStocks.has(p.stock_code));
+  const secili = selIds.size>0;
+  if(secili) prods=prods.filter(p=>selIds.has(p.id));
   root.innerHTML='';
-  if(!prods.length){ toast('Planı tanımlı üretim yok. Önce kontrol planı ekle.','err'); return; }
+  if(!prods.length){ toast(secili?'Seçili üretimlerin planı yok.':'Planı tanımlı üretim yok. Önce kontrol planı ekle.','err'); return; }
   const machines={}; prods.forEach(p=>{ const k=p.machine_code||'?'; if(!machines[k])machines[k]={code:k,name:p.machine_name,unit:p.unit,count:0}; machines[k].count++; });
   const cyc={};
   const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
   const m=el('div',{class:'modal',style:'position:relative;max-width:700px'});
   m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
   m.append(el('h3',{},'🎲 Otomatik Kontrol Üret'));
-  m.append(el('p',{class:'meta'},`${prods.length} üretim (planı olan). Her makine için çevrim süresini (saniye/birim) gir; bitiş = başlangıç + adet × çevrim olarak hesaplanıp üretime yazılır, sonra plandaki örnekleme sıklığına göre Seri Başı + saatlik Proses + Son kayıtları üretilir (hepsi uygun, rastgele).`));
+  m.append(el('p',{class:'meta'},`${secili?'🎯 '+prods.length+' SEÇİLİ üretim':prods.length+' üretim (planı olan tümü)'}. Her makine için çevrim süresini (saniye/birim) gir; bitiş = başlangıç + adet × çevrim olarak hesaplanıp üretime yazılır, sonra plandaki örnekleme sıklığına göre Seri Başı + saatlik Proses + Son kayıtları üretilir (hepsi uygun, rastgele). Hiç satır seçmezsen tüm üretimlere uygulanır.`));
   Object.values(machines).forEach(mc=>{
     m.append(el('div',{class:'row',style:'margin-bottom:8px'},
       el('div',{class:'field grow'},el('label',{class:'lab'},`${mc.code} — ${esc(mc.name||'')} · ${mc.count} üretim · birim: ${esc(mc.unit||'-')}`),
