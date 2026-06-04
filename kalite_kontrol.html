@@ -1035,19 +1035,18 @@ async function renderKayitlar(){
   if(KAYIT_FILT.stock)$('#kf_stock').value=KAYIT_FILT.stock;
   root.append(filt);
   const tb=el('table');
-  tb.append(el('thead',{},el('tr',{},...['Tarih','Vardiya','Cari','Stok Kodu','Stok Adı','Başlama','Bitiş','Üretim Mik.','Birim','Makine Kodu','Makine Adı','Sonuç','İşlem'].map(h=>el('th',{},h)))));
+  tb.append(el('thead',{},el('tr',{},...['Tarih','Kontrol Saati','Vardiya','Cari','Stok Kodu','Stok Adı','Üretim Mik.','Birim','Makine Kodu','Makine Adı','Sonuç','İşlem'].map(h=>el('th',{},h)))));
   const body=el('tbody',{id:'recBody'});
-  if(!recs.length)body.append(el('tr',{},el('td',{colspan:13},el('div',{class:'empty'},`Bu aşamada (${STAGES[KAYIT_STAGE]}) kayıt yok.`))));
+  if(!recs.length)body.append(el('tr',{},el('td',{colspan:12},el('div',{class:'empty'},`Bu aşamada (${STAGES[KAYIT_STAGE]}) kayıt yok.`))));
   recs.forEach(r=>{
     const pr=pmap[r.production_id]||{};
     body.append(el('tr',{style:'cursor:pointer','data-s':`${r.stock_code} ${r.stock_name} ${r.machine_code} ${pr.customer||''}`.toLowerCase(),onclick:()=>editRecord(r,pr)},
       el('td',{},fmtDate(pr.prod_date||pr.start_time||r.checked_at)),
+      el('td',{style:'font-weight:600'},fmtTime(r.checked_at)),
       el('td',{},String(r.shift??pr.shift??'')),
       el('td',{},pr.customer||''),
       el('td',{},r.stock_code||''),
       el('td',{style:'font-size:11px'},(r.stock_name||'').slice(0,30)),
-      el('td',{},fmtTime(pr.start_time)),
-      el('td',{},fmtTime(pr.end_time)),
       el('td',{},pr.quantity??''),
       el('td',{},pr.unit||''),
       el('td',{},r.machine_code||''),
