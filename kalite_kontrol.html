@@ -373,15 +373,20 @@ async function renderUretimler(){
   root.innerHTML='';
   // import card (yetki: can_import)
   if(can('import')){
-    const imp=el('div',{class:'card'},
-      el('h3',{},'LeanSys Üretim Verisi İçe Aktar'),
-      el('p',{class:'det',style:'color:var(--muted);margin:-6px 0 14px;font-size:13px'},'LeanSys → Dışa Aktar ile aldığın Excel (.xlsx) dosyasını seç. Tekrar yüklesen de aynı üretim iki kez eklenmez.'),
+    const collapsed=localStorage.getItem('kk_imp_collapse')==='1';
+    const body=el('div',{class:collapsed?'hidden':''},
+      el('p',{class:'det',style:'color:var(--muted);margin:-2px 0 14px;font-size:13px'},'LeanSys → Dışa Aktar ile aldığın Excel (.xlsx) dosyasını seç. Tekrar yüklesen de aynı üretim iki kez eklenmez.'),
       el('div',{class:'row'},
         el('input',{type:'file',accept:'.xlsx,.xls',class:'inp grow',id:'prodFile'}),
         el('button',{class:'btn sm',style:'flex:0',onclick:importProds},'İçe Aktar')
       )
     );
-    root.append(imp);
+    const tgl=el('button',{class:'autozone-handle',style:'flex:0',title:'İçe aktarmayı gizle/göster',
+      onclick:e=>{ const c=body.classList.toggle('hidden'); localStorage.setItem('kk_imp_collapse',c?'1':'0'); e.currentTarget.textContent=c?'▸':'▾'; }}, collapsed?'▸':'▾');
+    root.append(el('div',{class:'card'},
+      el('div',{style:'display:flex;justify-content:space-between;align-items:center;gap:10px'+(collapsed?'':';margin-bottom:8px')},
+        el('h3',{style:'margin:0'},'LeanSys Üretim Verisi İçe Aktar'), tgl),
+      body));
   }
   // stats + filtreler (tarih + stok kodu)
   const stockSet=[...new Set(PRODS.map(p=>p.stock_code).filter(Boolean))];
