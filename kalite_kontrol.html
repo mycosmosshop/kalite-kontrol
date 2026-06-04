@@ -177,6 +177,8 @@ function applyTheme(t){
   document.querySelectorAll('#themeBtnTop,#themeBtnAuth').forEach(b=>b.textContent=ico);
 }
 function toggleTheme(){ applyTheme(document.body.classList.contains('light')?'dark':'light'); }
+// yetki kontrolü (admin her şeye sahip)
+function can(p){ return !!(PROFILE && (PROFILE.is_admin || PROFILE['can_'+p])); }
 applyTheme((function(){try{return localStorage.getItem('kk_theme')}catch(e){return null}})()||'dark');
 document.addEventListener('click',e=>{ if(e.target&&(e.target.id==='themeBtnTop'||e.target.id==='themeBtnAuth')) toggleTheme(); });
 
@@ -299,16 +301,18 @@ async function renderUretimler(){
   if(error){root.innerHTML=`<div class="card"><div class="msg err">${esc(error.message)}</div></div>`;return;}
   PRODS=data||[];
   root.innerHTML='';
-  // import card
-  const imp=el('div',{class:'card'},
-    el('h3',{},'LeanSys Üretim Verisi İçe Aktar'),
-    el('p',{class:'det',style:'color:var(--muted);margin:-6px 0 14px;font-size:13px'},'LeanSys → Dışa Aktar ile aldığın Excel (.xlsx) dosyasını seç. Tekrar yüklesen de aynı üretim iki kez eklenmez.'),
-    el('div',{class:'row'},
-      el('input',{type:'file',accept:'.xlsx,.xls',class:'inp grow',id:'prodFile'}),
-      el('button',{class:'btn sm',style:'flex:0',onclick:importProds},'İçe Aktar')
-    )
-  );
-  root.append(imp);
+  // import card (yetki: can_import)
+  if(can('import')){
+    const imp=el('div',{class:'card'},
+      el('h3',{},'LeanSys Üretim Verisi İçe Aktar'),
+      el('p',{class:'det',style:'color:var(--muted);margin:-6px 0 14px;font-size:13px'},'LeanSys → Dışa Aktar ile aldığın Excel (.xlsx) dosyasını seç. Tekrar yüklesen de aynı üretim iki kez eklenmez.'),
+      el('div',{class:'row'},
+        el('input',{type:'file',accept:'.xlsx,.xls',class:'inp grow',id:'prodFile'}),
+        el('button',{class:'btn sm',style:'flex:0',onclick:importProds},'İçe Aktar')
+      )
+    );
+    root.append(imp);
+  }
   // stats + filters
   const stockSet=[...new Set(PRODS.map(p=>p.stock_code).filter(Boolean))];
   const filt=el('div',{class:'card'},
@@ -343,7 +347,9 @@ function prodRow(p){
     el('td',{},p.operator||''),
     el('td',{},String(p.op_no??'')),
     el('td',{id:'cc-'+p.id},'…'),
-    el('td',{},el('button',{class:'btn sm',onclick:()=>openControl(p)},'Kontrol Gir'))
+    el('td',{}, can('enter')
+      ? el('button',{class:'btn sm',onclick:()=>openControl(p)},'Kontrol Gir')
+      : el('span',{style:'color:var(--muted);font-size:12px'},'—'))
   );
 }
 function filterProdRows(){
@@ -435,7 +441,9 @@ async function renderPlan(){
   const prodStocks=[...new Map(PRODS.map(p=>[p.stock_code,p.stock_name])).entries()].filter(x=>x[0]);
   const planStocks=[...new Set(PLAN.map(p=>p.stock_code))];
   const allStocks=[...new Set([...prodStocks.map(x=>x[0]),...planStocks])];
+  const canPlan=can('plan');
 
+  if(canPlan){
   // ---- Excel içe aktarma kartı ----
   const impCard=el('div',{class:'card'},
     el('h3',{},'📄 Kontrol Planını Excel’den İçe Aktar'),
@@ -471,6 +479,7 @@ async function renderPlan(){
     )
   );
   root.append(addCard);
+  } // /canPlan
 
   // mevcut maddeler — stok bazlı grup
   if(!PLAN.length){ root.append(el('div',{class:'card'},el('div',{class:'empty'},'Henüz kontrol planı yok. Yukarıdan Excel ile içe aktar veya manuel ekle.'))); return; }
@@ -479,9 +488,9 @@ async function renderPlan(){
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px'},
       el('h3',{style:'margin:0'},`${sc} — ${esc(items[0].stock_name||'')} (${items.length} madde)`),
-      el('button',{class:'btn sm danger',onclick:()=>delPlanStock(sc)},'Bu planı sil')
+      canPlan?el('button',{class:'btn sm danger',onclick:()=>delPlanStock(sc)},'Bu planı sil'):el('span',{class:'pill gray'},'salt görünüm')
     ));
-    card.append(el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:12px'},'💡 Hücrelere tıklayıp değiştirebilirsin; başka yere tıklayınca otomatik kaydedilir.'));
+    if(canPlan) card.append(el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:12px'},'💡 Hücrelere tıklayıp değiştirebilirsin; başka yere tıklayınca otomatik kaydedilir.'));
     const tb=el('table');
     tb.append(el('thead',{},el('tr',{},...['Op Kartı','Op No','Proses','Giriş','Son','Ölçülecek Değer','Nicel Hedef','Nitel Hedef / Birim','Alt Limit','Üst Limit','Örn. Büyük.','Örn. Sıklık','Son K. Örn.','Üretim Ekipmanı','FMEA No','Özel Kar.','Kontrol Yöntemi','Alt. Yöntem','Acil Eylem','DÖF','Tip',''].map(h=>el('th',{},h)))));
     const body=el('tbody');
@@ -507,7 +516,7 @@ async function renderPlan(){
       el('td',{},pin(it,'emergency_action_plan',{w:'70px'})),
       el('td',{},pin(it,'capa_plan',{w:'60px'})),
       el('td',{},pin(it,'is_qualitative',{select:true})),
-      el('td',{},el('button',{class:'btn sm danger',onclick:()=>delPlanItem(it.id)},'Sil'))
+      el('td',{}, canPlan?el('button',{class:'btn sm danger',onclick:()=>delPlanItem(it.id)},'Sil'):'')
     )));
     tb.append(body); card.append(el('div',{class:'tbl-wrap'},tb));
     root.append(card);
@@ -523,9 +532,14 @@ function field(label,id,ph,list){
   return wrap;
 }
 function sel(id,opts){const s=el('select',{class:'inp',id});opts.forEach(([v,t])=>s.append(el('option',{value:v},t)));return s;}
-// satır-içi düzenlenebilir hücre
+// satır-içi düzenlenebilir hücre (plan yetkisi yoksa salt-okunur)
 function pin(it,field,o){
   o=o||{};
+  if(!can('plan')){
+    if(o.bool) return el('span',{}, it[field]!==false?'✓':'—');
+    if(o.select) return el('span',{}, it.is_qualitative?'Nitel':'Ölçüm');
+    return el('span',{}, (it[field]==null||it[field]==='')?'-':String(it[field]));
+  }
   if(o.select){
     const s=el('select',{class:'cell-inp',onchange:e=>updatePlan(it,{is_qualitative:e.target.value==='true'})});
     [['false','Ölçüm'],['true','Nitel']].forEach(([v,t])=>{const op=el('option',{value:v},t);if(String(!!it[field])===v)op.selected=true;s.append(op);});
@@ -889,7 +903,7 @@ async function renderKayitlar(){
       el('td',{},el('span',{class:'pill '+(r.overall_result==='RET'?'ret':'ok')},r.overall_result||'—')),
       el('td',{style:'white-space:nowrap',onclick:e=>e.stopPropagation()},
         el('button',{class:'btn sm',onclick:()=>editRecord(r,pr)},'Aç'),
-        el('button',{class:'btn sm danger',style:'margin-left:6px',onclick:()=>delRecord(r.id)},'Sil'))
+        (can('delete')||r.created_by===(ME&&ME.id))?el('button',{class:'btn sm danger',style:'margin-left:6px',onclick:()=>delRecord(r.id)},'Sil'):'')
     ));
   });
   tb.append(body); root.append(el('div',{class:'card'},el('div',{class:'tbl-wrap'},tb)));
@@ -908,8 +922,8 @@ async function editRecord(r,prod){
   let stage=r.stage, oper=r.operator||'';
   // üretim bilgisi (tarih vb. kayıtta üretimle aynı görünsün)
   if(!prod && r.production_id){ const {data}=await sb.from('productions').select('*').eq('id',r.production_id).maybeSingle(); prod=data||null; }
-  const canEdit = !!(PROFILE && PROFILE.is_admin);                 // sadece admin (volkanpekatik) düzenleyebilir
-  const canDelete = canEdit || r.created_by===(ME&&ME.id);
+  const canEdit = can('edit');                                     // kullanıcı bazlı: kayıt düzenleme yetkisi
+  const canDelete = can('delete') || r.created_by===(ME&&ME.id);
   function render(){
     root.innerHTML='';
     const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
@@ -1009,7 +1023,7 @@ async function renderAdmin(){
   const users=data||[];
   root.innerHTML='';
   const tb=el('table');
-  tb.append(el('thead',{},el('tr',{},...['E-posta','Kayıt','Durum','Rol','İşlem'].map(h=>el('th',{},h)))));
+  tb.append(el('thead',{},el('tr',{},...['E-posta','Durum','Rol','Yetkiler','İşlem'].map(h=>el('th',{},h)))));
   const body=el('tbody');
   users.forEach(u=>{
     const actions=el('td',{});
@@ -1024,15 +1038,30 @@ async function renderAdmin(){
       actions.append(el('button',{class:'btn sm sec',style:'margin-left:6px',onclick:()=>{if(confirm(u.email+' admin yapılsın mı?'))setUser(u.id,{is_admin:true,approved:true});}},'Admin Yap'));
     }
     body.append(el('tr',{},
-      el('td',{},u.email),
-      el('td',{},fmtDate(u.created_at)),
+      el('td',{},el('div',{},u.email),el('div',{style:'color:var(--muted);font-size:11px'},fmtDate(u.created_at))),
       el('td',{},el('span',{class:'pill '+(u.approved?'ok':'gray')},u.approved?'Onaylı':'Bekliyor')),
       el('td',{},u.is_admin?'Yönetici':'Kullanıcı'),
+      permsCell(u,isProtected),
       actions
     ));
   });
   tb.append(body);
-  root.append(el('div',{class:'card'},el('h3',{},'Kullanıcı Yönetimi'),el('div',{class:'tbl-wrap'},tb)));
+  root.append(el('div',{class:'card'},el('h3',{},'Kullanıcı Yönetimi'),
+    el('p',{style:'color:var(--muted);margin:-6px 0 12px;font-size:12px'},'Her kullanıcıya yetkileri tek tek aç/kapa: Giriş (kontrol kaydı oluşturma) · Düzenle (kayıt düzeltme) · Sil · Plan (kontrol planı düzenleme) · İçe Aktar (üretim Excel). Admin tüm yetkilere sahiptir.'),
+    el('div',{class:'tbl-wrap'},tb)));
+}
+const PERMS=[['enter','Giriş'],['edit','Düzenle'],['delete','Sil'],['plan','Plan'],['import','İçe Aktar']];
+function permsCell(u,isProtected){
+  const td=el('td',{});
+  if(isProtected){ td.append(el('span',{class:'pill ok'},'Tümü (admin)')); return td; }
+  const wrap=el('div',{style:'display:flex;gap:10px;flex-wrap:wrap'});
+  PERMS.forEach(([k,lbl])=>{
+    const cb=el('input',{type:'checkbox'}); cb.checked=!!u['can_'+k];
+    cb.disabled=!u.approved;   // onaylı değilse yetki verilemez
+    cb.onchange=()=>setUser(u.id,{['can_'+k]:cb.checked});
+    wrap.append(el('label',{style:'display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer'+(u.approved?'':';opacity:.5')},cb,lbl));
+  });
+  td.append(wrap); return td;
 }
 async function setUser(id,patch){
   const {error}=await sb.from('profiles').update(patch).eq('id',id);
