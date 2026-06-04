@@ -86,6 +86,14 @@
   .okret{display:flex;gap:6px}
   .okret button{padding:8px 16px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--muted);font-weight:700}
   .okret.sm button{padding:5px 11px;font-size:12px}
+  /* kayan OK/RET toggle (LeanSys görünümü) */
+  .tgl{position:relative;display:inline-block;width:62px;height:26px;border-radius:14px;border:none;cursor:pointer;vertical-align:middle;transition:background .15s}
+  .tgl.ok{background:var(--ok)} .tgl.ret{background:var(--ret)}
+  .tgl:disabled{cursor:default}
+  .tgl .knob{position:absolute;top:3px;height:20px;width:20px;border-radius:50%;background:#fff;transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,.3)}
+  .tgl.ok .knob{left:39px} .tgl.ret .knob{left:3px}
+  .tgl .lbl{position:absolute;top:5px;font-size:11px;font-weight:800;color:#fff}
+  .tgl.ok .lbl{left:9px} .tgl.ret .lbl{right:9px}
   .okret button.ok.on{background:var(--ok);color:#fff;border-color:var(--ok)}
   .okret button.ret.on{background:var(--ret);color:#fff;border-color:var(--ret)}
   @media(max-width:640px){
@@ -655,7 +663,7 @@ async function openControl(p){
 
   const root=$('#modalRoot');
   const state={}; // "stage|itemId" -> {samples:[{value,ok,note},...]}  (örnek başına, aşamalar arası korunur)
-  function stItem(it){ const k=stage+'|'+it.id; if(!state[k])state[k]={samples:[]}; const n=sampleFor(it,stage); const a=state[k].samples; while(a.length<n)a.push({value:'',ok:null,note:''}); return state[k]; }
+  function stItem(it){ const k=stage+'|'+it.id; if(!state[k])state[k]={samples:[],cur:{value:'',ok:false}}; return state[k]; }
   let operVal=p.operator||'', noteVal='';
 
   const prosesFreq = Number((allItems.find(it=>it.sampling_frequency)||{}).sampling_frequency)||60;
@@ -708,44 +716,56 @@ async function openControl(p){
       const freq=(items.find(it=>it.sampling_frequency)||{}).sampling_frequency;
       if(freq) m.append(el('div',{style:'margin-bottom:8px;color:var(--muted);font-size:12.5px'},`⏱ Plan örnekleme sıklığı: her ${esc(freq)} dakikada bir ${STAGES[stage].toLowerCase()} kontrolü.`));
       const tb=el('table');
-      tb.append(el('thead',{},el('tr',{},...['Ölçülecek Değer','Hedef Nicel','Hedef Nitel','Alt Limit','Üst Limit','Yöntem','Sıklık','Örnek #','Ölçüm','Uygun'].map(h=>el('th',{},h)))));
+      tb.append(el('thead',{},el('tr',{},...['Ölçülecek Değer','Nitel Hedef','Yöntem','Hedef','Alt Limit','Üst Limit','Örnekleme','Nitel','Ölçüm','İlerleme','İşlem'].map(h=>el('th',{},h)))));
       const body=el('tbody');
       items.forEach(it=>{
         const st=stItem(it);
         const n=sampleFor(it,stage);
-        for(let s=0;s<n;s++){
-          const smp=st.samples[s];
-          const okB=el('button',{type:'button',class:'ok',onclick:()=>{smp.ok=smp.ok===true?null:true;paint();}},'✓');
-          const retB=el('button',{type:'button',class:'ret',onclick:()=>{smp.ok=smp.ok===false?null:false;paint();}},'✗');
-          const measInp=el('input',{class:'cell-inp',style:'width:84px',value:smp.value,oninput:e=>{
-            smp.value=e.target.value;
-            const v=Number(e.target.value),lo=Number(it.lower_limit),hi=Number(it.upper_limit);
-            if(!it.is_qualitative && e.target.value!=='' && !isNaN(v)){
-              let ok=true; if(it.lower_limit&&!isNaN(lo)&&v<lo)ok=false; if(it.upper_limit&&!isNaN(hi)&&v>hi)ok=false;
-              smp.ok=ok;
-            }
-            paint();
-          }});
-          function paint(){
-            okB.classList.toggle('on',smp.ok===true);
-            retB.classList.toggle('on',smp.ok===false);
-            measInp.style.borderColor = smp.ok===true?'var(--ok)':(smp.ok===false?'var(--ret)':'var(--line)');
-          }
-          const row=el('tr',{},
-            el('td',{style:'min-width:130px;font-weight:600'},s===0?it.measure_name:''),
-            el('td',{},s===0?((it.target||'')+(it.unit?' '+it.unit:''))||'-':''),
-            el('td',{style:'max-width:220px;color:var(--muted);font-size:12px'},s===0?(it.nitel_hedef||'-'):''),
-            el('td',{},s===0?(it.lower_limit||'-'):''),
-            el('td',{},s===0?(it.upper_limit||'-'):''),
-            el('td',{},s===0?(it.method||'-'):''),
-            el('td',{},s===0?(it.sampling_frequency||'-'):''),
-            el('td',{style:'text-align:center;color:var(--muted)'},`${s+1}/${n}`),
-            el('td',{},measInp),
-            el('td',{},el('div',{class:'okret sm'},okB,retB))
-          );
-          paint();
-          body.append(row);
+        const qual=it.is_qualitative;
+        // kayan OK/RET toggle (başlangıç RET)
+        const tgl=el('button',{type:'button',class:'tgl'});
+        tgl.innerHTML='<span class="lbl"></span><span class="knob"></span>';
+        function paintTgl(){const ok=st.cur.ok===true;tgl.classList.toggle('ok',ok);tgl.classList.toggle('ret',!ok);tgl.querySelector('.lbl').textContent=ok?'OK':'RET';}
+        if(qual) tgl.onclick=()=>{st.cur.ok=!st.cur.ok;paintTgl();}; else tgl.disabled=true;  // ölçümde toggle görsel
+        const meas=el('input',{class:'cell-inp',style:'width:96px',value:st.cur.value,oninput:e=>{
+          st.cur.value=e.target.value;
+          const v=Number(e.target.value),lo=Number(it.lower_limit),hi=Number(it.upper_limit);
+          if(e.target.value!==''&&!isNaN(v)){let ok=true; if(it.lower_limit&&!isNaN(lo)&&v<lo)ok=false; if(it.upper_limit&&!isNaN(hi)&&v>hi)ok=false; st.cur.ok=ok;} else st.cur.ok=false;
+          paintTgl();
+        },onkeydown:e=>{if(e.key==='Enter'){e.preventDefault();addSample();}}});
+        const prog=el('span',{class:'pill'});
+        const chips=el('div',{style:'display:flex;gap:3px;flex-wrap:wrap;margin-top:4px'});
+        const ekleBtn=el('button',{class:'btn sm',onclick:()=>addSample()},'+ Ekle');
+        const resetBtn=el('button',{class:'btn sm sec',style:'margin-left:4px',title:'Bu satırın ölçümlerini sil',onclick:()=>{st.samples=[];st.cur={value:'',ok:false};meas.value='';paintTgl();paintProg();}},'↺');
+        function paintProg(){
+          const full=st.samples.length>=n;
+          prog.textContent=`${st.samples.length}/${n}`;
+          prog.className='pill '+(st.samples.some(s=>s.ok===false)?'ret':(full?'ok':'gray'));
+          chips.innerHTML='';
+          st.samples.forEach((s,i)=>chips.append(el('span',{class:'pill '+(s.ok?'ok':'ret'),style:'font-size:10px'},`${i+1}${qual?'':':'+(s.value??'')}${s.ok?'✓':'✗'}`)));
+          ekleBtn.disabled=full; ekleBtn.textContent=full?'Tamam ✓':'+ Ekle';
         }
+        function addSample(){
+          if(st.samples.length>=n)return;
+          if(!qual && (st.cur.value===''||st.cur.value==null)){toast('Önce ölçüm değeri gir.','err');return;}
+          st.samples.push({value:qual?null:(st.cur.value||null),ok:st.cur.ok===true});
+          st.cur={value:'',ok:false}; meas.value=''; paintTgl(); paintProg();
+        }
+        const row=el('tr',{},
+          el('td',{style:'min-width:130px;font-weight:600'},it.measure_name),
+          el('td',{style:'max-width:210px;color:var(--muted);font-size:12px'},it.nitel_hedef||'-'),
+          el('td',{},it.method||'-'),
+          el('td',{},((it.target||'')+(it.unit?' '+it.unit:''))||'-'),
+          el('td',{},it.lower_limit||'-'),
+          el('td',{},it.upper_limit||'-'),
+          el('td',{style:'text-align:center'},String(n)),
+          el('td',{},tgl),
+          el('td',{},qual?el('span',{style:'color:var(--muted)'},'—'):meas),
+          el('td',{},prog,chips),
+          el('td',{style:'white-space:nowrap'},ekleBtn,resetBtn)
+        );
+        paintTgl(); paintProg();
+        body.append(row);
       });
       tb.append(body); m.append(el('div',{class:'tbl-wrap'},tb));
     }
@@ -762,15 +782,15 @@ async function saveControl(p,items,state,stage,sampleFor){
   const vals=items.map(it=>{
     const n=sampleFor(it,stage);
     const st=state[stage+'|'+it.id]||{samples:[]};
-    const samples=[];
-    for(let s=0;s<n;s++){ const v=st.samples[s]||{}; samples.push({value:(v.value||'').toString().trim()||null, ok:v.ok==null?null:!!v.ok, note:v.note||null, by:oper}); }
+    const samples=(st.samples||[]).slice(0,n).map(s=>({value:(s.value==null?null:String(s.value).trim()||null), ok:s.ok===true, note:s.note||null, by:oper}));
     return {plan_item_id:it.id,measure_name:it.measure_name,target:it.target,unit:it.unit,nitel_hedef:it.nitel_hedef,
       lower_limit:it.lower_limit,upper_limit:it.upper_limit,method:it.method,sampling_frequency:it.sampling_frequency,
       is_qualitative:it.is_qualitative,sample_size:n,samples};
   });
+  const incomplete=vals.filter(v=>v.samples.length<v.sample_size).length;
+  if(incomplete && !confirm(`${incomplete} maddede örnekleme tamamlanmadı (eksik ölçüm var). Yine de kaydedilsin mi?`))return;
   const allSamples=vals.flatMap(v=>v.samples);
-  const missing=allSamples.filter(s=>s.ok==null).length;
-  if(missing && !confirm(`${missing} ölçüm için Uygun (✓/✗) işaretlenmedi. Yine de kaydedilsin mi?`))return;
+  if(!allSamples.length){toast('Hiç ölçüm girilmedi.','err');return;}
   const overall=allSamples.some(s=>s.ok===false)?'RET':'OK';
   const rec={production_id:p.id,stock_code:p.stock_code,stock_name:p.stock_name,machine_code:p.machine_code,
     work_order:p.work_order,stage,operator:oper,shift:p.shift,vals,overall_result:overall,
@@ -880,20 +900,20 @@ function editRecord(r){
     const body=el('tbody');
     vals.forEach(v=>{
       const smps=v.samples&&v.samples.length?v.samples:[{value:null,ok:null,note:null}];
+      const qual=v.is_qualitative;
       smps.forEach((smp,s)=>{
-        const okB=el('button',{type:'button',class:'ok',onclick:()=>{smp.ok=smp.ok===true?null:true;paint();}},'✓');
-        const retB=el('button',{type:'button',class:'ret',onclick:()=>{smp.ok=smp.ok===false?null:false;paint();}},'✗');
-        const measInp=el('input',{class:'cell-inp',style:'width:84px',value:smp.value||'',oninput:e=>{
+        const tgl=el('button',{type:'button',class:'tgl'});
+        tgl.innerHTML='<span class="lbl"></span><span class="knob"></span>';
+        function paint(){const ok=smp.ok===true;tgl.classList.toggle('ok',ok);tgl.classList.toggle('ret',!ok);tgl.querySelector('.lbl').textContent=ok?'OK':'RET';
+          if(measInp)measInp.style.borderColor=ok?'var(--ok)':'var(--ret)';}
+        if(qual) tgl.onclick=()=>{smp.ok=smp.ok===true?false:true;paint();}; else tgl.disabled=true;
+        const measInp = qual?null:el('input',{class:'cell-inp',style:'width:84px',value:smp.value||'',oninput:e=>{
           smp.value=e.target.value.trim()||null;
           const val=Number(e.target.value),lo=Number(v.lower_limit),hi=Number(v.upper_limit);
-          if(!v.is_qualitative && e.target.value!=='' && !isNaN(val)){
-            let ok=true; if(v.lower_limit&&!isNaN(lo)&&val<lo)ok=false; if(v.upper_limit&&!isNaN(hi)&&val>hi)ok=false; smp.ok=ok;
-          }
+          if(e.target.value!==''&&!isNaN(val)){let ok=true; if(v.lower_limit&&!isNaN(lo)&&val<lo)ok=false; if(v.upper_limit&&!isNaN(hi)&&val>hi)ok=false; smp.ok=ok;} else smp.ok=false;
           paint();
         }});
         const noteInp=el('input',{class:'cell-inp',style:'width:140px',value:smp.note||'',oninput:e=>smp.note=e.target.value.trim()||null});
-        function paint(){okB.classList.toggle('on',smp.ok===true);retB.classList.toggle('on',smp.ok===false);
-          measInp.style.borderColor=smp.ok===true?'var(--ok)':(smp.ok===false?'var(--ret)':'var(--line)');}
         const row=el('tr',{},
           el('td',{style:'min-width:130px;font-weight:600'},s===0?v.measure_name:''),
           el('td',{},s===0?((v.target||'')+(v.unit?' '+v.unit:''))||'-':''),
@@ -902,8 +922,8 @@ function editRecord(r){
           el('td',{},s===0?(v.upper_limit||'-'):''),
           el('td',{},s===0?(v.method||'-'):''),
           el('td',{style:'text-align:center;color:var(--muted)'},`${s+1}/${smps.length}`),
-          el('td',{},measInp),
-          el('td',{},el('div',{class:'okret sm'},okB,retB)),
+          el('td',{},qual?el('span',{style:'color:var(--muted)'},'—'):measInp),
+          el('td',{},tgl),
           el('td',{},noteInp)
         );
         paint();
