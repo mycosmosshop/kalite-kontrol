@@ -1173,15 +1173,26 @@ function parsePeriodDays(text){
   if(m=t.match(/(\d+)?\s*gunde/)) d+=(Number(m[1])||1);          // günde
   return d;
 }
-function kalanGunCell(v,firstDone,fallbackDate){
+function kalanGunCell(v,startMap,autoFirst){
   const per=parsePeriodDays(v.nitel_hedef);
   if(per<=1) return el('td',{style:'color:var(--muted);text-align:center'},'—');  // 24 saatten uzun periyotları göster
-  const fd=firstDone[v.measure_name]||fallbackDate;
-  const due=new Date(new Date(fd).getTime()+per*86400000);
-  const left=Math.ceil((due.getTime()-Date.now())/86400000);
-  const cls=left<0?'ret':(left<=30?'proses':'ok');
-  const txt=left<0?(Math.abs(left)+' gün geçti'):(left+' gün');
-  return el('td',{style:'text-align:center'},el('span',{class:'pill '+cls,title:`İlk: ${fmtDate(fd)} · Sonraki: ${fmtDate(due)} (${per} gün periyot)`},'⏳ '+txt));
+  const pill=el('span',{class:'pill'});
+  function recompute(dStr){
+    if(!dStr){ pill.className='pill gray'; pill.textContent='ilk tarih gir'; pill.title=''; return; }
+    const fd=new Date(dStr+'T00:00:00'), due=new Date(fd.getTime()+per*86400000);
+    const left=Math.ceil((due.getTime()-Date.now())/86400000);
+    pill.className='pill '+(left<0?'ret':(left<=30?'proses':'ok'));
+    pill.textContent='⏳ '+(left<0?(Math.abs(left)+' gün geçti'):(left+' gün'));
+    pill.title=`İlk: ${fmtDate(dStr)} · Sonraki: ${fmtDate(due)} (${per} gün periyot)`;
+  }
+  const start=(startMap[v.plan_item_id]?String(startMap[v.plan_item_id]).slice(0,10):(autoFirst?String(autoFirst).slice(0,10):''));
+  const dateInp=el('input',{type:'date',class:'cell-inp',style:'width:135px',value:start,disabled:can('plan')?undefined:true,
+    onchange:async e=>{ const d=e.target.value; startMap[v.plan_item_id]=d||null; recompute(d);
+      if(v.plan_item_id){ const {error}=await sb.from('control_plan_items').update({periodic_start:d||null}).eq('id',v.plan_item_id);
+        error?toast(esc(error.message),'err'):toast('İlk tarih kaydedildi.','ok'); } }});
+  recompute(start);
+  return el('td',{}, el('div',{style:'display:flex;flex-direction:column;gap:3px;min-width:138px'},
+    el('span',{style:'font-size:10px;color:var(--muted)'},'İlk tarih'), dateInp, pill));
 }
 async function editRecord(r,prod){
   const root=$('#modalRoot');
@@ -1189,10 +1200,13 @@ async function editRecord(r,prod){
   let stage=r.stage, oper=r.operator||'';
   // üretim bilgisi (tarih vb. kayıtta üretimle aynı görünsün)
   if(!prod && r.production_id){ const {data}=await sb.from('productions').select('*').eq('id',r.production_id).maybeSingle(); prod=data||null; }
-  // periyodik maddeler için "ilk yapılma" tarihleri (bu ürünün tüm kayıtlarından)
+  // periyodik maddeler için "ilk yapılma" tarihleri (bu ürünün tüm kayıtlarından) + elle girilen ilk tarih
   const firstDone={};
   { const {data:hist}=await sb.from('control_records').select('checked_at,vals').eq('stock_code',r.stock_code);
     (hist||[]).forEach(rc=>{ (rc.vals||[]).forEach(vv=>{ const k=vv.measure_name; if(k&&(!firstDone[k]||rc.checked_at<firstDone[k])) firstDone[k]=rc.checked_at; }); }); }
+  const startMap={};
+  { const {data:pl}=await sb.from('control_plan_items').select('id,periodic_start').eq('stock_code',r.stock_code);
+    (pl||[]).forEach(it=>{ if(it.periodic_start) startMap[it.id]=it.periodic_start; }); }
   const canEdit = can('edit');                                     // kullanıcı bazlı: kayıt düzenleme yetkisi
   const canDelete = can('delete') || r.created_by===(ME&&ME.id);
   function render(){
@@ -1239,7 +1253,7 @@ async function editRecord(r,prod){
           el('td',{},qual?el('span',{style:'color:var(--muted)'},'—'):measInp),
           el('td',{},tgl),
           el('td',{},noteInp),
-          kalanGunCell(v,firstDone,r.checked_at)
+          kalanGunCell(v,startMap,firstDone[v.measure_name]||r.checked_at)
         );
         paint();
         body.append(row);
