@@ -219,22 +219,31 @@ function boot(session){
 sb.auth.onAuthStateChange((_e,session)=>{ boot(session); });
 (async()=>{ const {data}=await sb.auth.getSession(); boot(data.session); })();
 
-async function afterLogin(){
-  let {data:prof}=await sb.from('profiles').select('*').eq('id',ME.id).maybeSingle();
-  if(!prof){ // fallback: profil tetikleyici gecikmesi
-    await new Promise(r=>setTimeout(r,800));
-    ({data:prof}=await sb.from('profiles').select('*').eq('id',ME.id).maybeSingle());
+async function fetchProfile(retries){
+  retries=retries||1;
+  for(let i=0;i<retries;i++){
+    const {data}=await sb.from('profiles').select('*').eq('id',ME.id).maybeSingle();
+    if(data) return data;
+    if(i<retries-1) await new Promise(r=>setTimeout(r,600));  // tetikleyici gecikmesi için bekle
   }
-  PROFILE=prof||{approved:false,is_admin:false};
+  return null;
+}
+async function afterLogin(){
+  PROFILE = await fetchProfile(6) || {approved:false,is_admin:false};
   $('#auth').classList.add('hidden'); $('#app').classList.remove('hidden');
   $('#whoEmail').textContent=ME.email;
   $('#whoRole').textContent=PROFILE.is_admin?'Yönetici':(PROFILE.approved?'Onaylı':'Onay bekliyor');
-  if(!PROFILE.is_admin) $('#adminTab').classList.add('hidden');
+  $('#adminTab').classList.toggle('hidden', !PROFILE.is_admin);
+  document.querySelector('nav.tabs').classList.toggle('hidden', !(PROFILE.approved||PROFILE.is_admin));
   if(!PROFILE.approved && !PROFILE.is_admin){
     $('#pending').classList.remove('hidden');
-    document.querySelector('nav.tabs').classList.add('hidden');
+    if(!window._pendTimer) window._pendTimer=setInterval(async()=>{   // onay gelince otomatik aç
+      const p=await fetchProfile(1);
+      if(p&&(p.approved||p.is_admin)){clearInterval(window._pendTimer);window._pendTimer=null;location.reload();}
+    },5000);
     return;
   }
+  $('#pending').classList.add('hidden');
   switchTab('uretimler');
 }
 
