@@ -90,7 +90,7 @@
   .stat span{color:var(--muted);font-size:12px}
 
   /* MODAL */
-  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-start;justify-content:center;padding:24px;z-index:50;overflow-y:auto}
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-start;justify-content:center;padding:14px;z-index:50;overflow-y:auto}
   .modal{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;width:100%;max-width:1000px;margin:auto}
   .modal h3{margin:0 0 4px}
   .modal .meta{color:var(--muted);font-size:13px;margin-bottom:16px}
@@ -834,7 +834,7 @@ async function openControl(p){
     root.innerHTML='';
     const items=itemsForStage(stage);
     const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
-    const m=el('div',{class:'modal',style:'position:relative;max-width:1360px'});
+    const m=el('div',{class:'modal',style:'position:relative;max-width:1500px'});
     m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
     m.append(el('h3',{},'Kalite Kontrol Girişi'));
     m.append(el('div',{class:'meta',html:
@@ -1091,7 +1091,7 @@ async function renderKayitlar(){
   if(KAYIT_FILT.stock) q=q.eq('stock_code',KAYIT_FILT.stock);
   if(KAYIT_FILT.start) q=q.gte('checked_at',KAYIT_FILT.start);
   if(KAYIT_FILT.end) q=q.lte('checked_at',KAYIT_FILT.end+'T23:59:59');
-  const [{data:recsD},{data:prodsD}]=await Promise.all([q, sb.from('productions').select('id,customer,start_time,end_time,quantity,unit,machine_name,machine_code,shift,stock_code,stock_name,prod_date')]);
+  const [{data:recsD},{data:prodsD}]=await Promise.all([q, sb.from('productions').select('id,customer,start_time,end_time,quantity,unit,machine_name,machine_code,shift,stock_code,stock_name,prod_date,work_order')]);
   const recs=recsD||[]; const pmap={}; (prodsD||[]).forEach(p=>pmap[p.id]=p);
   root.innerHTML='';
   // aşama alt sekmeleri
@@ -1130,18 +1130,19 @@ async function renderKayitlar(){
   if(KAYIT_FILT.stock)$('#kf_stock').value=KAYIT_FILT.stock;
   root.append(filt);
   const tb=el('table');
-  tb.append(el('thead',{},el('tr',{},...['Tarih','Kontrol Saati','Vardiya','Cari','Stok Kodu','Stok Adı','Üretim Mik.','Birim','Makine Kodu','Makine Adı','Ölçümcü','Sonuç','İşlem'].map(h=>el('th',{},h)))));
+  tb.append(el('thead',{},el('tr',{},...['Tarih','Kontrol Saati','Vardiya','Cari','Stok Kodu','Stok Adı','İş Emri','Üretim Mik.','Birim','Makine Kodu','Makine Adı','Ölçümcü','Sonuç','İşlem'].map(h=>el('th',{},h)))));
   const body=el('tbody',{id:'recBody'});
-  if(!recs.length)body.append(el('tr',{},el('td',{colspan:13},el('div',{class:'empty'},`Bu aşamada (${STAGES[KAYIT_STAGE]}) kayıt yok.`))));
+  if(!recs.length)body.append(el('tr',{},el('td',{colspan:14},el('div',{class:'empty'},`Bu aşamada (${STAGES[KAYIT_STAGE]}) kayıt yok.`))));
   recs.forEach(r=>{
     const pr=pmap[r.production_id]||{};
-    body.append(el('tr',{style:'cursor:pointer','data-s':`${r.stock_code} ${r.stock_name} ${r.machine_code} ${pr.customer||''}`.toLowerCase(),onclick:()=>editRecord(r,pr)},
+    body.append(el('tr',{style:'cursor:pointer','data-s':`${r.stock_code} ${r.stock_name} ${r.machine_code} ${pr.customer||''} ${r.work_order||''}`.toLowerCase(),onclick:()=>editRecord(r,pr)},
       el('td',{},fmtDate(pr.prod_date||pr.start_time||r.checked_at)),
       el('td',{style:'font-weight:600'},fmtTime(r.checked_at)),
       el('td',{},String(r.shift??pr.shift??'')),
       el('td',{},pr.customer||''),
       el('td',{},r.stock_code||''),
       el('td',{style:'font-size:11px'},(r.stock_name||'').slice(0,30)),
+      el('td',{},r.work_order||pr.work_order||''),
       el('td',{},pr.quantity??''),
       el('td',{},pr.unit||''),
       el('td',{},r.machine_code||''),
@@ -1174,11 +1175,12 @@ async function editRecord(r,prod){
   function render(){
     root.innerHTML='';
     const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
-    const m=el('div',{class:'modal',style:'position:relative;max-width:1360px'});
+    const m=el('div',{class:'modal',style:'position:relative;max-width:1500px'});
     m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
     m.append(el('h3',{},`${STAGES[stage]} Kontrol Kaydı`));
     const pdate=prod?(fmtDate(prod.prod_date||prod.start_time)+(prod.start_time?' '+fmtTime(prod.start_time)+(prod.end_time?'–'+fmtTime(prod.end_time):''):'')):fmtDT(r.checked_at);
-    m.append(el('div',{class:'meta',html:`<b>${esc(r.stock_code)}</b> — ${esc(r.stock_name||'')}<br>${esc(r.machine_code||'')}${prod&&prod.customer?' · '+esc(prod.customer):''}${prod&&prod.quantity!=null?' · '+prod.quantity+' '+esc(prod.unit||''):''} · ${pdate}`}));
+    const wo=r.work_order||(prod&&prod.work_order)||'';
+    m.append(el('div',{class:'meta',html:`<b>${esc(r.stock_code)}</b> — ${esc(r.stock_name||'')}<br>${esc(r.machine_code||'')}${prod&&prod.customer?' · '+esc(prod.customer):''}${prod&&prod.quantity!=null?' · '+prod.quantity+' '+esc(prod.unit||''):''}${wo?' · İş Emri: '+esc(wo):''} · ${pdate}`}));
     m.append(el('div',{class:'row',style:'margin-bottom:14px'},
       el('div',{class:'field grow'},el('label',{class:'lab'},'Operatör'),el('input',{class:'inp',id:'er_oper',value:oper,disabled:canEdit?undefined:true,oninput:e=>oper=e.target.value}))
     ));
