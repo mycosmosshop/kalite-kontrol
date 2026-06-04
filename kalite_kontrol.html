@@ -1034,23 +1034,26 @@ async function renderAdmin(){
   const tb=el('table');
   tb.append(el('thead',{},el('tr',{},...['E-posta','Durum','Rol','Yetkiler','İşlem'].map(h=>el('th',{},h)))));
   const body=el('tbody');
+  const SUPER='volkanpekatik@gmail.com';
+  const amSuper=(ME.email||'').toLowerCase()===SUPER;
   users.forEach(u=>{
     const actions=el('td',{});
     const isSelf=u.id===ME.id;
-    const isProtected=u.is_admin || (u.email||'').toLowerCase()==='volkanpekatik@gmail.com';
+    const isSuperRow=(u.email||'').toLowerCase()===SUPER;
+    const isProtected = isSelf || (isSuperRow && !amSuper);   // sadece kendini + süper-admin'i (başkalarından) koru
     if(isProtected){
-      // adminler korumalı: onayı kaldırılamaz / kilitlenemez
-      actions.append(el('span',{class:'pill gray'}, isSelf?'Sen — korumalı':'Yönetici — korumalı'));
+      actions.append(el('span',{class:'pill gray'}, isSelf?'Sen — korumalı':'Süper admin — korumalı'));
     }else{
       if(!u.approved)actions.append(el('button',{class:'btn sm',onclick:()=>setUser(u.id,{approved:true})},'Onayla'));
       else actions.append(el('button',{class:'btn sm sec',onclick:()=>setUser(u.id,{approved:false})},'Onayı Kaldır'));
-      actions.append(el('button',{class:'btn sm sec',style:'margin-left:6px',onclick:()=>{if(confirm(u.email+' admin yapılsın mı?'))setUser(u.id,{is_admin:true,approved:true});}},'Admin Yap'));
+      if(u.is_admin) actions.append(el('button',{class:'btn sm sec',style:'margin-left:6px',onclick:()=>{if(confirm(u.email+' yöneticilikten çıkarılsın mı?'))setUser(u.id,{is_admin:false});}},'Admin’i Kaldır'));
+      else actions.append(el('button',{class:'btn sm sec',style:'margin-left:6px',onclick:()=>{if(confirm(u.email+' admin yapılsın mı?'))setUser(u.id,{is_admin:true,approved:true});}},'Admin Yap'));
     }
     body.append(el('tr',{},
       el('td',{},el('div',{},u.email),el('div',{style:'color:var(--muted);font-size:11px'},fmtDate(u.created_at))),
       el('td',{},el('span',{class:'pill '+(u.approved?'ok':'gray')},u.approved?'Onaylı':'Bekliyor')),
       el('td',{},u.is_admin?'Yönetici':'Kullanıcı'),
-      permsCell(u,isProtected),
+      permsCell(u),
       actions
     ));
   });
@@ -1060,9 +1063,9 @@ async function renderAdmin(){
     el('div',{class:'tbl-wrap'},tb)));
 }
 const PERMS=[['enter','Giriş'],['edit','Düzenle'],['delete','Sil'],['plan','Plan'],['import','İçe Aktar']];
-function permsCell(u,isProtected){
+function permsCell(u){
   const td=el('td',{});
-  if(isProtected){ td.append(el('span',{class:'pill ok'},'Tümü (admin)')); return td; }
+  if(u.is_admin){ td.append(el('span',{class:'pill ok'},'Tümü (admin)')); return td; }
   const wrap=el('div',{style:'display:flex;gap:10px;flex-wrap:wrap'});
   PERMS.forEach(([k,lbl])=>{
     const cb=el('input',{type:'checkbox'}); cb.checked=!!u['can_'+k];
