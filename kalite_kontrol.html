@@ -12,6 +12,13 @@
     --txt:#e2e8f0; --muted:#94a3b8; --accent:#2563eb; --accent2:#1d4ed8;
     --ok:#16a34a; --ret:#dc2626; --warn:#d97706;
   }
+  body.light{
+    --bg:#eef2f6; --panel:#ffffff; --panel2:#f1f5f9; --line:#cbd5e1;
+    --txt:#0f172a; --muted:#5b6b7f; --accent:#2563eb; --accent2:#1d4ed8;
+    --ok:#16a34a; --ret:#dc2626; --warn:#b45309;
+  }
+  body.light th{background:var(--panel)}
+  .theme-btn{width:38px;height:34px;padding:0;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--txt);font-size:17px;line-height:1;flex:0 0 auto}
   *{box-sizing:border-box}
   body{margin:0;font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--txt);font-size:14px}
   button{cursor:pointer;font-family:inherit}
@@ -20,7 +27,7 @@
 
   /* AUTH */
   #auth{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
-  .auth-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:32px;width:100%;max-width:380px}
+  .auth-card{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:32px;width:100%;max-width:380px}
   .auth-card h1{margin:0 0 4px;font-size:22px}
   .auth-card p.sub{margin:0 0 22px;color:var(--muted);font-size:13px}
   .field{margin-bottom:14px}
@@ -108,6 +115,7 @@
 <!-- ============ AUTH ============ -->
 <div id="auth">
   <div class="auth-card">
+    <button class="theme-btn" id="themeBtnAuth" title="Tema değiştir" style="position:absolute;top:14px;right:14px">🌙</button>
     <h1>Kalite Kontrol</h1>
     <p class="sub">Seri başı · Proses · Son kontrol kayıt sistemi</p>
     <div id="authMsg"></div>
@@ -126,6 +134,7 @@
     <h2>🔬 Kalite Kontrol</h2>
     <div class="sp"></div>
     <div class="who"><div id="whoEmail"></div><div id="whoRole"></div></div>
+    <button class="theme-btn" id="themeBtnTop" title="Tema değiştir">🌙</button>
     <button class="btn sec sm" id="logoutBtn">Çıkış</button>
   </header>
   <nav class="tabs">
@@ -159,6 +168,17 @@ let ME = null;           // {id,email}
 let PROFILE = null;      // {approved,is_admin}
 const STAGES = {giris:'Giriş Kalite', seri_basi:'Seri Başı', proses:'Proses', son:'Son Kontrol'};
 const STAGE_CLS = {giris:'gray', seri_basi:'seri', proses:'proses', son:'son'};
+
+// ====================== TEMA (dark/light) ======================
+function applyTheme(t){
+  document.body.classList.toggle('light', t==='light');
+  try{localStorage.setItem('kk_theme',t);}catch(e){}
+  const ico=t==='light'?'☀️':'🌙';
+  document.querySelectorAll('#themeBtnTop,#themeBtnAuth').forEach(b=>b.textContent=ico);
+}
+function toggleTheme(){ applyTheme(document.body.classList.contains('light')?'dark':'light'); }
+applyTheme((function(){try{return localStorage.getItem('kk_theme')}catch(e){return null}})()||'dark');
+document.addEventListener('click',e=>{ if(e.target&&(e.target.id==='themeBtnTop'||e.target.id==='themeBtnAuth')) toggleTheme(); });
 
 // ====================== HELPERS ======================
 const $ = s => document.querySelector(s);
