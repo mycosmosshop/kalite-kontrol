@@ -594,22 +594,23 @@ async function importPlan(){
 // ====================== KONTROL GİRİŞİ (MODAL) ======================
 async function openControl(p){
   const {data:plan}=await sb.from('control_plan_items').select('*').eq('stock_code',p.stock_code).eq('active',true).order('op_no',{nullsFirst:true}).order('seq');
-  let items=plan||[];
+  let allItems=plan||[];
   // üretimin operasyonuna ait maddeler varsa sadece onları göster (yoksa tüm plan)
   if(p.op_no!=null){
-    const opItems=items.filter(it=>String(it.op_no)===String(p.op_no));
-    if(opItems.length) items=opItems;
+    const opItems=allItems.filter(it=>String(it.op_no)===String(p.op_no));
+    if(opItems.length) allItems=opItems;
   }
+  // aşamaya göre plan maddeleri: seri başı=proses (process_control), son (final_control)
+  const itemsForStage=s=>allItems.filter(it=> s==='son' ? (it.final_control!==false) : (it.process_control!==false));
   const {data:recs}=await sb.from('control_records').select('*').eq('production_id',p.id).order('checked_at');
   const existing=recs||[];
 
   const root=$('#modalRoot');
-  const state={}; // item.id -> {value, result}
-  items.forEach(it=>state[it.id]={value:'',result:it.is_qualitative?null:''});
+  const state={}; // item.id -> {value, result}  (tüm maddeler için, aşamalar arası korunur)
+  allItems.forEach(it=>state[it.id]={value:'',result:it.is_qualitative?null:''});
+  let operVal=p.operator||'', noteVal='';
 
-  let stage='seri_basi';
-  const hasSeri=existing.some(r=>r.stage==='seri_basi');
-  if(hasSeri)stage='proses';
+  let stage = existing.some(r=>r.stage==='seri_basi') ? 'proses' : 'seri_basi';
 
   function lastProsesInfo(){
     const ps=existing.filter(r=>r.stage==='proses'||r.stage==='seri_basi').sort((a,b)=>new Date(b.checked_at)-new Date(a.checked_at));
@@ -621,13 +622,14 @@ async function openControl(p){
 
   function render(){
     root.innerHTML='';
+    const items=itemsForStage(stage);
     const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
     const m=el('div',{class:'modal',style:'position:relative'});
     m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
     m.append(el('h3',{},'Kalite Kontrol Girişi'));
     m.append(el('div',{class:'meta',html:
       `<b>${esc(p.stock_code)}</b> — ${esc(p.stock_name||'')}<br>`+
-      `${esc(p.machine_name||'')} (${esc(p.machine_code||'')}) · ${esc(p.operator||'')} · ${fmtDate(p.prod_date)} · Miktar: ${p.quantity??''} ${p.unit||''}`}));
+      `${esc(p.machine_name||'')} (${esc(p.machine_code||'')}) · ${esc(p.operator||'')} · ${fmtDate(p.prod_date)} · Op ${p.op_no??'-'} · Miktar: ${p.quantity??''} ${p.unit||''}`}));
 
     // mevcut kontroller özeti
     if(existing.length){
@@ -638,16 +640,21 @@ async function openControl(p){
     }
     m.append(el('div',{style:'margin-bottom:12px'},el('span',{html:lastProsesInfo()})));
 
-    // aşama seçimi
-    const stageSel=sel('m_stage',Object.entries(STAGES));
-    stageSel.value=stage; stageSel.onchange=()=>{stage=stageSel.value;};
-    m.append(el('div',{class:'row',style:'margin-bottom:14px'},
-      el('div',{class:'field',style:'flex:0;min-width:180px'},el('label',{class:'lab'},'Kontrol Aşaması'),stageSel),
-      el('div',{class:'field grow'},el('label',{class:'lab'},'Operatör / Kontrol eden'),el('input',{class:'inp',id:'m_oper',value:p.operator||''}))
-    ));
+    // aşama seçimi — ayrı butonlar (Seri Başı / Proses / Son), her biri kendi maddelerini çeker
+    const seg=el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px'});
+    Object.entries(STAGES).forEach(([k,label])=>{
+      const cnt=itemsForStage(k).length;
+      const done=existing.filter(r=>r.stage===k).length;
+      seg.append(el('button',{class:'btn sm '+(stage===k?'':'sec'),onclick:()=>{stage=k;render();}},
+        `${label} (${cnt})${done?' · '+done+'✔':''}`));
+    });
+    m.append(el('label',{class:'lab'},'Kontrol Aşaması (her aşama plandan kendi maddelerini çeker)'));
+    m.append(seg);
+    m.append(el('div',{class:'field',style:'margin:8px 0 14px'},el('label',{class:'lab'},'Operatör / Kontrol eden'),
+      el('input',{class:'inp',id:'m_oper',value:operVal,oninput:e=>operVal=e.target.value})));
 
     if(!items.length){
-      m.append(el('div',{class:'msg info'},`Bu ürün (<b>${esc(p.stock_code)}</b>) için kontrol planı tanımlı değil. Önce «Kontrol Planı» sekmesinden madde ekle.`));
+      m.append(el('div',{class:'msg info'},`<b>${STAGES[stage]}</b> için bu üründe (<b>${esc(p.stock_code)}</b>, Op ${p.op_no??'-'}) kontrol planı maddesi yok. «Kontrol Planı» sekmesinden ekle.`));
     }else{
       items.forEach(it=>{
         const st=state[it.id];
@@ -680,8 +687,8 @@ async function openControl(p){
         m.append(ci);
       });
     }
-    m.append(el('div',{class:'field',style:'margin-top:8px'},el('label',{class:'lab'},'Not (opsiyonel)'),el('textarea',{class:'inp',id:'m_note',rows:'2'})));
-    const saveBtn=el('button',{class:'btn',style:'margin-top:8px',onclick:()=>saveControl(p,items,state,stageSel.value)},'💾 Kontrolü Kaydet');
+    m.append(el('div',{class:'field',style:'margin-top:8px'},el('label',{class:'lab'},'Not (opsiyonel)'),el('textarea',{class:'inp',id:'m_note',rows:'2',oninput:e=>noteVal=e.target.value},noteVal)));
+    const saveBtn=el('button',{class:'btn',style:'margin-top:8px',onclick:()=>saveControl(p,items,state,stage)},`💾 Kaydet — ${STAGES[stage]}`);
     if(!items.length)saveBtn.disabled=true;
     m.append(saveBtn);
     bg.append(m); root.append(bg);
@@ -729,7 +736,7 @@ async function renderKayitlar(){
   );
   root.append(tools);
   const tb=el('table');
-  tb.append(el('thead',{},el('tr',{},...['Zaman','Aşama','Ürün','Makine','Operatör','Sonuç','RET maddeler','Detay'].map(h=>el('th',{},h)))));
+  tb.append(el('thead',{},el('tr',{},...['Zaman','Aşama','Ürün','Makine','Operatör','Sonuç','RET maddeler','İşlem'].map(h=>el('th',{},h)))));
   const body=el('tbody',{id:'recBody'});
   if(!recs.length)body.append(el('tr',{},el('td',{colspan:8},el('div',{class:'empty'},'Henüz kontrol kaydı yok.'))));
   recs.forEach(r=>{
@@ -742,27 +749,65 @@ async function renderKayitlar(){
       el('td',{},r.operator||''),
       el('td',{},el('span',{class:'pill '+(r.overall_result==='RET'?'ret':'ok')},r.overall_result||'—')),
       el('td',{style:'color:var(--ret);font-size:12px'},retItems),
-      el('td',{},el('button',{class:'btn sm',onclick:()=>showRecDetail(r)},'Gör'))
+      el('td',{style:'white-space:nowrap'},
+        el('button',{class:'btn sm',onclick:()=>editRecord(r)},'Düzenle'),
+        el('button',{class:'btn sm danger',style:'margin-left:6px',onclick:()=>delRecord(r.id)},'Sil'))
     ));
   });
   tb.append(body); root.append(el('div',{class:'card'},el('div',{class:'tbl-wrap'},tb)));
 }
-function showRecDetail(r){
+function editRecord(r){
   const root=$('#modalRoot');
-  const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
-  const m=el('div',{class:'modal',style:'position:relative;max-width:620px'});
-  m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
-  m.append(el('h3',{},`${STAGES[r.stage]} Kontrolü`));
-  m.append(el('div',{class:'meta',html:`<b>${esc(r.stock_code)}</b> — ${esc(r.stock_name||'')}<br>${esc(r.machine_code||'')} · ${esc(r.operator||'')} · ${fmtDT(r.checked_at)}`}));
-  const tb=el('table');
-  tb.append(el('thead',{},el('tr',{},...['Ölçülecek Değer','Değer','Sonuç'].map(h=>el('th',{},h)))));
-  const body=el('tbody');
-  (r.vals||[]).forEach(v=>body.append(el('tr',{},
-    el('td',{},v.measure_name),el('td',{},v.value||'—'),
-    el('td',{},el('span',{class:'pill '+(v.result==='RET'?'ret':(v.result==='OK'?'ok':'gray'))},v.result||'—')))));
-  tb.append(body); m.append(el('div',{class:'tbl-wrap'},tb));
-  if(r.note)m.append(el('p',{style:'margin-top:12px;color:var(--muted)'},'Not: '+r.note));
-  bg.append(m); root.append(bg);
+  const vals=JSON.parse(JSON.stringify(r.vals||[]));  // düzenlenebilir kopya
+  let stage=r.stage, oper=r.operator||'';
+  function render(){
+    root.innerHTML='';
+    const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
+    const m=el('div',{class:'modal',style:'position:relative;max-width:680px'});
+    m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
+    m.append(el('h3',{},'Kontrol Kaydını Düzenle'));
+    m.append(el('div',{class:'meta',html:`<b>${esc(r.stock_code)}</b> — ${esc(r.stock_name||'')}<br>${esc(r.machine_code||'')} · ${fmtDT(r.checked_at)}`}));
+    const stageSel=sel('er_stage',Object.entries(STAGES)); stageSel.value=stage; stageSel.onchange=e=>stage=e.target.value;
+    m.append(el('div',{class:'row',style:'margin-bottom:14px'},
+      el('div',{class:'field',style:'flex:0;min-width:180px'},el('label',{class:'lab'},'Aşama'),stageSel),
+      el('div',{class:'field grow'},el('label',{class:'lab'},'Operatör'),el('input',{class:'inp',id:'er_oper',value:oper,oninput:e=>oper=e.target.value}))
+    ));
+    vals.forEach(v=>{
+      const ci=el('div',{class:'ctrl-item'});
+      ci.append(el('div',{class:'nm',style:'margin-bottom:8px'},v.measure_name));
+      const okB=el('button',{class:'ok',onclick:()=>{v.result='OK';paint();}},'OK');
+      const retB=el('button',{class:'ret',onclick:()=>{v.result='RET';paint();}},'RET');
+      const naB=el('button',{class:'sec',onclick:()=>{v.result=null;paint();}},'—');
+      function paint(){okB.classList.toggle('on',v.result==='OK');retB.classList.toggle('on',v.result==='RET');}
+      paint();
+      ci.append(el('div',{class:'row'},
+        el('div',{class:'field grow'},el('label',{class:'lab'},'Ölçüm değeri'),
+          el('input',{class:'inp',value:v.value||'',oninput:e=>v.value=e.target.value.trim()||null})),
+        el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Sonuç'),el('div',{class:'okret'},okB,retB,naB))
+      ));
+      m.append(ci);
+    });
+    m.append(el('div',{class:'field',style:'margin-top:8px'},el('label',{class:'lab'},'Not'),el('textarea',{class:'inp',id:'er_note',rows:'2'},r.note||'')));
+    m.append(el('div',{style:'display:flex;gap:8px;margin-top:10px'},
+      el('button',{class:'btn',onclick:saveEdit},'💾 Kaydet'),
+      el('button',{class:'btn danger',style:'flex:0',onclick:()=>delRecord(r.id)},'🗑 Sil')
+    ));
+    bg.append(m); root.append(bg);
+  }
+  async function saveEdit(){
+    const overall=vals.some(v=>v.result==='RET')?'RET':'OK';
+    const patch={vals,stage,operator:$('#er_oper').value.trim()||null,note:$('#er_note').value.trim()||null,overall_result:overall};
+    const {error}=await sb.from('control_records').update(patch).eq('id',r.id);
+    if(error){toast(esc(error.message),'err');return;}
+    toast('Kayıt güncellendi.','ok'); root.innerHTML=''; renderKayitlar();
+  }
+  render();
+}
+async function delRecord(id){
+  if(!confirm('Bu kontrol kaydı silinsin mi?'))return;
+  const {error}=await sb.from('control_records').delete().eq('id',id);
+  if(error){toast(esc(error.message),'err');return;}
+  toast('Kayıt silindi.','ok'); $('#modalRoot').innerHTML=''; renderKayitlar();
 }
 function exportRecords(recs){
   const rows=[];
