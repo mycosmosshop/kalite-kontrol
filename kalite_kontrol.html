@@ -808,6 +808,7 @@ async function openControl(p){
   function autoFillStage(){
     itemsForStage(stage).forEach(it=>{ const st=stItem(it); const n=sampleFor(it,stage);
       st.samples=genSamples(it,n); st.cur={value:'',ok:st.samples.length?st.samples[st.samples.length-1].ok:false}; });
+    operVal=AUTO_MEASURER;   // ölçümcü: kalite operatörü
     render();
   }
   const {data:recs}=await sb.from('control_records').select('*').eq('production_id',p.id).order('checked_at');
@@ -996,7 +997,8 @@ function genMeasure(it){
   if(isFinite(hi)&&val>hi)val=Math.floor((hi+1e-9)/res)*res;
   return (val).toFixed(d);
 }
-function genSamples(it,n){ const out=[]; for(let i=0;i<n;i++)out.push(it.is_qualitative?{value:null,ok:true}:{value:genMeasure(it),ok:true}); return out; }
+const AUTO_MEASURER='Burak Silahlı';   // otomatik üretimlerde ölçümcü (kalite operatörü)
+function genSamples(it,n){ const out=[]; for(let i=0;i<n;i++)out.push(it.is_qualitative?{value:null,ok:true,by:AUTO_MEASURER}:{value:genMeasure(it),ok:true,by:AUTO_MEASURER}); return out; }
 // op + aşama filtreleri (toplu üretim için modül seviyesinde)
 function opItemsFor(items,op_no){ if(op_no==null)return items; const m=items.filter(it=>String(it.op_no)===String(op_no)); return m.length?m:items; }
 function stageItems(items,s){ return items.filter(it=> s==='giris'?(it.giris_kalite===true): s==='son'?(it.final_control!==false):(it.process_control!==false)); }
@@ -1008,7 +1010,7 @@ function buildAutoRec(p,stage,when,items){
       lower_limit:it.lower_limit,upper_limit:it.upper_limit,method:it.method,sampling_frequency:it.sampling_frequency,
       is_qualitative:it.is_qualitative,sample_size:n,samples:genSamples(it,n)}; });
   return {production_id:p.id,stock_code:p.stock_code,stock_name:p.stock_name,machine_code:p.machine_code,work_order:p.work_order,
-    stage,operator:p.operator,shift:p.shift,checked_at:when.toISOString(),vals,overall_result:'OK'};
+    stage,operator:AUTO_MEASURER,shift:p.shift,checked_at:when.toISOString(),vals,overall_result:'OK'};
 }
 async function openBulkAuto(){
   const root=$('#modalRoot');
@@ -1128,9 +1130,9 @@ async function renderKayitlar(){
   if(KAYIT_FILT.stock)$('#kf_stock').value=KAYIT_FILT.stock;
   root.append(filt);
   const tb=el('table');
-  tb.append(el('thead',{},el('tr',{},...['Tarih','Kontrol Saati','Vardiya','Cari','Stok Kodu','Stok Adı','Üretim Mik.','Birim','Makine Kodu','Makine Adı','Sonuç','İşlem'].map(h=>el('th',{},h)))));
+  tb.append(el('thead',{},el('tr',{},...['Tarih','Kontrol Saati','Vardiya','Cari','Stok Kodu','Stok Adı','Üretim Mik.','Birim','Makine Kodu','Makine Adı','Ölçümcü','Sonuç','İşlem'].map(h=>el('th',{},h)))));
   const body=el('tbody',{id:'recBody'});
-  if(!recs.length)body.append(el('tr',{},el('td',{colspan:12},el('div',{class:'empty'},`Bu aşamada (${STAGES[KAYIT_STAGE]}) kayıt yok.`))));
+  if(!recs.length)body.append(el('tr',{},el('td',{colspan:13},el('div',{class:'empty'},`Bu aşamada (${STAGES[KAYIT_STAGE]}) kayıt yok.`))));
   recs.forEach(r=>{
     const pr=pmap[r.production_id]||{};
     body.append(el('tr',{style:'cursor:pointer','data-s':`${r.stock_code} ${r.stock_name} ${r.machine_code} ${pr.customer||''}`.toLowerCase(),onclick:()=>editRecord(r,pr)},
@@ -1144,6 +1146,7 @@ async function renderKayitlar(){
       el('td',{},pr.unit||''),
       el('td',{},r.machine_code||''),
       el('td',{},pr.machine_name||''),
+      el('td',{},r.operator||''),
       el('td',{},el('span',{class:'pill '+(r.overall_result==='RET'?'ret':'ok')},r.overall_result||'—')),
       el('td',{style:'white-space:nowrap',onclick:e=>e.stopPropagation()},
         el('button',{class:'btn sm',onclick:()=>editRecord(r,pr)},'Aç'),
