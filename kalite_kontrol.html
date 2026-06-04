@@ -320,6 +320,7 @@ async function renderUretimler(){
       el('div',{class:'stat'},el('b',{},String(PRODS.length)),el('span',{},'Üretim kaydı')),
       el('div',{class:'stat'},el('b',{},String(stockSet.length)),el('span',{},'Farklı ürün')),
       el('div',{class:'grow'}),
+      can('auto')?el('button',{class:'btn sm',style:'flex:0',onclick:openBulkAuto,title:'Tüm üretimlere otomatik (uygun) kontrol kaydı üret'},'🎲 Otomatik Kontrol Üret'):'',
       el('input',{class:'inp',id:'prodSearch',placeholder:'🔍 makine / ürün / operatör ara…',style:'max-width:280px',oninput:filterProdRows})
     ),
     el('div',{class:'tbl-wrap'},buildProdTable(PRODS))
@@ -702,6 +703,11 @@ async function openControl(p){
     s==='son'   ? (it.final_control!==false) :
                   (it.process_control!==false));   // seri_basi & proses = process_control
   const sampleFor=(it,s)=>{ const v=(s==='son'&&it.son_kontrol_ornekleme)?it.son_kontrol_ornekleme:it.sample_size; const n=Number(v); return n>0?n:1; };
+  function autoFillStage(){
+    itemsForStage(stage).forEach(it=>{ const st=stItem(it); const n=sampleFor(it,stage);
+      st.samples=genSamples(it,n); st.cur={value:'',ok:st.samples.length?st.samples[st.samples.length-1].ok:false}; });
+    render();
+  }
   const {data:recs}=await sb.from('control_records').select('*').eq('production_id',p.id).order('checked_at');
   const existing=recs||[];
 
@@ -817,9 +823,12 @@ async function openControl(p){
       tb.append(body); m.append(el('div',{class:'tbl-wrap'},tb));
     }
     m.append(el('div',{class:'field',style:'margin-top:8px'},el('label',{class:'lab'},'Not (opsiyonel)'),el('textarea',{class:'inp',id:'m_note',rows:'2',oninput:e=>noteVal=e.target.value},noteVal)));
-    const saveBtn=el('button',{class:'btn',style:'margin-top:8px',onclick:()=>saveControl(p,items,state,stage,sampleFor)},`💾 Kaydet — ${STAGES[stage]}`);
+    const btnRow=el('div',{style:'display:flex;gap:8px;margin-top:8px;flex-wrap:wrap'});
+    if(items.length && can('auto')) btnRow.append(el('button',{class:'btn sec',style:'flex:0',onclick:autoFillStage,title:'Bu aşamayı uygun rastgele değerlerle doldur'},'🎲 Otomatik doldur'));
+    const saveBtn=el('button',{class:'btn',onclick:()=>saveControl(p,items,state,stage,sampleFor)},`💾 Kaydet — ${STAGES[stage]}`);
     if(!items.length)saveBtn.disabled=true;
-    m.append(saveBtn);
+    btnRow.append(saveBtn);
+    m.append(btnRow);
     bg.append(m); root.append(bg);
   }
   render();
@@ -848,6 +857,100 @@ async function saveControl(p,items,state,stage,sampleFor){
   $('#modalRoot').innerHTML='';
   if(!$('#tab-kayitlar').classList.contains('hidden'))renderKayitlar();
   loadControlCounts();
+}
+
+// ====================== OTOMATİK (RASTGELE UYGUN) ÖLÇÜ ======================
+function decimals(v){ if(v==null)return 0; const i=String(v).indexOf('.'); return i<0?0:(String(v).length-i-1); }
+function resolutionFor(it){
+  const m=deTr(it.method||'');
+  const mag=Math.max(Math.abs(Number(it.target)||0),Math.abs(Number(it.lower_limit)||0),Math.abs(Number(it.upper_limit)||0));
+  if(/mikro/.test(m)) return 0.001;                    // mikrometre
+  if(/kumpas/.test(m)) return mag>150?0.02:0.01;       // kumpas: >150mm → 0.02, değilse 0.01
+  if(/serit|seritmetre|metre|cetvel|tape/.test(m)) return 1;  // şeritmetre → 1mm
+  const dec=Math.max(decimals(it.lower_limit),decimals(it.upper_limit),decimals(it.target));
+  return dec>=3?0.001:(dec>=2?0.01:(dec>=1?0.1:1));    // yöntem belirsiz: ondalıktan
+}
+function randn(){ let u=0,v=0; while(!u)u=Math.random(); while(!v)v=Math.random(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
+function genMeasure(it){
+  const lo=Number(it.lower_limit),hi=Number(it.upper_limit),t=Number(it.target),res=resolutionFor(it);
+  let mean=isFinite(t)?t:(isFinite(lo)&&isFinite(hi)?(lo+hi)/2:(isFinite(lo)?lo:(isFinite(hi)?hi:0)));
+  let std=(isFinite(lo)&&isFinite(hi))?(hi-lo)/6:Math.max(res,Math.abs(mean)*0.01);
+  if(!(std>0))std=0;                                   // tolerans 0 → sabit (hedef)
+  let val=mean+std*randn();
+  if(isFinite(lo))val=Math.max(val,lo);
+  if(isFinite(hi))val=Math.min(val,hi);
+  val=Math.round(val/res)*res;
+  if(isFinite(lo)&&val<lo)val=Math.ceil((lo-1e-9)/res)*res;
+  if(isFinite(hi)&&val>hi)val=Math.floor((hi+1e-9)/res)*res;
+  const d=res>=1?0:(res>=0.1?1:(res>=0.01?2:3));
+  return (val).toFixed(d);
+}
+function genSamples(it,n){ const out=[]; for(let i=0;i<n;i++)out.push(it.is_qualitative?{value:null,ok:true}:{value:genMeasure(it),ok:true}); return out; }
+// op + aşama filtreleri (toplu üretim için modül seviyesinde)
+function opItemsFor(items,op_no){ if(op_no==null)return items; const m=items.filter(it=>String(it.op_no)===String(op_no)); return m.length?m:items; }
+function stageItems(items,s){ return items.filter(it=> s==='giris'?(it.giris_kalite===true): s==='son'?(it.final_control!==false):(it.process_control!==false)); }
+function sampleCount(it,s){ const v=(s==='son'&&it.son_kontrol_ornekleme)?it.son_kontrol_ornekleme:it.sample_size; const n=Number(v); return n>0?n:1; }
+function buildAutoRec(p,stage,when,items){
+  const its=stageItems(items,stage); if(!its.length)return null;
+  const vals=its.map(it=>{ const n=sampleCount(it,stage);
+    return {plan_item_id:it.id,measure_name:it.measure_name,target:it.target,unit:it.unit,nitel_hedef:it.nitel_hedef,
+      lower_limit:it.lower_limit,upper_limit:it.upper_limit,method:it.method,sampling_frequency:it.sampling_frequency,
+      is_qualitative:it.is_qualitative,sample_size:n,samples:genSamples(it,n)}; });
+  return {production_id:p.id,stock_code:p.stock_code,stock_name:p.stock_name,machine_code:p.machine_code,work_order:p.work_order,
+    stage,operator:p.operator,shift:p.shift,checked_at:when.toISOString(),vals,overall_result:'OK'};
+}
+async function openBulkAuto(){
+  const root=$('#modalRoot');
+  root.innerHTML='<div class="modal-bg"><div class="modal"><div class="empty">Yükleniyor…</div></div></div>';
+  const {data:planAll}=await sb.from('control_plan_items').select('*').eq('active',true);
+  const plan=planAll||[]; const planStocks=new Set(plan.map(x=>x.stock_code));
+  const prods=PRODS.filter(p=>planStocks.has(p.stock_code));
+  root.innerHTML='';
+  if(!prods.length){ toast('Planı tanımlı üretim yok. Önce kontrol planı ekle.','err'); return; }
+  const machines={}; prods.forEach(p=>{ const k=p.machine_code||'?'; if(!machines[k])machines[k]={code:k,name:p.machine_name,unit:p.unit,count:0}; machines[k].count++; });
+  const cyc={};
+  const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
+  const m=el('div',{class:'modal',style:'position:relative;max-width:700px'});
+  m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
+  m.append(el('h3',{},'🎲 Otomatik Kontrol Üret'));
+  m.append(el('p',{class:'meta'},`${prods.length} üretim (planı olan). Her makine için çevrim süresini (saniye/birim) gir; bitiş = başlangıç + adet × çevrim olarak hesaplanıp üretime yazılır, sonra plandaki örnekleme sıklığına göre Seri Başı + saatlik Proses + Son kayıtları üretilir (hepsi uygun, rastgele).`));
+  Object.values(machines).forEach(mc=>{
+    m.append(el('div',{class:'row',style:'margin-bottom:8px'},
+      el('div',{class:'field grow'},el('label',{class:'lab'},`${mc.code} — ${esc(mc.name||'')} · ${mc.count} üretim · birim: ${esc(mc.unit||'-')}`),
+        el('input',{class:'inp',type:'number',step:'0.001',placeholder:'çevrim süresi (sn/'+(mc.unit||'birim')+')',oninput:e=>cyc[mc.code]=Number(e.target.value)||0}))));
+  });
+  const skipCb=el('input',{type:'checkbox'}); skipCb.checked=true;
+  m.append(el('label',{style:'display:inline-flex;align-items:center;gap:6px;margin:6px 0 12px;cursor:pointer'},skipCb,'Zaten kontrol kaydı olan üretimleri atla'));
+  const status=el('div',{style:'margin-top:6px;color:var(--muted);font-size:13px'});
+  const go=el('button',{class:'btn',onclick:()=>runBulkAuto(prods,plan,cyc,skipCb.checked,status,go)},'🎲 Üret');
+  m.append(el('div',{},go),status);
+  bg.append(m); root.append(bg);
+}
+async function runBulkAuto(prods,plan,cyc,skipExisting,status,go){
+  if(!Object.values(cyc).some(v=>v>0)){ toast('En az bir makine için çevrim süresi gir.','err'); return; }
+  go.disabled=true;
+  let existing=new Set();
+  if(skipExisting){ const {data}=await sb.from('control_records').select('production_id'); (data||[]).forEach(r=>existing.add(r.production_id)); }
+  let made=0,prodN=0,skipped=0;
+  for(const p of prods){
+    if(skipExisting&&existing.has(p.id)){skipped++;continue;}
+    const cs=cyc[p.machine_code];
+    if(!cs||!p.quantity||p.quantity<=0||!p.start_time){skipped++;continue;}
+    const start=new Date(p.start_time), durSec=p.quantity*cs, end=new Date(start.getTime()+durSec*1000);
+    await sb.from('productions').update({end_time:end.toISOString(),duration_min:Math.round(durSec/60)}).eq('id',p.id);
+    p.end_time=end.toISOString(); p.duration_min=Math.round(durSec/60);
+    const items=opItemsFor(plan.filter(x=>x.stock_code===p.stock_code),p.op_no);
+    const freq=Number((items.find(it=>it.sampling_frequency)||{}).sampling_frequency)||60;
+    const durMin=durSec/60, recs=[];
+    const sbr=buildAutoRec(p,'seri_basi',start,items); if(sbr)recs.push(sbr);
+    for(let t=freq;t<durMin;t+=freq){ const pr=buildAutoRec(p,'proses',new Date(start.getTime()+t*60000),items); if(pr)recs.push(pr); }
+    const sor=buildAutoRec(p,'son',end,items); if(sor)recs.push(sor);
+    if(recs.length){ const {error}=await sb.from('control_records').insert(recs); if(error){console.warn(error.message);} else {made+=recs.length;prodN++;} }
+    status.textContent=`İşleniyor… ${prodN} üretim, ${made} kayıt`;
+  }
+  status.textContent=`Bitti ✓ ${prodN} üretim işlendi, ${made} kontrol kaydı oluşturuldu. ${skipped} atlandı.`;
+  toast(`${made} otomatik kontrol kaydı oluşturuldu (${prodN} üretim).`,'ok');
+  go.disabled=false; loadControlCounts && loadControlCounts();
 }
 
 // ====================== KONTROL KAYITLARI ======================
@@ -1057,10 +1160,10 @@ async function renderAdmin(){
   });
   tb.append(body);
   root.append(el('div',{class:'card'},el('h3',{},'Kullanıcı Yönetimi'),
-    el('p',{style:'color:var(--muted);margin:-6px 0 12px;font-size:12px'},'Her kullanıcıya yetkileri tek tek aç/kapa: Giriş (kontrol kaydı oluşturma) · Düzenle (kayıt düzeltme) · Sil · Plan (kontrol planı düzenleme) · İçe Aktar (üretim Excel). Admin tüm yetkilere sahiptir.'),
+    el('p',{style:'color:var(--muted);margin:-6px 0 12px;font-size:12px'},'Her kullanıcıya yetkileri tek tek aç/kapa: Giriş (kontrol kaydı oluşturma) · Düzenle (kayıt düzeltme) · Sil · Plan (kontrol planı düzenleme) · İçe Aktar (üretim Excel) · Otomatik (rastgele uygun kayıt üretme). Admin tüm yetkilere sahiptir.'),
     el('div',{class:'tbl-wrap'},tb)));
 }
-const PERMS=[['enter','Giriş'],['edit','Düzenle'],['delete','Sil'],['plan','Plan'],['import','İçe Aktar']];
+const PERMS=[['enter','Giriş'],['edit','Düzenle'],['delete','Sil'],['plan','Plan'],['import','İçe Aktar'],['auto','Otomatik']];
 function permsCell(u){
   const td=el('td',{});
   if(u.is_admin){ td.append(el('span',{class:'pill ok'},'Tümü (admin)')); return td; }
