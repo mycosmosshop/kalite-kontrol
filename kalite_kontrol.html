@@ -941,9 +941,7 @@ async function editRecord(r,prod){
     m.append(el('h3',{},`${STAGES[stage]} Kontrol Kaydı`));
     const pdate=prod?(fmtDate(prod.prod_date||prod.start_time)+(prod.start_time?' '+fmtTime(prod.start_time)+(prod.end_time?'–'+fmtTime(prod.end_time):''):'')):fmtDT(r.checked_at);
     m.append(el('div',{class:'meta',html:`<b>${esc(r.stock_code)}</b> — ${esc(r.stock_name||'')}<br>${esc(r.machine_code||'')}${prod&&prod.customer?' · '+esc(prod.customer):''}${prod&&prod.quantity!=null?' · '+prod.quantity+' '+esc(prod.unit||''):''} · ${pdate}`}));
-    const stageSel=sel('er_stage',Object.entries(STAGES)); stageSel.value=stage; if(canEdit)stageSel.onchange=e=>stage=e.target.value; else stageSel.disabled=true;
     m.append(el('div',{class:'row',style:'margin-bottom:14px'},
-      el('div',{class:'field',style:'flex:0;min-width:170px'},el('label',{class:'lab'},'Aşama'),stageSel),
       el('div',{class:'field grow'},el('label',{class:'lab'},'Operatör'),el('input',{class:'inp',id:'er_oper',value:oper,disabled:canEdit?undefined:true,oninput:e=>oper=e.target.value}))
     ));
     if(!canEdit) m.append(el('div',{class:'msg info',style:'margin-bottom:12px'},'🔒 Salt görünüm — bu kaydı yalnızca <b>admin</b> düzenleyebilir. Düzeltmek için kaydı <b>silip yeniden girebilirsin</b>.'));
