@@ -626,14 +626,20 @@ async function delPlanStock(sc){
 // ---- Kontrol Planı Excel parse (Türkçe LeanSys + İngilizce LEAR formatı) ----
 function cleanCell(v){ if(v==null)return null; const s=String(v).replace(/\s+/g,' ').trim(); return (s===''||s==='-')?null:s; }
 function deTr(s){ return String(s==null?'':s).replace(/[İıI]/g,'i').replace(/[Çç]/g,'c').replace(/[Ğğ]/g,'g').replace(/[Öö]/g,'o').replace(/[Şş]/g,'s').replace(/[Üü]/g,'u').toLowerCase().replace(/\s+/g,' ').trim(); }
-function boolCell(v){ const s=cleanCell(v); if(s==null)return null; return !['false','hayir','0','no'].includes(deTr(s)); }
+function boolCell(v){ const s=cleanCell(v); if(s==null)return null; const t=deTr(s);
+  if(['false','yanlis','hayir','no','0','-','off'].includes(t)) return false;
+  if(['true','dogru','evet','var','yes','1','on'].includes(t)) return true;
+  return true; }  // ✓ / diğer dolu değerler (LEAR formatı) → true
 function parsePlanExcel(rows){
   let hi=-1, hdr=null;
   for(let r=0;r<rows.length;r++){
     if(rows[r]&&rows[r].some(c=>['olculecek deger','value to be checked'].includes(deTr(c)))){ hi=r; hdr=rows[r].map(deTr); break; }
   }
   if(hi<0) return {err:'Beklenen kontrol planı formatı bulunamadı ("Ölçülecek Değer" / "Value to be Checked" başlığı yok).'};
-  const col=(...al)=>{ for(const a of al){const i=hdr.indexOf(a); if(i>=0)return i;} return -1; };
+  const col=(...al)=>{
+    for(const a of al){const i=hdr.indexOf(a); if(i>=0)return i;}              // birebir
+    for(const a of al){const i=hdr.findIndex(h=>h&&a&&h.includes(a)); if(i>=0)return i;}  // başlık alias'ı içeriyorsa
+    return -1; };
   const C={
     seq:col('sira no','sequence number'), op:col('operasyon no','operation number'),
     opkart:col('operasyon karti','operation card'),
@@ -644,8 +650,8 @@ function parsePlanExcel(rows){
     lo:col('alt limit','lower limit'), hi:col('ust limit','upper limit'),
     samp:col('ornekleme buyuklugu','sample size'), freq:col('ornekleme sikligi','sampling frequency'),
     sonsamp:col('son kontrol ornekleme sayisi'),
-    equip:col('uretim ekipmani','production equipment'), fmea:col('fmea no','fmea number'),
-    spec:col('ozel karakteristik','special characteristic'),
+    equip:col('uretim ekipmani','production equipment'), fmea:col('fmea no','fmea number','fmea numarasi','fmea'),
+    spec:col('ozel karakteristik','special characteristic','ozel karakteristikler','ozel kar','karakteristik'),
     method:col('kontrol yontemi','control method'), backup:col('alternatif kontrol yontemi','back up control method'),
     emer:col('acil eylem plani','emergency action plan'), dof:col('dof plani','duf plani','capa plan')
   };
