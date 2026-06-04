@@ -649,13 +649,13 @@ async function openControl(p){
     s==='giris' ? (it.giris_kalite===true) :
     s==='son'   ? (it.final_control!==false) :
                   (it.process_control!==false));   // seri_basi & proses = process_control
-  const sampleFor=(it,s)=> (s==='son' && it.son_kontrol_ornekleme) ? it.son_kontrol_ornekleme : (it.sample_size??1);
+  const sampleFor=(it,s)=>{ const v=(s==='son'&&it.son_kontrol_ornekleme)?it.son_kontrol_ornekleme:it.sample_size; const n=Number(v); return n>0?n:1; };
   const {data:recs}=await sb.from('control_records').select('*').eq('production_id',p.id).order('checked_at');
   const existing=recs||[];
 
   const root=$('#modalRoot');
-  const state={}; // item.id -> {value, result}  (tüm maddeler için, aşamalar arası korunur)
-  allItems.forEach(it=>state[it.id]={value:'',result:it.is_qualitative?null:''});
+  const state={}; // "stage|itemId" -> {samples:[{value,ok,note},...]}  (örnek başına, aşamalar arası korunur)
+  function stItem(it){ const k=stage+'|'+it.id; if(!state[k])state[k]={samples:[]}; const n=sampleFor(it,stage); const a=state[k].samples; while(a.length<n)a.push({value:'',ok:null,note:''}); return state[k]; }
   let operVal=p.operator||'', noteVal='';
 
   const prosesFreq = Number((allItems.find(it=>it.sampling_frequency)||{}).sampling_frequency)||60;
@@ -708,61 +708,70 @@ async function openControl(p){
       const freq=(items.find(it=>it.sampling_frequency)||{}).sampling_frequency;
       if(freq) m.append(el('div',{style:'margin-bottom:8px;color:var(--muted);font-size:12.5px'},`⏱ Plan örnekleme sıklığı: her ${esc(freq)} dakikada bir ${STAGES[stage].toLowerCase()} kontrolü.`));
       const tb=el('table');
-      tb.append(el('thead',{},el('tr',{},...['Ölçülecek Değer','Nitel Hedef','Yöntem','Hedef','Alt Limit','Üst Limit','Örnek','Sonuç','Ölçüm','İlerleme'].map(h=>el('th',{},h)))));
+      tb.append(el('thead',{},el('tr',{},...['Ölçülecek Değer','Hedef Nicel','Hedef Nitel','Alt Limit','Üst Limit','Yöntem','Sıklık','Örnek #','Ölçüm','Uygun'].map(h=>el('th',{},h)))));
       const body=el('tbody');
       items.forEach(it=>{
-        const st=state[it.id];
-        const okB=el('button',{type:'button',class:'ok',onclick:()=>{st.result=st.result==='OK'?null:'OK';paint();}},'OK');
-        const retB=el('button',{type:'button',class:'ret',onclick:()=>{st.result=st.result==='RET'?null:'RET';paint();}},'RET');
-        const prog=el('span',{class:'pill gray'});
-        const measInp=el('input',{class:'cell-inp',style:'width:88px',value:st.value,oninput:e=>{
-          st.value=e.target.value;
-          const v=Number(e.target.value),lo=Number(it.lower_limit),hi=Number(it.upper_limit);
-          if(!it.is_qualitative && e.target.value!=='' && !isNaN(v)){
-            let ok=true; if(it.lower_limit&&!isNaN(lo)&&v<lo)ok=false; if(it.upper_limit&&!isNaN(hi)&&v>hi)ok=false;
-            st.result=ok?'OK':'RET';
+        const st=stItem(it);
+        const n=sampleFor(it,stage);
+        for(let s=0;s<n;s++){
+          const smp=st.samples[s];
+          const okB=el('button',{type:'button',class:'ok',onclick:()=>{smp.ok=smp.ok===true?null:true;paint();}},'✓');
+          const retB=el('button',{type:'button',class:'ret',onclick:()=>{smp.ok=smp.ok===false?null:false;paint();}},'✗');
+          const measInp=el('input',{class:'cell-inp',style:'width:84px',value:smp.value,oninput:e=>{
+            smp.value=e.target.value;
+            const v=Number(e.target.value),lo=Number(it.lower_limit),hi=Number(it.upper_limit);
+            if(!it.is_qualitative && e.target.value!=='' && !isNaN(v)){
+              let ok=true; if(it.lower_limit&&!isNaN(lo)&&v<lo)ok=false; if(it.upper_limit&&!isNaN(hi)&&v>hi)ok=false;
+              smp.ok=ok;
+            }
+            paint();
+          }});
+          function paint(){
+            okB.classList.toggle('on',smp.ok===true);
+            retB.classList.toggle('on',smp.ok===false);
+            measInp.style.borderColor = smp.ok===true?'var(--ok)':(smp.ok===false?'var(--ret)':'var(--line)');
           }
+          const row=el('tr',{},
+            el('td',{style:'min-width:130px;font-weight:600'},s===0?it.measure_name:''),
+            el('td',{},s===0?((it.target||'')+(it.unit?' '+it.unit:''))||'-':''),
+            el('td',{style:'max-width:220px;color:var(--muted);font-size:12px'},s===0?(it.nitel_hedef||'-'):''),
+            el('td',{},s===0?(it.lower_limit||'-'):''),
+            el('td',{},s===0?(it.upper_limit||'-'):''),
+            el('td',{},s===0?(it.method||'-'):''),
+            el('td',{},s===0?(it.sampling_frequency||'-'):''),
+            el('td',{style:'text-align:center;color:var(--muted)'},`${s+1}/${n}`),
+            el('td',{},measInp),
+            el('td',{},el('div',{class:'okret sm'},okB,retB))
+          );
           paint();
-        }});
-        function paint(){
-          okB.classList.toggle('on',st.result==='OK');
-          retB.classList.toggle('on',st.result==='RET');
-          measInp.style.borderColor = st.result==='OK'?'var(--ok)':(st.result==='RET'?'var(--ret)':'var(--line)');
-          prog.textContent=`${st.result?1:0}/${sampleFor(it,stage)}`;
-          prog.className='pill '+(st.result?'ok':'gray');
+          body.append(row);
         }
-        const row=el('tr',{},
-          el('td',{style:'min-width:130px;font-weight:600'},it.measure_name),
-          el('td',{style:'max-width:240px;color:var(--muted);font-size:12px'},it.nitel_hedef||'-'),
-          el('td',{},it.method||'-'),
-          el('td',{},((it.target||'')+(it.unit?' '+it.unit:''))||'-'),
-          el('td',{},it.lower_limit||'-'),
-          el('td',{},it.upper_limit||'-'),
-          el('td',{},String(sampleFor(it,stage))),
-          el('td',{},el('div',{class:'okret sm'},okB,retB)),
-          el('td',{},measInp),
-          el('td',{},prog)
-        );
-        paint();
-        body.append(row);
       });
       tb.append(body); m.append(el('div',{class:'tbl-wrap'},tb));
     }
     m.append(el('div',{class:'field',style:'margin-top:8px'},el('label',{class:'lab'},'Not (opsiyonel)'),el('textarea',{class:'inp',id:'m_note',rows:'2',oninput:e=>noteVal=e.target.value},noteVal)));
-    const saveBtn=el('button',{class:'btn',style:'margin-top:8px',onclick:()=>saveControl(p,items,state,stage)},`💾 Kaydet — ${STAGES[stage]}`);
+    const saveBtn=el('button',{class:'btn',style:'margin-top:8px',onclick:()=>saveControl(p,items,state,stage,sampleFor)},`💾 Kaydet — ${STAGES[stage]}`);
     if(!items.length)saveBtn.disabled=true;
     m.append(saveBtn);
     bg.append(m); root.append(bg);
   }
   render();
 }
-async function saveControl(p,items,state,stage){
+async function saveControl(p,items,state,stage,sampleFor){
   const oper=$('#m_oper').value.trim()||null;
-  const vals=items.map(it=>({plan_item_id:it.id,measure_name:it.measure_name,
-    value:state[it.id].value||null,result:state[it.id].result||null}));
-  const missing=vals.filter(v=>!v.result);
-  if(missing.length && !confirm(`${missing.length} madde için sonuç (OK/RET) girilmedi. Yine de kaydedilsin mi?`))return;
-  const overall=vals.some(v=>v.result==='RET')?'RET':'OK';
+  const vals=items.map(it=>{
+    const n=sampleFor(it,stage);
+    const st=state[stage+'|'+it.id]||{samples:[]};
+    const samples=[];
+    for(let s=0;s<n;s++){ const v=st.samples[s]||{}; samples.push({value:(v.value||'').toString().trim()||null, ok:v.ok==null?null:!!v.ok, note:v.note||null, by:oper}); }
+    return {plan_item_id:it.id,measure_name:it.measure_name,target:it.target,unit:it.unit,nitel_hedef:it.nitel_hedef,
+      lower_limit:it.lower_limit,upper_limit:it.upper_limit,method:it.method,sampling_frequency:it.sampling_frequency,
+      is_qualitative:it.is_qualitative,sample_size:n,samples};
+  });
+  const allSamples=vals.flatMap(v=>v.samples);
+  const missing=allSamples.filter(s=>s.ok==null).length;
+  if(missing && !confirm(`${missing} ölçüm için Uygun (✓/✗) işaretlenmedi. Yine de kaydedilsin mi?`))return;
+  const overall=allSamples.some(s=>s.ok===false)?'RET':'OK';
   const rec={production_id:p.id,stock_code:p.stock_code,stock_name:p.stock_name,machine_code:p.machine_code,
     work_order:p.work_order,stage,operator:oper,shift:p.shift,vals,overall_result:overall,
     note:$('#m_note').value.trim()||null};
@@ -775,80 +784,134 @@ async function saveControl(p,items,state,stage){
 }
 
 // ====================== KONTROL KAYITLARI ======================
+let KAYIT_STAGE='seri_basi';
+let KAYIT_FILT={start:'',end:'',stock:''};
 async function renderKayitlar(){
   const root=$('#tab-kayitlar');
   root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
-  const {data}=await sb.from('control_records').select('*').order('checked_at',{ascending:false}).limit(1000);
-  const recs=data||[];
+  // kayıtlar (aşamaya göre) + üretim bilgileri (cari, başlama/bitiş, miktar, makine adı)
+  let q=sb.from('control_records').select('*').eq('stage',KAYIT_STAGE).order('checked_at',{ascending:false}).limit(2000);
+  if(KAYIT_FILT.stock) q=q.eq('stock_code',KAYIT_FILT.stock);
+  if(KAYIT_FILT.start) q=q.gte('checked_at',KAYIT_FILT.start);
+  if(KAYIT_FILT.end) q=q.lte('checked_at',KAYIT_FILT.end+'T23:59:59');
+  const [{data:recsD},{data:prodsD}]=await Promise.all([q, sb.from('productions').select('id,customer,start_time,end_time,quantity,unit,machine_name,machine_code,shift,stock_code,stock_name,prod_date')]);
+  const recs=recsD||[]; const pmap={}; (prodsD||[]).forEach(p=>pmap[p.id]=p);
   root.innerHTML='';
-  const n=recs.length, ret=recs.filter(r=>r.overall_result==='RET').length;
-  const tools=el('div',{class:'card'},
+  // aşama alt sekmeleri
+  const tabs=el('div',{style:'display:flex;gap:4px;flex-wrap:wrap;margin-bottom:14px;border-bottom:1px solid var(--line)'});
+  Object.entries(STAGES).forEach(([k,label])=>{
+    tabs.append(el('button',{class:'btn sm '+(KAYIT_STAGE===k?'':'sec'),style:'border-radius:8px 8px 0 0',
+      onclick:()=>{KAYIT_STAGE=k;renderKayitlar();}}, label+' Kayıtları'));
+  });
+  root.append(tabs);
+  // filtreler
+  const stocks=[...new Set((prodsD||[]).map(p=>p.stock_code).filter(Boolean))];
+  const filt=el('div',{class:'card'},
     el('div',{class:'toolbar'},
-      el('div',{class:'stat'},el('b',{},String(n)),el('span',{},'Toplam kontrol')),
-      el('div',{class:'stat'},el('b',{style:'color:var(--ok)'},String(n-ret)),el('span',{},'OK')),
-      el('div',{class:'stat'},el('b',{style:'color:var(--ret)'},String(ret)),el('span',{},'RET')),
+      el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Başlangıç'),el('input',{type:'date',class:'inp',value:KAYIT_FILT.start,onchange:e=>{KAYIT_FILT.start=e.target.value;renderKayitlar();}})),
+      el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),el('input',{type:'date',class:'inp',value:KAYIT_FILT.end,onchange:e=>{KAYIT_FILT.end=e.target.value;renderKayitlar();}})),
+      field('Stok Kodu','kf_stock','tümü',stocks),
+      el('button',{class:'btn sm',style:'flex:0',onclick:()=>{KAYIT_FILT.stock=$('#kf_stock').value.trim();renderKayitlar();}},'Filtrele'),
+      el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{KAYIT_FILT={start:'',end:'',stock:''};renderKayitlar();}},'Temizle'),
       el('div',{class:'grow'}),
-      el('button',{class:'btn sm',style:'flex:0',onclick:()=>exportRecords(recs)},'⬇ Excel’e Aktar'),
-      el('input',{class:'inp',id:'recSearch',placeholder:'🔍 ürün / makine ara…',style:'max-width:240px',oninput:e=>{
-        const q=e.target.value.toLowerCase();
-        document.querySelectorAll('#recBody tr').forEach(tr=>tr.style.display=(!q||(tr.dataset.s||'').includes(q))?'':'none');
+      el('div',{class:'stat'},el('b',{},String(recs.length)),el('span',{},STAGES[KAYIT_STAGE])),
+      el('button',{class:'btn sm',style:'flex:0',onclick:()=>exportRecords(recs)},'⬇ Excel'),
+      el('input',{class:'inp',id:'recSearch',placeholder:'🔍 ara…',style:'max-width:200px',oninput:e=>{
+        const s=e.target.value.toLowerCase();
+        document.querySelectorAll('#recBody tr').forEach(tr=>tr.style.display=(!s||(tr.dataset.s||'').includes(s))?'':'none');
       }})
     )
   );
-  root.append(tools);
+  if(KAYIT_FILT.stock)$('#kf_stock').value=KAYIT_FILT.stock;
+  root.append(filt);
   const tb=el('table');
-  tb.append(el('thead',{},el('tr',{},...['Zaman','Aşama','Ürün','Makine','Operatör','Sonuç','RET maddeler','İşlem'].map(h=>el('th',{},h)))));
+  tb.append(el('thead',{},el('tr',{},...['Tarih','Vardiya','Cari','Stok Kodu','Stok Adı','Başlama','Bitiş','Üretim Mik.','Birim','Makine Kodu','Makine Adı','Sonuç','İşlem'].map(h=>el('th',{},h)))));
   const body=el('tbody',{id:'recBody'});
-  if(!recs.length)body.append(el('tr',{},el('td',{colspan:8},el('div',{class:'empty'},'Henüz kontrol kaydı yok.'))));
+  if(!recs.length)body.append(el('tr',{},el('td',{colspan:13},el('div',{class:'empty'},`Bu aşamada (${STAGES[KAYIT_STAGE]}) kayıt yok.`))));
   recs.forEach(r=>{
-    const retItems=(r.vals||[]).filter(v=>v.result==='RET').map(v=>v.measure_name).join(', ');
-    body.append(el('tr',{'data-s':`${r.stock_code} ${r.stock_name} ${r.machine_code}`.toLowerCase()},
+    const pr=pmap[r.production_id]||{};
+    body.append(el('tr',{style:'cursor:pointer','data-s':`${r.stock_code} ${r.stock_name} ${r.machine_code} ${pr.customer||''}`.toLowerCase(),onclick:()=>editRecord(r)},
       el('td',{},fmtDT(r.checked_at)),
-      el('td',{},el('span',{class:'pill '+STAGE_CLS[r.stage]},STAGES[r.stage])),
-      el('td',{},el('div',{},r.stock_code||''),el('div',{style:'color:var(--muted);font-size:11px'},(r.stock_name||'').slice(0,28))),
+      el('td',{},String(r.shift??pr.shift??'')),
+      el('td',{},pr.customer||''),
+      el('td',{},r.stock_code||''),
+      el('td',{style:'font-size:11px'},(r.stock_name||'').slice(0,30)),
+      el('td',{},fmtTime(pr.start_time)),
+      el('td',{},fmtTime(pr.end_time)),
+      el('td',{},pr.quantity??''),
+      el('td',{},pr.unit||''),
       el('td',{},r.machine_code||''),
-      el('td',{},r.operator||''),
+      el('td',{},pr.machine_name||''),
       el('td',{},el('span',{class:'pill '+(r.overall_result==='RET'?'ret':'ok')},r.overall_result||'—')),
-      el('td',{style:'color:var(--ret);font-size:12px'},retItems),
-      el('td',{style:'white-space:nowrap'},
-        el('button',{class:'btn sm',onclick:()=>editRecord(r)},'Düzenle'),
+      el('td',{style:'white-space:nowrap',onclick:e=>e.stopPropagation()},
+        el('button',{class:'btn sm',onclick:()=>editRecord(r)},'Aç'),
         el('button',{class:'btn sm danger',style:'margin-left:6px',onclick:()=>delRecord(r.id)},'Sil'))
     ));
   });
   tb.append(body); root.append(el('div',{class:'card'},el('div',{class:'tbl-wrap'},tb)));
 }
+function normalizeVals(raw){
+  // eski format ({value,result}) -> örnek-başına ({samples:[...]})
+  return (raw||[]).map(v=>{
+    if(Array.isArray(v.samples)) return v;
+    const ok = v.result==='OK'?true:(v.result==='RET'?false:null);
+    return {...v, sample_size:1, samples:[{value:v.value||null, ok, note:null, by:null}]};
+  });
+}
 function editRecord(r){
   const root=$('#modalRoot');
-  const vals=JSON.parse(JSON.stringify(r.vals||[]));  // düzenlenebilir kopya
+  const vals=normalizeVals(JSON.parse(JSON.stringify(r.vals||[])));
   let stage=r.stage, oper=r.operator||'';
   function render(){
     root.innerHTML='';
     const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
-    const m=el('div',{class:'modal',style:'position:relative;max-width:680px'});
+    const m=el('div',{class:'modal',style:'position:relative;max-width:1120px'});
     m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
-    m.append(el('h3',{},'Kontrol Kaydını Düzenle'));
+    m.append(el('h3',{},`${STAGES[stage]} Kontrol Kaydı`));
     m.append(el('div',{class:'meta',html:`<b>${esc(r.stock_code)}</b> — ${esc(r.stock_name||'')}<br>${esc(r.machine_code||'')} · ${fmtDT(r.checked_at)}`}));
     const stageSel=sel('er_stage',Object.entries(STAGES)); stageSel.value=stage; stageSel.onchange=e=>stage=e.target.value;
     m.append(el('div',{class:'row',style:'margin-bottom:14px'},
-      el('div',{class:'field',style:'flex:0;min-width:180px'},el('label',{class:'lab'},'Aşama'),stageSel),
+      el('div',{class:'field',style:'flex:0;min-width:170px'},el('label',{class:'lab'},'Aşama'),stageSel),
       el('div',{class:'field grow'},el('label',{class:'lab'},'Operatör'),el('input',{class:'inp',id:'er_oper',value:oper,oninput:e=>oper=e.target.value}))
     ));
+    // her madde, örnekleme kadar satır
+    const tb=el('table');
+    tb.append(el('thead',{},el('tr',{},...['Ölçülecek Değer','Hedef Nicel','Hedef Nitel','Alt Limit','Üst Limit','Yöntem','Örnek #','Ölçüm','Uygun','Açıklama'].map(h=>el('th',{},h)))));
+    const body=el('tbody');
     vals.forEach(v=>{
-      const ci=el('div',{class:'ctrl-item'});
-      ci.append(el('div',{class:'nm',style:'margin-bottom:8px'},v.measure_name));
-      const okB=el('button',{class:'ok',onclick:()=>{v.result='OK';paint();}},'OK');
-      const retB=el('button',{class:'ret',onclick:()=>{v.result='RET';paint();}},'RET');
-      const naB=el('button',{class:'sec',onclick:()=>{v.result=null;paint();}},'—');
-      function paint(){okB.classList.toggle('on',v.result==='OK');retB.classList.toggle('on',v.result==='RET');}
-      paint();
-      ci.append(el('div',{class:'row'},
-        el('div',{class:'field grow'},el('label',{class:'lab'},'Ölçüm değeri'),
-          el('input',{class:'inp',value:v.value||'',oninput:e=>v.value=e.target.value.trim()||null})),
-        el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Sonuç'),el('div',{class:'okret'},okB,retB,naB))
-      ));
-      m.append(ci);
+      const smps=v.samples&&v.samples.length?v.samples:[{value:null,ok:null,note:null}];
+      smps.forEach((smp,s)=>{
+        const okB=el('button',{type:'button',class:'ok',onclick:()=>{smp.ok=smp.ok===true?null:true;paint();}},'✓');
+        const retB=el('button',{type:'button',class:'ret',onclick:()=>{smp.ok=smp.ok===false?null:false;paint();}},'✗');
+        const measInp=el('input',{class:'cell-inp',style:'width:84px',value:smp.value||'',oninput:e=>{
+          smp.value=e.target.value.trim()||null;
+          const val=Number(e.target.value),lo=Number(v.lower_limit),hi=Number(v.upper_limit);
+          if(!v.is_qualitative && e.target.value!=='' && !isNaN(val)){
+            let ok=true; if(v.lower_limit&&!isNaN(lo)&&val<lo)ok=false; if(v.upper_limit&&!isNaN(hi)&&val>hi)ok=false; smp.ok=ok;
+          }
+          paint();
+        }});
+        const noteInp=el('input',{class:'cell-inp',style:'width:140px',value:smp.note||'',oninput:e=>smp.note=e.target.value.trim()||null});
+        function paint(){okB.classList.toggle('on',smp.ok===true);retB.classList.toggle('on',smp.ok===false);
+          measInp.style.borderColor=smp.ok===true?'var(--ok)':(smp.ok===false?'var(--ret)':'var(--line)');}
+        const row=el('tr',{},
+          el('td',{style:'min-width:130px;font-weight:600'},s===0?v.measure_name:''),
+          el('td',{},s===0?((v.target||'')+(v.unit?' '+v.unit:''))||'-':''),
+          el('td',{style:'max-width:220px;color:var(--muted);font-size:12px'},s===0?(v.nitel_hedef||'-'):''),
+          el('td',{},s===0?(v.lower_limit||'-'):''),
+          el('td',{},s===0?(v.upper_limit||'-'):''),
+          el('td',{},s===0?(v.method||'-'):''),
+          el('td',{style:'text-align:center;color:var(--muted)'},`${s+1}/${smps.length}`),
+          el('td',{},measInp),
+          el('td',{},el('div',{class:'okret sm'},okB,retB)),
+          el('td',{},noteInp)
+        );
+        paint();
+        body.append(row);
+      });
     });
-    m.append(el('div',{class:'field',style:'margin-top:8px'},el('label',{class:'lab'},'Not'),el('textarea',{class:'inp',id:'er_note',rows:'2'},r.note||'')));
+    tb.append(body); m.append(el('div',{class:'tbl-wrap'},tb));
+    m.append(el('div',{class:'field',style:'margin-top:8px'},el('label',{class:'lab'},'Genel Not'),el('textarea',{class:'inp',id:'er_note',rows:'2'},r.note||'')));
     m.append(el('div',{style:'display:flex;gap:8px;margin-top:10px'},
       el('button',{class:'btn',onclick:saveEdit},'💾 Kaydet'),
       el('button',{class:'btn danger',style:'flex:0',onclick:()=>delRecord(r.id)},'🗑 Sil')
@@ -856,7 +919,8 @@ function editRecord(r){
     bg.append(m); root.append(bg);
   }
   async function saveEdit(){
-    const overall=vals.some(v=>v.result==='RET')?'RET':'OK';
+    const allS=vals.flatMap(v=>v.samples||[]);
+    const overall=allS.some(s=>s.ok===false)?'RET':'OK';
     const patch={vals,stage,operator:$('#er_oper').value.trim()||null,note:$('#er_note').value.trim()||null,overall_result:overall};
     const {error}=await sb.from('control_records').update(patch).eq('id',r.id);
     if(error){toast(esc(error.message),'err');return;}
@@ -872,11 +936,13 @@ async function delRecord(id){
 }
 function exportRecords(recs){
   const rows=[];
-  recs.forEach(r=>(r.vals||[]).forEach(v=>rows.push({
+  recs.forEach(r=>normalizeVals(r.vals).forEach(v=>(v.samples||[]).forEach((smp,i)=>rows.push({
     'Zaman':fmtDT(r.checked_at),'Aşama':STAGES[r.stage],'Stok Kodu':r.stock_code,'Stok Adı':r.stock_name,
-    'Makine':r.machine_code,'Operatör':r.operator,'Ölçülecek Değer':v.measure_name,'Değer':v.value,
-    'Sonuç':v.result,'Genel Sonuç':r.overall_result,'Not':r.note
-  })));
+    'Makine':r.machine_code,'Operatör':r.operator,'Ölçülecek Değer':v.measure_name,
+    'Hedef':((v.target||'')+(v.unit?' '+v.unit:''))||v.nitel_hedef||'','Alt':v.lower_limit,'Üst':v.upper_limit,
+    'Örnek No':(i+1)+'/'+(v.samples.length),'Ölçüm':smp.value,'Uygun':smp.ok===true?'Evet':(smp.ok===false?'Hayır':''),
+    'Açıklama':smp.note,'Genel Sonuç':r.overall_result,'Not':r.note
+  }))));
   if(!rows.length){toast('Aktarılacak kayıt yok.','err');return;}
   const ws=XLSX.utils.json_to_sheet(rows);const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,'Kontroller');
