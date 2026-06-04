@@ -1180,7 +1180,9 @@ function parsePeriodDays(text){
   return d;
 }
 function kalanGunCell(v,startMap,autoFirst){
-  const per=parsePeriodDays(v.nitel_hedef);
+  // periyot: nitel hedef ya da madde adı metninden; yoksa örnekleme sıklığından (dakika→gün)
+  let per=parsePeriodDays(v.nitel_hedef)||parsePeriodDays(v.measure_name);
+  if(per<=1){ const fmin=Number(v.sampling_frequency); if(fmin>=1440) per=Math.round(fmin/1440); }
   if(per<=1) return el('td',{style:'color:var(--muted);text-align:center'},'—');  // 24 saatten uzun periyotları göster
   const editable=can('plan');
   const pill=el('span',{class:'pill',style:editable?'cursor:pointer':''});
