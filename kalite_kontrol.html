@@ -149,8 +149,8 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 
 let ME = null;           // {id,email}
 let PROFILE = null;      // {approved,is_admin}
-const STAGES = {seri_basi:'Seri Başı', proses:'Proses', son:'Son Kontrol'};
-const STAGE_CLS = {seri_basi:'seri', proses:'proses', son:'son'};
+const STAGES = {giris:'Giriş Kalite', seri_basi:'Seri Başı', proses:'Proses', son:'Son Kontrol'};
+const STAGE_CLS = {giris:'gray', seri_basi:'seri', proses:'proses', son:'son'};
 
 // ====================== HELPERS ======================
 const $ = s => document.querySelector(s);
@@ -454,27 +454,29 @@ async function renderPlan(){
     ));
     card.append(el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:12px'},'💡 Hücrelere tıklayıp değiştirebilirsin; başka yere tıklayınca otomatik kaydedilir.'));
     const tb=el('table');
-    tb.append(el('thead',{},el('tr',{},...['Op','Ölçülecek Değer','Proses','Son','Hedef','Birim','Nitel Hedef','Alt Lim.','Üst Lim.','Örnek','Sıklık(dk)','Yöntem','Ekipman','FMEA','Özel Kar.','Yedek Yöntem','Acil Plan','CAPA','Tip',''].map(h=>el('th',{},h)))));
+    tb.append(el('thead',{},el('tr',{},...['Op Kartı','Op No','Proses','Giriş','Son','Ölçülecek Değer','Nicel Hedef','Nitel Hedef / Birim','Alt Limit','Üst Limit','Örn. Büyük.','Örn. Sıklık','Son K. Örn.','Üretim Ekipmanı','FMEA No','Özel Kar.','Kontrol Yöntemi','Alt. Yöntem','Acil Eylem','DÖF','Tip',''].map(h=>el('th',{},h)))));
     const body=el('tbody');
     items.forEach((it)=>body.append(el('tr',{},
+      el('td',{},pin(it,'operasyon_karti',{w:'70px'})),
       el('td',{},pin(it,'op_no',{num:true,w:'44px'})),
-      el('td',{},pin(it,'measure_name',{w:'150px'})),
       el('td',{},pin(it,'process_control',{bool:true})),
+      el('td',{},pin(it,'giris_kalite',{bool:true})),
       el('td',{},pin(it,'final_control',{bool:true})),
+      el('td',{},pin(it,'measure_name',{w:'160px'})),
       el('td',{},pin(it,'target',{w:'58px'})),
-      el('td',{},pin(it,'unit',{w:'50px'})),
-      el('td',{},pin(it,'nitel_hedef',{w:'200px'})),
+      el('td',{},pin(it, it.is_qualitative?'nitel_hedef':'unit', {w:it.is_qualitative?'200px':'56px'})),
       el('td',{},pin(it,'lower_limit',{w:'60px'})),
       el('td',{},pin(it,'upper_limit',{w:'60px'})),
-      el('td',{},pin(it,'sample_size',{num:true,w:'50px'})),
-      el('td',{},pin(it,'sampling_frequency',{w:'60px'})),
-      el('td',{},pin(it,'method',{w:'120px'})),
-      el('td',{},pin(it,'production_equipment',{w:'130px'})),
-      el('td',{},pin(it,'fmea_number',{w:'60px'})),
-      el('td',{},pin(it,'special_characteristic',{w:'70px'})),
-      el('td',{},pin(it,'backup_method',{w:'120px'})),
-      el('td',{},pin(it,'emergency_action_plan',{w:'80px'})),
-      el('td',{},pin(it,'capa_plan',{w:'70px'})),
+      el('td',{},pin(it,'sample_size',{num:true,w:'52px'})),
+      el('td',{},pin(it,'sampling_frequency',{w:'56px'})),
+      el('td',{},pin(it,'son_kontrol_ornekleme',{w:'56px'})),
+      el('td',{},pin(it,'production_equipment',{w:'150px'})),
+      el('td',{},pin(it,'fmea_number',{w:'70px'})),
+      el('td',{},pin(it,'special_characteristic',{w:'66px'})),
+      el('td',{},pin(it,'method',{w:'110px'})),
+      el('td',{},pin(it,'backup_method',{w:'90px'})),
+      el('td',{},pin(it,'emergency_action_plan',{w:'70px'})),
+      el('td',{},pin(it,'capa_plan',{w:'60px'})),
       el('td',{},pin(it,'is_qualitative',{select:true})),
       el('td',{},el('button',{class:'btn sm danger',onclick:()=>delPlanItem(it.id)},'Sil'))
     )));
@@ -547,48 +549,65 @@ async function delPlanStock(sc){
   toast('Plan silindi.','ok'); renderPlan();
 }
 
-// ---- Serial Control Plan Excel parse & import ----
+// ---- Kontrol Planı Excel parse (Türkçe LeanSys + İngilizce LEAR formatı) ----
 function cleanCell(v){ if(v==null)return null; const s=String(v).replace(/\s+/g,' ').trim(); return (s===''||s==='-')?null:s; }
+function deTr(s){ return String(s==null?'':s).replace(/[İıI]/g,'i').replace(/[Çç]/g,'c').replace(/[Ğğ]/g,'g').replace(/[Öö]/g,'o').replace(/[Şş]/g,'s').replace(/[Üü]/g,'u').toLowerCase().replace(/\s+/g,' ').trim(); }
+function boolCell(v){ const s=cleanCell(v); if(s==null)return null; return !['false','hayir','0','no'].includes(deTr(s)); }
 function parsePlanExcel(rows){
-  const norm=s=>(s==null?'':String(s)).toLowerCase().replace(/\s+/g,' ').trim();
-  const hi=rows.findIndex(r=>r&&r.some(c=>norm(c)==='value to be checked'));
-  if(hi<0) return {err:'Bu dosya beklenen "Serial Control Plan" formatında değil (başlık satırı bulunamadı).'};
-  const hdr=rows[hi].map(norm);
-  const col=n=>hdr.indexOf(n);
-  const cSeq=col('sequence number'),cOp=col('operation number'),cProc=col('process control'),
-        cFin=col('final control'),cVal=col('value to be checked'),cQt=col('quantitative target'),
-        cQl=col('qualitative target'),cLo=col('lower limit'),cHi=col('upper limit'),
-        cSamp=col('sample size'),cFreq=col('sampling frequency'),cEquip=col('production equipment'),
-        cFmea=col('fmea number'),cSpec=col('special characteristic'),cMethod=col('control method'),
-        cBackup=col('back up control method'),cEmer=col('emergency action plan'),cCapa=col('capa plan');
+  let hi=-1, hdr=null;
+  for(let r=0;r<rows.length;r++){
+    if(rows[r]&&rows[r].some(c=>['olculecek deger','value to be checked'].includes(deTr(c)))){ hi=r; hdr=rows[r].map(deTr); break; }
+  }
+  if(hi<0) return {err:'Beklenen kontrol planı formatı bulunamadı ("Ölçülecek Değer" / "Value to be Checked" başlığı yok).'};
+  const col=(...al)=>{ for(const a of al){const i=hdr.indexOf(a); if(i>=0)return i;} return -1; };
+  const C={
+    seq:col('sira no','sequence number'), op:col('operasyon no','operation number'),
+    opkart:col('operasyon karti','operation card'),
+    proses:col('proses kontrol','process control'), giris:col('giris kalite','incoming quality'),
+    son:col('son kontrol','final control'),
+    measure:col('olculecek deger','value to be checked'),
+    nicel:col('nicel hedef','quantitative target'), nitel:col('nitel hedef','qualitative target'),
+    lo:col('alt limit','lower limit'), hi:col('ust limit','upper limit'),
+    samp:col('ornekleme buyuklugu','sample size'), freq:col('ornekleme sikligi','sampling frequency'),
+    sonsamp:col('son kontrol ornekleme sayisi'),
+    equip:col('uretim ekipmani','production equipment'), fmea:col('fmea no','fmea number'),
+    spec:col('ozel karakteristik','special characteristic'),
+    method:col('kontrol yontemi','control method'), backup:col('alternatif kontrol yontemi','back up control method'),
+    emer:col('acil eylem plani','emergency action plan'), dof:col('dof plani','duf plani','capa plan')
+  };
+  const g=(row,i)=>i>=0?row[i]:null;
   const items=[];
   for(let r=hi+1;r<rows.length;r++){
     const row=rows[r]; if(!row)continue;
-    const val=cleanCell(cVal>=0?row[cVal]:null); if(!val)continue;
-    const qt=cleanCell(cQt>=0?row[cQt]:null);
-    const isNum=qt!=null && isFinite(Number(qt));   // nicel hedef sayıysa → ölçüm, değilse → nitel
-    const samp=cleanCell(cSamp>=0?row[cSamp]:null);
+    const measure=cleanCell(g(row,C.measure)); if(!measure)continue;
+    const nicel=cleanCell(g(row,C.nicel));
+    const isNum=nicel!=null && isFinite(Number(nicel));   // nicel hedef sayıysa → ölçüm
+    const nitel=cleanCell(g(row,C.nitel));
+    const samp=cleanCell(g(row,C.samp));
     items.push({
-      seq:Number(cleanCell(cSeq>=0?row[cSeq]:null))||items.length+1,
-      op_no:Number(cleanCell(cOp>=0?row[cOp]:null))||null,
-      measure_name:val,
+      seq:Number(cleanCell(g(row,C.seq)))||items.length+1,
+      op_no:Number(cleanCell(g(row,C.op)))||null,
+      operasyon_karti:cleanCell(g(row,C.opkart)),
+      measure_name:measure,
       is_qualitative:!isNum,
-      target:isNum?qt:null,
-      unit:isNum?cleanCell(cQl>=0?row[cQl]:null):null,        // nicel satırda bu sütun BİRİM taşır (°C, mm...)
-      nitel_hedef:isNum?null:cleanCell(cQl>=0?row[cQl]:null), // nitel satırda hedef AÇIKLAMASI
-      lower_limit:isNum?cleanCell(cLo>=0?row[cLo]:null):null,
-      upper_limit:isNum?cleanCell(cHi>=0?row[cHi]:null):null,
+      target:isNum?nicel:null,
+      unit:isNum?nitel:null,            // nicel satırda "Nitel Hedef" sütunu birim taşır
+      nitel_hedef:isNum?null:nitel,     // nitel satırda hedef açıklaması
+      lower_limit:isNum?cleanCell(g(row,C.lo)):null,
+      upper_limit:isNum?cleanCell(g(row,C.hi)):null,
       sample_size:(samp&&isFinite(Number(samp)))?Number(samp):1,
-      method:cleanCell(cMethod>=0?row[cMethod]:null),
-      sampling_frequency:cleanCell(cFreq>=0?row[cFreq]:null),
-      production_equipment:cleanCell(cEquip>=0?row[cEquip]:null),
-      fmea_number:cleanCell(cFmea>=0?row[cFmea]:null),
-      special_characteristic:cleanCell(cSpec>=0?row[cSpec]:null),
-      backup_method:cleanCell(cBackup>=0?row[cBackup]:null),
-      emergency_action_plan:cleanCell(cEmer>=0?row[cEmer]:null),
-      capa_plan:cleanCell(cCapa>=0?row[cCapa]:null),
-      process_control: cProc<0 ? true : !!cleanCell(row[cProc]),
-      final_control:   cFin<0  ? true : !!cleanCell(row[cFin])
+      sampling_frequency:cleanCell(g(row,C.freq)),
+      son_kontrol_ornekleme:cleanCell(g(row,C.sonsamp)),
+      production_equipment:cleanCell(g(row,C.equip)),
+      fmea_number:cleanCell(g(row,C.fmea)),
+      special_characteristic:cleanCell(g(row,C.spec)),
+      method:cleanCell(g(row,C.method)),
+      backup_method:cleanCell(g(row,C.backup)),
+      emergency_action_plan:cleanCell(g(row,C.emer)),
+      capa_plan:cleanCell(g(row,C.dof)),
+      giris_kalite:   C.giris>=0 ? (boolCell(g(row,C.giris))===true) : false,
+      process_control:C.proses>=0 ? (boolCell(g(row,C.proses))!==false) : true,
+      final_control:  C.son>=0   ? (boolCell(g(row,C.son))===true) : true
     });
   }
   return {items};
@@ -626,7 +645,11 @@ async function openControl(p){
     if(opItems.length) allItems=opItems;
   }
   // aşamaya göre plan maddeleri: seri başı=proses (process_control), son (final_control)
-  const itemsForStage=s=>allItems.filter(it=> s==='son' ? (it.final_control!==false) : (it.process_control!==false));
+  const itemsForStage=s=>allItems.filter(it=>
+    s==='giris' ? (it.giris_kalite===true) :
+    s==='son'   ? (it.final_control!==false) :
+                  (it.process_control!==false));   // seri_basi & proses = process_control
+  const sampleFor=(it,s)=> (s==='son' && it.son_kontrol_ornekleme) ? it.son_kontrol_ornekleme : (it.sample_size??1);
   const {data:recs}=await sb.from('control_records').select('*').eq('production_id',p.id).order('checked_at');
   const existing=recs||[];
 
@@ -705,7 +728,7 @@ async function openControl(p){
           okB.classList.toggle('on',st.result==='OK');
           retB.classList.toggle('on',st.result==='RET');
           measInp.style.borderColor = st.result==='OK'?'var(--ok)':(st.result==='RET'?'var(--ret)':'var(--line)');
-          prog.textContent=`${st.result?1:0}/${it.sample_size??1}`;
+          prog.textContent=`${st.result?1:0}/${sampleFor(it,stage)}`;
           prog.className='pill '+(st.result?'ok':'gray');
         }
         const row=el('tr',{},
@@ -715,7 +738,7 @@ async function openControl(p){
           el('td',{},((it.target||'')+(it.unit?' '+it.unit:''))||'-'),
           el('td',{},it.lower_limit||'-'),
           el('td',{},it.upper_limit||'-'),
-          el('td',{},String(it.sample_size??1)),
+          el('td',{},String(sampleFor(it,stage))),
           el('td',{},el('div',{class:'okret sm'},okB,retB)),
           el('td',{},measInp),
           el('td',{},prog)
