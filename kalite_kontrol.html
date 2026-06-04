@@ -392,7 +392,8 @@ const HEADER_MAP={
   'op.no':'op_no','op no':'op_no','iş emri':'work_order','is emri':'work_order','müşteri sip no':'customer_order_no',
   'sip seri':'order_serial','sip sıra':'order_seq','sip sira':'order_seq'
 };
-function normHdr(s){return (s||'').toString().trim().toLowerCase().replace(/\s+/g,' ');}
+function normHdr(s){return deTr(s);}   // Türkçe İ/ı vb. güvenli normalizasyon
+const HMAP={}; Object.keys(HEADER_MAP).forEach(k=>HMAP[deTr(k)]=HEADER_MAP[k]);
 async function importProds(){
   const f=$('#prodFile').files[0];
   if(!f){toast('Önce dosya seç.','err');return;}
@@ -405,7 +406,7 @@ async function importProds(){
     let hi=rows.findIndex(r=>r&&r.some(c=>normHdr(c)==='makine kodu'));
     if(hi<0){toast('Başlık satırı bulunamadı (Makine Kodu).','err');return;}
     const hdr=rows[hi].map(normHdr);
-    const idx={}; hdr.forEach((h,i)=>{ if(HEADER_MAP[h]!==undefined) idx[HEADER_MAP[h]]=i; });
+    const idx={}; hdr.forEach((h,i)=>{ if(HMAP[h]!==undefined) idx[HMAP[h]]=i; });
     if(idx.machine_code===undefined||idx.stock_code===undefined){toast('Gerekli sütunlar yok.','err');return;}
     const out=[];
     for(let r=hi+1;r<rows.length;r++){
@@ -429,7 +430,7 @@ async function importProds(){
       out.push(rec);
     }
     if(!out.length){toast('İçe aktarılacak satır bulunamadı.','err');return;}
-    const {error,count}=await sb.from('productions').upsert(out,{onConflict:'fingerprint',ignoreDuplicates:true,count:'exact'});
+    const {error,count}=await sb.from('productions').upsert(out,{onConflict:'fingerprint',count:'exact'});
     if(error)throw error;
     toast(`${out.length} satır işlendi (tekrarlar atlandı).`,'ok');
     renderUretimler();
@@ -927,36 +928,42 @@ async function openBulkAuto(){
       el('div',{class:'field grow'},el('label',{class:'lab'},`${mc.code} — ${esc(mc.name||'')} · ${mc.count} üretim · birim: ${esc(mc.unit||'-')}`),
         el('input',{class:'inp',type:'number',step:'0.001',placeholder:'çevrim süresi (sn/'+(mc.unit||'birim')+')',oninput:e=>cyc[mc.code]=Number(e.target.value)||0}))));
   });
-  const skipCb=el('input',{type:'checkbox'}); skipCb.checked=true;
-  m.append(el('label',{style:'display:inline-flex;align-items:center;gap:6px;margin:6px 0 12px;cursor:pointer'},skipCb,'Zaten kontrol kaydı olan üretimleri atla'));
+  const regenCb=el('input',{type:'checkbox'});
+  m.append(el('label',{style:'display:inline-flex;align-items:center;gap:6px;margin:6px 0 12px;cursor:pointer'},regenCb,'Var olan kayıtları silip yeniden üret (kapalıysa sadece eksik aşamalar tamamlanır)'));
   const status=el('div',{style:'margin-top:6px;color:var(--muted);font-size:13px'});
-  const go=el('button',{class:'btn',onclick:()=>runBulkAuto(prods,plan,cyc,skipCb.checked,status,go)},'🎲 Üret');
+  const go=el('button',{class:'btn',onclick:()=>runBulkAuto(prods,plan,cyc,regenCb.checked,status,go)},'🎲 Üret');
   m.append(el('div',{},go),status);
   bg.append(m); root.append(bg);
 }
-async function runBulkAuto(prods,plan,cyc,skipExisting,status,go){
+async function runBulkAuto(prods,plan,cyc,regen,status,go){
   if(!Object.values(cyc).some(v=>v>0)){ toast('En az bir makine için çevrim süresi gir.','err'); return; }
   go.disabled=true;
-  let existing=new Set();
-  if(skipExisting){ const {data}=await sb.from('control_records').select('production_id'); (data||[]).forEach(r=>existing.add(r.production_id)); }
+  // mevcut kayıtlar: üretim başına hangi aşamalar var
+  const {data:exr}=await sb.from('control_records').select('production_id,stage');
+  const have={}; (exr||[]).forEach(r=>{(have[r.production_id]=have[r.production_id]||new Set()).add(r.stage);});
   let made=0,prodN=0,skipped=0;
   for(const p of prods){
-    if(skipExisting&&existing.has(p.id)){skipped++;continue;}
-    const cs=cyc[p.machine_code];
-    if(!cs||!p.quantity||p.quantity<=0||!p.start_time){skipped++;continue;}
-    const start=new Date(p.start_time), durSec=p.quantity*cs, end=new Date(start.getTime()+durSec*1000);
-    await sb.from('productions').update({end_time:end.toISOString(),duration_min:Math.round(durSec/60)}).eq('id',p.id);
-    p.end_time=end.toISOString(); p.duration_min=Math.round(durSec/60);
+    if(!p.start_time||!p.quantity||p.quantity<=0){skipped++;continue;}
+    const cs=cyc[p.machine_code], start=new Date(p.start_time);
+    let end, durMin;
+    if(cs>0){ const durSec=p.quantity*cs; end=new Date(start.getTime()+durSec*1000); durMin=durSec/60;
+      await sb.from('productions').update({end_time:end.toISOString(),duration_min:Math.round(durMin)}).eq('id',p.id);
+      p.end_time=end.toISOString(); p.duration_min=Math.round(durMin);
+    } else { end=p.end_time?new Date(p.end_time):start; durMin=0; }  // çevrim yok → başlama/bitiş'e bakma, sadece seri başı + son
+    if(regen){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); }
+    const cur=have[p.id]||new Set();
     const items=opItemsFor(plan.filter(x=>x.stock_code===p.stock_code),p.op_no);
     const freq=Number((items.find(it=>it.sampling_frequency)||{}).sampling_frequency)||60;
-    const durMin=durSec/60, recs=[];
-    const sbr=buildAutoRec(p,'seri_basi',start,items); if(sbr)recs.push(sbr);
-    for(let t=freq;t<durMin;t+=freq){ const pr=buildAutoRec(p,'proses',new Date(start.getTime()+t*60000),items); if(pr)recs.push(pr); }
-    const sor=buildAutoRec(p,'son',end,items); if(sor)recs.push(sor);
+    const recs=[];
+    if(!cur.has('seri_basi')){ const r=buildAutoRec(p,'seri_basi',start,items); if(r)recs.push(r); }       // seri üretim başında
+    if(!cur.has('proses')){ for(let t=freq;t<durMin;t+=freq){ const r=buildAutoRec(p,'proses',new Date(start.getTime()+t*60000),items); if(r)recs.push(r); } } // plana göre saatlik
+    if(!cur.has('son')){ const r=buildAutoRec(p,'son',end,items); if(r)recs.push(r); }                      // son: bitişte
+    if(!cur.has('giris')){ const r=buildAutoRec(p,'giris',start,items); if(r)recs.push(r); }
     if(recs.length){ const {error}=await sb.from('control_records').insert(recs); if(error){console.warn(error.message);} else {made+=recs.length;prodN++;} }
+    else skipped++;
     status.textContent=`İşleniyor… ${prodN} üretim, ${made} kayıt`;
   }
-  status.textContent=`Bitti ✓ ${prodN} üretim işlendi, ${made} kontrol kaydı oluşturuldu. ${skipped} atlandı.`;
+  status.textContent=`Bitti ✓ ${prodN} üretim, ${made} yeni kontrol kaydı. ${skipped} atlandı/zaten tamdı.`;
   toast(`${made} otomatik kontrol kaydı oluşturuldu (${prodN} üretim).`,'ok');
   go.disabled=false; loadControlCounts && loadControlCounts();
 }
