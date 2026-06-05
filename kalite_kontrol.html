@@ -1688,6 +1688,7 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
 // ====================== KONTROL KAYITLARI ======================
 let KAYIT_STAGE='seri_basi';
 let KAYIT_FILT={start:'',end:'',stock:''};
+let _kayitDeb=null; // tarih yazarken her tuşta yeniden çizmesin
 let KAYIT_PROD=null;   // belirli bir üretimin kayıtlarına odaklanma
 // kayıt durumu: ölçüm girilmemişse 'empty', RET ise 'ret', değilse 'ok'
 function recStatus(r){
@@ -1738,8 +1739,8 @@ async function renderKayitlar(){
   stocks.forEach(s=>{ const o=el('option',{value:s},s); if(s===KAYIT_FILT.stock)o.selected=true; stockSel.append(o); });
   const filt=el('div',{class:'card'},
     el('div',{class:'toolbar'},
-      el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Başlangıç'),el('input',{type:'date',class:'inp',value:KAYIT_FILT.start,onchange:e=>{KAYIT_FILT.start=e.target.value;renderKayitlar();}})),
-      el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),el('input',{type:'date',class:'inp',value:KAYIT_FILT.end,onchange:e=>{KAYIT_FILT.end=e.target.value;renderKayitlar();}})),
+      el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Başlangıç'),el('input',{type:'date',class:'inp',value:KAYIT_FILT.start,onchange:e=>{KAYIT_FILT.start=e.target.value;clearTimeout(_kayitDeb);_kayitDeb=setTimeout(renderKayitlar,800);}})),
+      el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),el('input',{type:'date',class:'inp',value:KAYIT_FILT.end,onchange:e=>{KAYIT_FILT.end=e.target.value;clearTimeout(_kayitDeb);_kayitDeb=setTimeout(renderKayitlar,800);}})),
       el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Stok Kodu'),stockSel),
       el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{KAYIT_FILT={start:'',end:'',stock:''};renderKayitlar();}},'Temizle'),
       el('div',{class:'grow'}),
@@ -2544,6 +2545,7 @@ function defsCard(){
 
 // ====================== DASHBOARD ======================
 let DASH_FILT={stock:'',start:'',end:''};
+let _dashDeb=null; // tarih yazarken her tuşta yeniden çizmesin (odak kaybı/yarım tarih olmasın)
 function _pctBar(ret,total){ const p=total?Math.round(1000*ret/total)/10:0; return `<span class="rettrack"><i style="width:${total?Math.min(100,100*ret/total):0}%"></i></span><span class="dpct" style="color:${p>=20?'#f87171':(p>=5?'#f59e0b':'#22c55e')}">${p}%</span>`; }
 function dpanel(title,rows,opt){ // rows: [{label,sub,total,ret}]
   opt=opt||{};
@@ -2604,8 +2606,8 @@ async function renderDashboard(){
     el('div',{style:'color:var(--muted);font-size:12px'}, recs.length+' kontrol kaydı analiz edildi')));
   fcard.append(el('div',{class:'row',style:'margin-top:10px;align-items:flex-end'},
     el('div',{class:'field',style:'flex:0;min-width:170px'},el('label',{class:'lab'},'Stok Kodu'),stockSel),
-    el('div',{class:'field',style:'flex:0;min-width:150px'},el('label',{class:'lab'},'Başlangıç'),el('input',{type:'date',class:'inp',value:DASH_FILT.start,onchange:e=>{DASH_FILT.start=e.target.value;reload();}})),
-    el('div',{class:'field',style:'flex:0;min-width:150px'},el('label',{class:'lab'},'Bitiş'),el('input',{type:'date',class:'inp',value:DASH_FILT.end,onchange:e=>{DASH_FILT.end=e.target.value;reload();}})),
+    el('div',{class:'field',style:'flex:0;min-width:150px'},el('label',{class:'lab'},'Başlangıç'),el('input',{type:'date',class:'inp',value:DASH_FILT.start,onchange:e=>{DASH_FILT.start=e.target.value;clearTimeout(_dashDeb);_dashDeb=setTimeout(reload,800);}})),
+    el('div',{class:'field',style:'flex:0;min-width:150px'},el('label',{class:'lab'},'Bitiş'),el('input',{type:'date',class:'inp',value:DASH_FILT.end,onchange:e=>{DASH_FILT.end=e.target.value;clearTimeout(_dashDeb);_dashDeb=setTimeout(reload,800);}})),
     (DASH_FILT.stock||DASH_FILT.start||DASH_FILT.end)?el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{DASH_FILT={stock:'',start:'',end:''};reload();}},'Temizle'):''
   ));
   root.append(fcard);
