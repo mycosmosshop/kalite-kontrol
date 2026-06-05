@@ -671,28 +671,37 @@ function exportPlanExcel(sc,stockName){
   const items=planSorted((PLAN||[]).filter(p=>p.stock_code===sc));
   const {head,rows}=planColsAOA(items); const H=PLAN_HDR; const W=head.length;
   const pad=r=>{ while(r.length<W)r.push(''); return r; };
-  const aoa=[];
-  aoa.push(pad(['SANİFOAM — '+(H.doc_title||'KONTROL PLANI')]));
-  aoa.push(pad(['Dok. No',H.doc_no||'','Yayın Tarihi',hv('pub_date'),'Revizyon No',H.rev_no||'','Rev. Tarihi',hv('rev_date'),'Kontrol Planı No',H.plan_no||'','Revizyon Nedeni',H.rev_reason||'']));
-  aoa.push(pad(['Stok Kodu',sc,'Stok Adı',stockName||'','Cari Kartı',H.customer||'','İlgili Kişi',H.contact||'','Kontrol Tipi',H.control_type||'','Çekirdek Takım',H.core_team||'']));
-  aoa.push(pad(['Müh. Onay',hv('eng_approve_date'),'Kalite Onay',hv('quality_approve_date'),'Plan Onay',hv('plan_approve_date'),'Diğer Onay',hv('other_approve_date'),'Tolerans Tablosu',H.tolerance_table||'']));
-  aoa.push(pad(['Tek. Resim Rev No',H.tech_rev_no||'','Tek. Resim Rev Tarihi',hv('tech_rev_date')]));
-  aoa.push(pad([]));
-  aoa.push(head);
-  rows.forEach(r=>aoa.push(r));
+  // antet için 9 boş satır (4 üst bant + 4 meta + 1 boşluk) sonra başlık + veri
+  const aoa=[]; for(let i=0;i<9;i++) aoa.push(pad([])); aoa.push(head); rows.forEach(r=>aoa.push(r));
   const ws=XLSX.utils.aoa_to_sheet(aoa);
-  const headerRow=6, dataStart=7, dataEnd=6+rows.length;
-  // --- biçimlendirme (xlsx-js-style) ---
+  const headerRow=9, dataStart=10, dataEnd=9+rows.length;
+  ws['!merges']=[];
   const thin={style:'thin',color:{rgb:'888888'}}, allB={top:thin,bottom:thin,left:thin,right:thin};
+  const xlPut=(r,c,val,style,colspan,rowspan)=>{ const ref=XLSX.utils.encode_cell({r,c}); ws[ref]={t:(typeof val==='number')?'n':'s',v:(val==null?'':val),s:style};
+    if((colspan&&colspan>1)||(rowspan&&rowspan>1)) ws['!merges'].push({s:{r,c},e:{r:r+((rowspan||1)-1),c:c+((colspan||1)-1)}}); };
   const setS=(r,c,s)=>{ const ref=XLSX.utils.encode_cell({r,c}); if(!ws[ref])ws[ref]={t:'s',v:''}; ws[ref].s=s; };
-  for(let c=0;c<W;c++) setS(0,c,{font:{bold:true,sz:14,color:{rgb:'FFFFFF'}},fill:{fgColor:{rgb:'0D3055'}},alignment:{horizontal:'center',vertical:'center'},border:allB});
-  for(let r=1;r<=4;r++){ for(let c=0;c<W;c++){ const ref=XLSX.utils.encode_cell({r,c}); const isLabel=(c%2===0)&&ws[ref]&&ws[ref].v!=='';
-    setS(r,c,{font:{bold:isLabel,sz:10},fill:isLabel?{fgColor:{rgb:'E8E8E8'}}:undefined,alignment:{vertical:'center',wrapText:true},border:allB}); } }
+  const labS={font:{bold:true,sz:9,color:{rgb:'1F2937'}},fill:{fgColor:{rgb:'E8E8E8'}},alignment:{vertical:'center',wrapText:true,horizontal:'left'},border:allB};
+  const valS={font:{sz:9},alignment:{vertical:'center',wrapText:true,horizontal:'left'},border:allB};
+  const bigBlue={font:{bold:true,sz:16,color:{rgb:'0D3055'}},alignment:{horizontal:'center',vertical:'center'},border:allB};
+  // --- ÜST BANT (PDF gibi): Logo | Başlık | Dok. kontrol kutusu ---
+  xlPut(0,0,'SANİFOAM',{font:{bold:true,sz:15,color:{rgb:'1D4ED8'}},alignment:{horizontal:'center',vertical:'center'},border:allB},3,4);
+  xlPut(0,3,(H.doc_title||'KONTROL PLANI'),bigBlue,13,4);
+  const dbox=[['Dok.No',H.doc_no||''],['Yayın Trh.',hv('pub_date')],
+    ['Rev. No/Trh',(H.rev_no||'')+((H.rev_no&&hv('rev_date'))?' / ':'')+hv('rev_date')],['Sayfa','1/1']];
+  dbox.forEach((row,i)=>{ xlPut(i,16,row[0],{...labS,font:{bold:true,sz:8}},2,1); xlPut(i,18,row[1],{...valS,font:{sz:8}},4,1); });
+  // --- META GRID (4 satır) ---
+  const meta=[
+    [['Stok Kodu',1,2],[sc,0,2],['Stok Adı',1,2],[stockName||'',0,10],['Kontrol Tipi',1,3],[H.control_type||'',0,3]],
+    [['Cari Kartı',1,2],[H.customer||'',0,3],['İlgili Kişi',1,2],[H.contact||'',0,3],['Çekirdek Takım',1,3],[H.core_team||'',0,3],['Tolerans Tablosu',1,3],[H.tolerance_table||'',0,3]],
+    [['Müh. Onay',1,3],[hv('eng_approve_date'),0,2],['Kalite Onay',1,3],[hv('quality_approve_date'),0,2],['Plan Onay',1,3],[hv('plan_approve_date'),0,2],['Diğer Onay',1,3],[hv('other_approve_date'),0,4]],
+    [['Tek. Resim Rev No',1,4],[H.tech_rev_no||'',0,2],['Tek. Resim Rev Tarihi',1,4],[hv('tech_rev_date'),0,2],['Kontrol Planı No',1,3],[H.plan_no||'',0,2],['Revizyon Nedeni',1,3],[H.rev_reason||'',0,2]]
+  ];
+  meta.forEach((segs,ri)=>{ let c=0; const r=4+ri; for(const [val,isLab,span] of segs){ xlPut(r,c,val,isLab?labS:valS,span,1); c+=span; } });
+  // --- TABLO BAŞLIĞI + VERİ ---
   for(let c=0;c<W;c++) setS(headerRow,c,{font:{bold:true,sz:9,color:{rgb:'FFFFFF'}},fill:{fgColor:{rgb:'1D4ED8'}},alignment:{horizontal:'center',vertical:'center',wrapText:true},border:allB});
-  for(let r=dataStart;r<=dataEnd;r++){ for(let c=0;c<W;c++) setS(r,c,{font:{sz:9},alignment:{vertical:'top',wrapText:true,horizontal:(c===0||c===2||(c>=3&&c<=5))?'center':'left'},border:allB,fill:(r%2===0)?{fgColor:{rgb:'F4F7FB'}}:undefined}); }
+  for(let r=dataStart;r<=dataEnd;r++){ for(let c=0;c<W;c++) setS(r,c,{font:{sz:9},alignment:{vertical:'top',wrapText:true,horizontal:(c===0||c===2||(c>=3&&c<=5))?'center':'left'},border:allB,fill:((r-dataStart)%2===1)?{fgColor:{rgb:'F4F7FB'}}:undefined}); }
   ws['!cols']=head.map((h,i)=>({wch:i===0?7:(i===6?30:(i===8?24:(i>=14?16:11)))}));
-  ws['!rows']=[{hpt:24},{hpt:16},{hpt:16},{hpt:16},{hpt:16},{hpt:6},{hpt:28}];
-  ws['!merges']=[{s:{r:0,c:0},e:{r:0,c:W-1}}];
+  ws['!rows']=[{hpt:13},{hpt:13},{hpt:13},{hpt:13},{hpt:16},{hpt:16},{hpt:16},{hpt:16},{hpt:6},{hpt:28}];
   const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Kontrol Planı');
   XLSX.writeFile(wb,`kontrol_plani_${sc}.xlsx`);
 }
