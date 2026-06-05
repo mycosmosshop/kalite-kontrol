@@ -93,6 +93,24 @@
   .stat{display:inline-flex;flex-direction:column;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 16px;min-width:110px}
   .stat b{font-size:22px}
   .stat span{color:var(--muted);font-size:12px}
+  /* SPC istatistik */
+  .stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+  .scard{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:var(--panel2);position:relative;overflow:hidden}
+  .scard .lab{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px}
+  .scard .val{font-size:26px;font-weight:800;line-height:1.1}
+  .scard .sub{font-size:11px;color:var(--muted);margin-top:3px}
+  .scard.cap-exc{border-color:#15803d;background:linear-gradient(180deg,rgba(22,163,74,.16),transparent)}
+  .scard.cap-good{border-color:#16a34a}
+  .scard.cap-mid{border-color:#d97706;background:linear-gradient(180deg,rgba(217,119,6,.14),transparent)}
+  .scard.cap-bad{border-color:#dc2626;background:linear-gradient(180deg,rgba(220,38,38,.16),transparent)}
+  .scard.cap-exc .val{color:#22c55e}.scard.cap-good .val{color:#22c55e}.scard.cap-mid .val{color:#f59e0b}.scard.cap-bad .val{color:#f87171}
+  .chart-card canvas{width:100%;display:block;background:transparent}
+  .chart-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:8px;font-size:12px;color:var(--muted)}
+  .chart-legend i{display:inline-block;width:16px;height:0;border-top-width:3px;border-top-style:solid;vertical-align:middle;margin-right:5px}
+  details.defs{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+  details.defs summary{cursor:pointer;font-weight:700;color:var(--txt)}
+  details.defs table{margin-top:10px}
+  details.defs td,details.defs th{font-size:12px}
 
   /* MODAL */
   .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-start;justify-content:center;padding:14px;z-index:50;overflow-y:auto}
@@ -158,6 +176,7 @@
     <button data-tab="uretimler" class="active">📋 Üretimler</button>
     <button data-tab="kayitlar">✅ Kontrol Kayıtları</button>
     <button data-tab="plan">📐 Kontrol Planı</button>
+    <button data-tab="istatistik">📊 İstatistik</button>
     <button data-tab="admin" id="adminTab">👤 Kullanıcılar</button>
   </nav>
   <main>
@@ -169,6 +188,7 @@
     <div id="tab-uretimler"></div>
     <div id="tab-kayitlar" class="hidden"></div>
     <div id="tab-plan" class="hidden"></div>
+    <div id="tab-istatistik" class="hidden"></div>
     <div id="tab-admin" class="hidden"></div>
   </main>
 </div>
@@ -308,10 +328,11 @@ async function afterLogin(){
 // ====================== TABS ======================
 function switchTab(name){
   document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
-  ['uretimler','kayitlar','plan','admin'].forEach(t=>$('#tab-'+t).classList.toggle('hidden',t!==name));
+  ['uretimler','kayitlar','plan','istatistik','admin'].forEach(t=>$('#tab-'+t).classList.toggle('hidden',t!==name));
   if(name==='uretimler')renderUretimler();
   if(name==='kayitlar')renderKayitlar();
   if(name==='plan')renderPlan();
+  if(name==='istatistik')renderIstatistik();
   if(name==='admin')renderAdmin();
 }
 document.querySelectorAll('nav.tabs button').forEach(b=>b.onclick=()=>{ if(b.dataset.tab==='kayitlar')KAYIT_PROD=null; switchTab(b.dataset.tab); });
@@ -1357,6 +1378,214 @@ function exportRecords(recs){
   const ws=XLSX.utils.json_to_sheet(rows);const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,'Kontroller');
   XLSX.writeFile(wb,'kalite_kontrol_kayitlari.xlsx');
+}
+
+// ====================== İSTATİSTİK (SPC) ======================
+let STAT_FILT={stock:'',measure:'',start:'',end:'',stage:'',machine:''};
+let _statDraw=null;  // son çizim (yeniden boyutlandırma için)
+window.addEventListener('resize',()=>{ if(_statDraw && !$('#tab-istatistik').classList.contains('hidden')) _statDraw(); });
+// normal dağılım CDF (Abramowitz–Stegun yaklaşımı)
+function _normCdf(z){ const t=1/(1+0.2316419*Math.abs(z)), d=0.3989423*Math.exp(-z*z/2);
+  const p=d*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274)))); return z>0?1-p:p; }
+function _capClass(v){ if(v==null)return ''; if(!isFinite(v))return 'cap-exc'; if(v>=1.67)return 'cap-exc'; if(v>=1.33)return 'cap-good'; if(v>=1.0)return 'cap-mid'; return 'cap-bad'; }
+function _capWord(v){ if(v==null)return '—'; if(!isFinite(v))return 'mükemmel'; if(v>=1.67)return 'mükemmel'; if(v>=1.33)return 'yeterli'; if(v>=1.0)return 'sınırda'; return 'yetersiz'; }
+function _fmtN(v,d=3){ return (v==null||!isFinite(v))?'—':Number(v).toFixed(d); }
+function leg(color,style,label){ return el('span',{},el('i',{style:`border-top-color:${color};border-top-style:${style}`}),label); }
+
+async function renderIstatistik(){
+  const root=$('#tab-istatistik');
+  root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
+  const [{data:planD},{data:recD}]=await Promise.all([
+    sb.from('control_plan_items').select('*'),
+    sb.from('control_records').select('stock_code,machine_code,stage,checked_at,vals').order('checked_at',{ascending:true}).limit(8000)
+  ]);
+  const plan=planD||[], recs=recD||[];
+  root.innerHTML='';
+
+  // stok seçenekleri
+  const stockSet=new Set(); recs.forEach(r=>r.stock_code&&stockSet.add(r.stock_code)); plan.forEach(p=>p.stock_code&&stockSet.add(p.stock_code));
+  const stocks=[...stockSet].sort();
+  if(!STAT_FILT.stock || !stocks.includes(STAT_FILT.stock)) STAT_FILT.stock=stocks[0]||'';
+
+  // sayısal ölçüm kataloğu (plan + kayıt) seçili stok için
+  const measMap=new Map();
+  plan.filter(p=>p.stock_code===STAT_FILT.stock && p.is_qualitative!==true).forEach(p=>measMap.set(p.measure_name,{lower:p.lower_limit,upper:p.upper_limit,target:p.target,unit:p.unit}));
+  recs.filter(r=>r.stock_code===STAT_FILT.stock).forEach(r=>(r.vals||[]).forEach(v=>{ if(v.is_qualitative===true)return; if(!measMap.has(v.measure_name))measMap.set(v.measure_name,{lower:v.lower_limit,upper:v.upper_limit,target:v.target,unit:v.unit}); }));
+  const measures=[...measMap.keys()].filter(Boolean).sort();
+  if(!STAT_FILT.measure || !measures.includes(STAT_FILT.measure)) STAT_FILT.measure=measures[0]||'';
+  const machSet=new Set(); recs.filter(r=>r.stock_code===STAT_FILT.stock).forEach(r=>r.machine_code&&machSet.add(r.machine_code));
+  const machines=[...machSet].sort();
+
+  // ---- FİLTRE KARTI ----
+  const reload=()=>renderIstatistik();
+  const mkSel=(label,val,opts,on,grow)=>{ const s=el('select',{class:'inp',onchange:e=>on(e.target.value)});
+    opts.forEach(([v,t])=>{ const o=el('option',{value:v},t); if(v===val)o.selected=true; s.append(o); });
+    return el('div',{class:'field'+(grow?' grow':''),style:grow?'':'flex:0;min-width:150px'},el('label',{class:'lab'},label),s); };
+  const fcard=el('div',{class:'card'});
+  fcard.append(el('h3',{style:'margin:0 0 4px'},'📊 İstatistiksel Proses Kontrol (SPC)'));
+  fcard.append(el('p',{style:'color:var(--muted);font-size:13px;margin:0 0 14px'},'Ölçüm sonuçlarını kontrol grafiği, histogram ve yeterlilik indeksleriyle (Cp, Cpk, Pp, Ppk) takip et. Limitler kontrol planından (alt/üst limit, hedef) alınır.'));
+  fcard.append(el('div',{class:'row',style:'align-items:flex-end;gap:10px'},
+    mkSel('Stok Kodu',STAT_FILT.stock,stocks.map(s=>[s,s]),v=>{STAT_FILT.stock=v;STAT_FILT.measure='';STAT_FILT.machine='';reload();}),
+    mkSel('Ölçülecek Değer',STAT_FILT.measure,measures.length?measures.map(m=>[m,m]):[['','— sayısal ölçüm yok —']],v=>{STAT_FILT.measure=v;reload();},true),
+    mkSel('Aşama',STAT_FILT.stage,[['','Tümü'],['seri_basi','Seri Başı'],['proses','Proses'],['son','Son Kontrol'],['giris','Giriş Kalite']],v=>{STAT_FILT.stage=v;reload();}),
+    mkSel('Makine',STAT_FILT.machine,[['','Tümü'],...machines.map(m=>[m,m])],v=>{STAT_FILT.machine=v;reload();}),
+    el('div',{class:'field',style:'flex:0;min-width:140px'},el('label',{class:'lab'},'Başlangıç'),el('input',{type:'date',class:'inp',value:STAT_FILT.start,onchange:e=>{STAT_FILT.start=e.target.value;reload();}})),
+    el('div',{class:'field',style:'flex:0;min-width:140px'},el('label',{class:'lab'},'Bitiş'),el('input',{type:'date',class:'inp',value:STAT_FILT.end,onchange:e=>{STAT_FILT.end=e.target.value;reload();}})),
+    (STAT_FILT.stage||STAT_FILT.machine||STAT_FILT.start||STAT_FILT.end)?el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{STAT_FILT.stage='';STAT_FILT.machine='';STAT_FILT.start='';STAT_FILT.end='';reload();}},'Filtreyi Temizle'):''
+  ));
+  root.append(fcard);
+
+  if(!STAT_FILT.measure){ root.append(el('div',{class:'card'},el('div',{class:'empty'},'Bu stok için sayısal (ölçülebilir) kontrol maddesi bulunamadı.'))); return; }
+
+  // ---- VERİ TOPLA ----
+  const lim=measMap.get(STAT_FILT.measure)||{};
+  let LSL=Number(lim.lower),USL=Number(lim.upper),TGT=Number(lim.target);
+  if(!isFinite(LSL))LSL=null; if(!isFinite(USL))USL=null; if(!isFinite(TGT))TGT=null;
+  const unit=lim.unit||'';
+  const sd=STAT_FILT.start?new Date(STAT_FILT.start+'T00:00:00').getTime():null;
+  const ed=STAT_FILT.end?new Date(STAT_FILT.end+'T23:59:59').getTime():null;
+  const pts=[];
+  recs.forEach(r=>{ if(r.stock_code!==STAT_FILT.stock)return; if(STAT_FILT.stage&&r.stage!==STAT_FILT.stage)return; if(STAT_FILT.machine&&r.machine_code!==STAT_FILT.machine)return;
+    const tm=new Date(r.checked_at).getTime(); if(sd&&tm<sd)return; if(ed&&tm>ed)return;
+    (r.vals||[]).forEach(v=>{ if(v.measure_name!==STAT_FILT.measure)return; (v.samples||[]).forEach(s=>{ const x=Number(s.value); if(isFinite(x))pts.push({v:x,t:tm}); }); });
+  });
+  pts.sort((a,b)=>a.t-b.t);
+  const xs=pts.map(p=>p.v);
+  if(xs.length<2){ root.append(el('div',{class:'card'},el('div',{class:'empty'},`Seçili filtrede yeterli ölçüm yok (${xs.length} adet). En az 2 ölçüm gerekli.`))); return; }
+
+  // ---- İSTATİSTİK ----
+  const n=xs.length, mean=xs.reduce((a,b)=>a+b,0)/n;
+  const sOverall=Math.sqrt(xs.reduce((a,b)=>a+(b-mean)*(b-mean),0)/(n-1));
+  const mrs=[]; for(let i=1;i<n;i++)mrs.push(Math.abs(xs[i]-xs[i-1]));
+  const mrBar=mrs.length?mrs.reduce((a,b)=>a+b,0)/mrs.length:0;
+  const sWithin=mrBar/1.128;
+  const minV=Math.min(...xs),maxV=Math.max(...xs);
+  const capPair=sig=>{ if(!(sig>0))return [Infinity,Infinity]; let cp=null,cpk=null;
+    if(LSL!=null&&USL!=null){ cp=(USL-LSL)/(6*sig); cpk=Math.min((USL-mean),(mean-LSL))/(3*sig); }
+    else if(USL!=null) cpk=(USL-mean)/(3*sig); else if(LSL!=null) cpk=(mean-LSL)/(3*sig);
+    return [cp,cpk]; };
+  const [Cp,Cpk]=capPair(sWithin), [Pp,Ppk]=capPair(sOverall);
+  const CL=mean, sig3=(sWithin>0?sWithin:sOverall)*3, UCL=mean+sig3, LCL=mean-sig3;
+  const ooc=xs.map(x=>x>UCL||x<LCL), oocN=ooc.filter(Boolean).length;
+  let oos=0; xs.forEach(x=>{ if((USL!=null&&x>USL)||(LSL!=null&&x<LSL))oos++; });
+  let ppm=null; if(sOverall>0){ let p=0; if(USL!=null)p+=1-_normCdf((USL-mean)/sOverall); if(LSL!=null)p+=_normCdf((LSL-mean)/sOverall); ppm=Math.round(p*1e6); }
+
+  // ---- ÖZET KARTLAR ----
+  const sg=el('div',{class:'stat-grid'});
+  const sc=(lab,val,sub,cls)=>el('div',{class:'scard'+(cls?' '+cls:'')},el('div',{class:'lab'},lab),el('div',{class:'val'},val),sub?el('div',{class:'sub'},sub):'');
+  const capTxt=v=> v==null?'—':(v===Infinity?'∞':_fmtN(v,2));
+  sg.append(sc('Cp',capTxt(Cp),'potansiyel yeterlilik',_capClass(Cp)));
+  sg.append(sc('Cpk',capTxt(Cpk),_capWord(Cpk),_capClass(Cpk)));
+  sg.append(sc('Pp',capTxt(Pp),'genel performans',_capClass(Pp)));
+  sg.append(sc('Ppk',capTxt(Ppk),_capWord(Ppk),_capClass(Ppk)));
+  sg.append(sc('Ortalama (X̄)',_fmtN(mean,3)+(unit?' '+unit:''),TGT!=null?('hedef '+_fmtN(TGT,3)):''));
+  sg.append(sc('σ (genel)',_fmtN(sOverall,4),'standart sapma'));
+  sg.append(sc('σ (içsel)',_fmtN(sWithin,4),'MR̄ / 1.128'));
+  sg.append(sc('Aralık',_fmtN(minV,3)+' – '+_fmtN(maxV,3),'min – maks'));
+  sg.append(sc('Ölçüm',String(n),'veri noktası'));
+  sg.append(sc('Spec dışı',oos+' ('+(100*oos/n).toFixed(1)+'%)',ppm!=null?('~'+ppm.toLocaleString('tr-TR')+' PPM tahmini'):'',oos>0?'cap-bad':'cap-good'));
+  if(LSL!=null||USL!=null) sg.append(sc('Limitler',(LSL!=null?_fmtN(LSL,2):'—')+' / '+(USL!=null?_fmtN(USL,2):'—'),'alt / üst limit'));
+  sg.append(sc('Kontrol dışı',String(oocN),oocN>0?'≥3σ nokta var':'tümü kontrol içi',oocN>0?'cap-mid':'cap-good'));
+  root.append(el('div',{class:'card'},sg));
+
+  // ---- KONTROL GRAFİĞİ (I) ----
+  const cc=el('div',{class:'card chart-card'});
+  cc.append(el('h3',{style:'margin:0 0 2px'},'Kontrol Grafiği — Bireysel Değerler (I-Chart)'));
+  cc.append(el('p',{style:'margin:0 0 10px;color:var(--muted);font-size:12px'},`${esc(STAT_FILT.measure)} · ${n} ölçüm · merkez çizgi (X̄) ve ±3σ kontrol limitleri; kırmızı noktalar kontrol dışı.`));
+  const ic=el('canvas'); ic.style.height='300px'; cc.append(ic);
+  cc.append(el('div',{class:'chart-legend'},
+    leg('var(--accent)','solid','Ölçüm'), leg('#22c55e','solid','Merkez (X̄)'), leg('#ef4444','dashed','UCL/LCL (±3σ)'),
+    (USL!=null||LSL!=null)?leg('#f59e0b','dashed','Spec (USL/LSL)'):'', (TGT!=null)?leg('#38bdf8','dotted','Hedef'):''
+  ));
+  root.append(cc);
+
+  // ---- HAREKETLİ ARALIK ----
+  const mc=el('div',{class:'card chart-card'});
+  mc.append(el('h3',{style:'margin:0 0 2px'},'Hareketli Aralık (Moving Range)'));
+  mc.append(el('p',{style:'margin:0 0 10px;color:var(--muted);font-size:12px'},'Ardışık ölçümler arası fark |xᵢ − xᵢ₋₁|; sürecin kısa-dönem değişkenliği (UCL = 3.267 × MR̄).'));
+  const mcan=el('canvas'); mcan.style.height='200px'; mc.append(mcan);
+  root.append(mc);
+
+  // ---- HİSTOGRAM ----
+  const hc=el('div',{class:'card chart-card'});
+  hc.append(el('h3',{style:'margin:0 0 2px'},'Dağılım Histogramı + Normal Eğri'));
+  hc.append(el('p',{style:'margin:0 0 10px;color:var(--muted);font-size:12px'},'Ölçümlerin dağılımı; çan eğrisi normal dağılımı, dikey çizgiler spec limitlerini ve hedefi gösterir.'));
+  const hcan=el('canvas'); hcan.style.height='280px'; hc.append(hcan);
+  root.append(hc);
+
+  root.append(defsCard());
+
+  _statDraw=()=>{ drawIChart(ic,xs,pts,{CL,UCL,LCL,USL,LSL,TGT,ooc}); drawMR(mcan,mrs,mrBar); drawHist(hcan,xs,{mean,sOverall,LSL,USL,TGT}); };
+  setTimeout(_statDraw,30);
+}
+function _setupCanvas(c){ const dpr=window.devicePixelRatio||1, w=c.clientWidth||c.parentElement.clientWidth||600, h=parseFloat(c.style.height)||260;
+  c.width=Math.round(w*dpr); c.height=Math.round(h*dpr); const ctx=c.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,w,h); return {ctx,w,h}; }
+function _cv(n){ return getComputedStyle(document.body).getPropertyValue(n).trim()||'#888'; }
+function drawIChart(canvas,xs,pts,o){
+  const {ctx,w,h}=_setupCanvas(canvas); const muted=_cv('--muted'),line=_cv('--line'),accent=_cv('--accent');
+  const padL=54,padR=64,padT=14,padB=30,pw=w-padL-padR,ph=h-padT-padB;
+  const cand=[...xs]; [o.UCL,o.LCL,o.USL,o.LSL,o.TGT].forEach(v=>{if(v!=null&&isFinite(v))cand.push(v);});
+  let yMin=Math.min(...cand),yMax=Math.max(...cand); if(yMin===yMax){yMin-=1;yMax+=1;} const p=(yMax-yMin)*0.08; yMin-=p; yMax+=p;
+  const X=i=>padL+(xs.length<=1?pw/2:(i/(xs.length-1))*pw), Y=v=>padT+(1-(v-yMin)/(yMax-yMin))*ph;
+  ctx.font='11px Segoe UI,sans-serif'; ctx.textBaseline='middle';
+  ctx.strokeStyle=line; ctx.fillStyle=muted; ctx.lineWidth=1;
+  for(let k=0;k<=4;k++){ const v=yMin+(yMax-yMin)*k/4,y=Y(v); ctx.globalAlpha=.3; ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w-padR,y); ctx.stroke(); ctx.globalAlpha=1; ctx.textAlign='right'; ctx.fillText(v.toFixed(2),padL-6,y); }
+  const hline=(v,color,dash,label)=>{ if(v==null||!isFinite(v))return; const y=Y(v); ctx.save(); ctx.strokeStyle=color; ctx.setLineDash(dash); ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w-padR,y); ctx.stroke(); ctx.restore(); ctx.fillStyle=color; ctx.textAlign='left'; ctx.fillText(label,w-padR+4,y); };
+  hline(o.USL,'#f59e0b',[6,4],'USL'); hline(o.LSL,'#f59e0b',[6,4],'LSL'); hline(o.UCL,'#ef4444',[5,4],'UCL'); hline(o.LCL,'#ef4444',[5,4],'LCL'); hline(o.TGT,'#38bdf8',[2,3],'Hedef'); hline(o.CL,'#22c55e',[],'X̄');
+  ctx.strokeStyle=accent; ctx.lineWidth=1.5; ctx.setLineDash([]); ctx.beginPath(); xs.forEach((v,i)=>{ const x=X(i),y=Y(v); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.stroke();
+  xs.forEach((v,i)=>{ const x=X(i),y=Y(v),bad=o.ooc&&o.ooc[i]; ctx.fillStyle=bad?'#ef4444':accent; ctx.beginPath(); ctx.arc(x,y,bad?4:3,0,7); ctx.fill(); if(bad){ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.stroke();} });
+  ctx.fillStyle=muted; ctx.textBaseline='top'; const idxs=[0,Math.floor((xs.length-1)/2),xs.length-1];
+  idxs.forEach((i,k)=>{ ctx.textAlign=k===0?'left':(k===2?'right':'center'); ctx.fillText(fmtDate(pts[i].t),Math.min(Math.max(X(i),padL),w-padR),h-padB+8); });
+}
+function drawMR(canvas,mrs,mrBar){
+  const {ctx,w,h}=_setupCanvas(canvas); const muted=_cv('--muted'),line=_cv('--line'),accent=_cv('--accent');
+  const padL=54,padR=64,padT=12,padB=20,pw=w-padL-padR,ph=h-padT-padB;
+  const ucl=3.267*mrBar; let yMax=Math.max(ucl,...mrs,0.0001)*1.12; const yMin=0;
+  const X=i=>padL+(mrs.length<=1?pw/2:(i/(mrs.length-1))*pw), Y=v=>padT+(1-(v-yMin)/(yMax-yMin))*ph;
+  ctx.font='11px Segoe UI,sans-serif'; ctx.textBaseline='middle'; ctx.strokeStyle=line; ctx.fillStyle=muted;
+  for(let k=0;k<=3;k++){ const v=yMin+(yMax-yMin)*k/3,y=Y(v); ctx.globalAlpha=.3; ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w-padR,y); ctx.stroke(); ctx.globalAlpha=1; ctx.textAlign='right'; ctx.fillText(v.toFixed(2),padL-6,y); }
+  const hline=(v,color,dash,label)=>{ const y=Y(v); ctx.save(); ctx.strokeStyle=color; ctx.setLineDash(dash); ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w-padR,y); ctx.stroke(); ctx.restore(); ctx.fillStyle=color; ctx.textAlign='left'; ctx.fillText(label,w-padR+4,y); };
+  hline(ucl,'#ef4444',[5,4],'UCL'); hline(mrBar,'#22c55e',[],'MR̄');
+  ctx.strokeStyle=accent; ctx.lineWidth=1.5; ctx.setLineDash([]); ctx.beginPath(); mrs.forEach((v,i)=>{ const x=X(i),y=Y(v); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.stroke();
+  mrs.forEach((v,i)=>{ const x=X(i),y=Y(v),bad=v>ucl; ctx.fillStyle=bad?'#ef4444':accent; ctx.beginPath(); ctx.arc(x,y,3,0,7); ctx.fill(); });
+}
+function drawHist(canvas,xs,o){
+  const {ctx,w,h}=_setupCanvas(canvas); const muted=_cv('--muted'),accent=_cv('--accent');
+  const padL=44,padR=20,padT=16,padB=28,pw=w-padL-padR,ph=h-padT-padB;
+  let lo=Math.min(...xs),hi=Math.max(...xs);
+  if(o.LSL!=null)lo=Math.min(lo,o.LSL); if(o.USL!=null)hi=Math.max(hi,o.USL); if(o.TGT!=null){lo=Math.min(lo,o.TGT);hi=Math.max(hi,o.TGT);}
+  if(lo===hi){lo-=1;hi+=1;} const span=hi-lo; lo-=span*0.05; hi+=span*0.05;
+  const nb=Math.min(14,Math.max(6,Math.round(Math.sqrt(xs.length)))), bw=(hi-lo)/nb, bins=new Array(nb).fill(0);
+  xs.forEach(x=>{ let b=Math.floor((x-lo)/bw); if(b<0)b=0; if(b>=nb)b=nb-1; bins[b]++; });
+  const maxC=Math.max(...bins,1), X=v=>padL+((v-lo)/(hi-lo))*pw, Yb=c=>padT+(1-c/(maxC*1.15))*ph;
+  ctx.fillStyle=accent; ctx.globalAlpha=.5; bins.forEach((c,i)=>{ if(!c)return; const x0=X(lo+i*bw),x1=X(lo+(i+1)*bw),y=Yb(c); ctx.fillRect(x0+1,y,Math.max(1,x1-x0-2),padT+ph-y); }); ctx.globalAlpha=1;
+  if(o.sOverall>0){ ctx.strokeStyle='#22c55e'; ctx.lineWidth=2; ctx.beginPath();
+    for(let px=0;px<=pw;px+=2){ const xv=lo+(px/pw)*(hi-lo), dens=Math.exp(-((xv-o.mean)**2)/(2*o.sOverall**2))/(o.sOverall*Math.sqrt(2*Math.PI)), y=Yb(dens*xs.length*bw); px?ctx.lineTo(padL+px,y):ctx.moveTo(padL+px,y); } ctx.stroke(); }
+  const vline=(v,color,dash,label)=>{ if(v==null||!isFinite(v))return; const x=X(v); ctx.save(); ctx.strokeStyle=color; ctx.setLineDash(dash); ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(x,padT); ctx.lineTo(x,padT+ph); ctx.stroke(); ctx.restore(); ctx.fillStyle=color; ctx.font='11px Segoe UI'; ctx.textAlign='center'; ctx.textBaseline='top'; ctx.fillText(label,x,padT-13); };
+  vline(o.LSL,'#f59e0b',[6,4],'LSL'); vline(o.USL,'#f59e0b',[6,4],'USL'); vline(o.TGT,'#38bdf8',[2,3],'Hedef'); vline(o.mean,'#22c55e',[],'X̄');
+  ctx.fillStyle=muted; ctx.font='11px Segoe UI'; ctx.textBaseline='top';
+  for(let k=0;k<=4;k++){ const v=lo+(hi-lo)*k/4,x=X(v); ctx.textAlign=k===0?'left':(k===4?'right':'center'); ctx.fillText(v.toFixed(2),x,h-padB+8); }
+}
+function defsCard(){
+  const d=el('details',{class:'defs'});
+  d.append(el('summary',{},'📘 İstatistiksel terimlerin tanımları ve yorumlanması'));
+  d.append(el('div',{style:'margin-top:10px;font-size:13px;line-height:1.6',html:`
+    <p><b>Kontrol grafiği (Control Chart)</b>: Ölçümlerin zamana göre değişimini süreç ortalaması (X̄) ve ±3σ kontrol limitleri (UCL/LCL) ile gösterir. Limit dışına çıkan noktalar süreçte <i>özel bir neden</i> olduğunu işaret eder (kırmızı). Kontrol limitleri <u>süreçten</u> hesaplanır; <b>spec limitleri (USL/LSL)</b> ise müşteri/çizim toleransıdır — ikisi farklıdır.</p>
+    <p><b>Cp</b> = (USL − LSL) / (6σ<sub>içsel</sub>): Sürecin <i>potansiyel</i> yeterliliği — dağılımın tolerans bandına sığıp sığmadığı (ortalamanın kaymasını dikkate almaz).</p>
+    <p><b>Cpk</b> = min(USL − X̄, X̄ − LSL) / (3σ<sub>içsel</sub>): <i>Gerçek</i> yeterlilik — ortalamanın merkezden kaymasını da hesaba katar. σ<sub>içsel</sub>, ardışık ölçüm farklarından (MR̄/1.128) tahmin edilir.</p>
+    <p><b>Pp / Ppk</b>: Cp/Cpk ile aynı formüller, ancak <b>genel standart sapma</b> (tüm verinin σ'sı) kullanılır. Cp/Cpk «kısa dönem / yetenek», Pp/Ppk «uzun dönem / performans» olarak yorumlanır.</p>
+    <table>
+      <thead><tr><th>İndeks değeri</th><th>Yorum</th><th>Yaklaşık hata oranı</th></tr></thead>
+      <tbody>
+        <tr><td>≥ 1.67</td><td style="color:#22c55e">Mükemmel</td><td>≈ 0.6 PPM</td></tr>
+        <tr><td>1.33 – 1.67</td><td style="color:#22c55e">Yeterli (genel hedef ≥ 1.33)</td><td>≈ 63 PPM</td></tr>
+        <tr><td>1.00 – 1.33</td><td style="color:#f59e0b">Sınırda — iyileştirme gerek</td><td>≈ 2.700 PPM</td></tr>
+        <tr><td>&lt; 1.00</td><td style="color:#f87171">Yetersiz — süreç tolerans dışı üretir</td><td>&gt; 2.700 PPM</td></tr>
+      </tbody>
+    </table>
+    <p style="color:var(--muted)"><b>PPM</b>: Milyonda kusur tahmini (normal dağılım, genel σ). <b>Histogram</b>: ölçümlerin dağılım şekli; çan eğrisine yakınlık normalliği, spec çizgilerine taşma kusur riskini gösterir.</p>
+  `}));
+  return d;
 }
 
 // ====================== ADMIN (KULLANICILAR) ======================
