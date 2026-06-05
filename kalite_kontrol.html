@@ -1235,7 +1235,7 @@ async function openBulkAuto(){
   m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
   m.append(el('h3',{},'🎲 Otomatik Kontrol Üret'));
   const kapsam = secili ? ('🎯 '+prods.length+' SEÇİLİ üretim') : (aktifFiltre ? ('🔎 Filtreli kapsam — '+prods.length+' üretim'+(URETIM_FILT.stock?' · '+URETIM_FILT.stock:'')+((URETIM_FILT.start||URETIM_FILT.end)?' · '+(URETIM_FILT.start||'…')+'–'+(URETIM_FILT.end||'…'):'')) : (prods.length+' üretim (planı olan tümü)'));
-  m.append(el('p',{class:'meta'},`${kapsam}. Her makine için çevrim süresini (saniye/birim) gir; bitiş = başlangıç + adet × çevrim olarak hesaplanıp üretime yazılır, sonra plandaki örnekleme sıklığına göre Seri Başı + saatlik Proses + Son kayıtları üretilir (hepsi uygun, rastgele). Satır seçersen sadece seçilenlere; filtre uygularsan filtre kapsamına uygulanır.`));
+  m.append(el('p',{class:'meta'},`${kapsam}. Çevrim süresi (saniye/birim) girersen bitiş = başlangıç + adet × çevrim olarak yeniden hesaplanıp üretime yazılır. ÇEVRİM GİRMEZSEN üretimin MEVCUT başlama–bitiş süresi kullanılır. Sonra plandaki örnekleme sıklığına göre Seri Başı + saatlik Proses + Son üretilir (hepsi uygun, rastgele). Satır seçersen sadece seçilenlere; filtre uygularsan filtre kapsamına uygulanır.`));
   Object.values(machines).forEach(mc=>{
     m.append(el('div',{class:'row',style:'margin-bottom:8px'},
       el('div',{class:'field grow'},el('label',{class:'lab'},`${mc.code} — ${esc(mc.name||'')} · ${mc.count} üretim · birim: ${esc(mc.unit||'-')}`),
@@ -1251,7 +1251,10 @@ async function openBulkAuto(){
   bg.append(m); root.append(bg);
 }
 async function runBulkAuto(prods,plan,cyc,regen,status,go){
-  if(!Object.values(cyc).some(v=>v>0)){ toast('En az bir makine için çevrim süresi gir.','err'); return; }
+  // çevrim girilmediyse: mevcut başlama–bitiş sürelerine göre üret (proses dahil)
+  if(!Object.values(cyc).some(v=>v>0)){
+    if(!confirm('Hiç çevrim süresi girmedin.\n\nMevcut başlama–bitiş sürelerine göre eksik kontroller (Seri Başı / Proses / Son) üretilsin mi?\n(Bitişi olmayan üretimlerde sadece Seri Başı + Son üretilir.)')) { return; }
+  }
   go.disabled=true;
   // mevcut kayıtlar: üretim başına hangi aşamalar var
   const {data:exr}=await sb.from('control_records').select('production_id,stage');
@@ -1274,7 +1277,9 @@ async function runBulkAuto(prods,plan,cyc,regen,status,go){
     if(regen){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); }
     const cur=have[p.id]||new Set();
     const items=opItemsFor(plan.filter(x=>x.stock_code===p.stock_code),p.op_no);
-    const freq=Number((items.find(it=>it.sampling_frequency)||{}).sampling_frequency)||60;
+    // proses sıklığı: proses maddelerinin EN KISA pozitif örnekleme sıklığı (aylık vb. uzun değerlere takılmasın); en çok 1 günle sınırla
+    const freqs=stageItems(items,'proses').map(it=>Number(it.sampling_frequency)).filter(v=>v>0&&v<=1440);
+    const freq=freqs.length?Math.min(...freqs):60;
     const recs=[];
     if(!cur.has('seri_basi')){ const r=buildAutoRec(p,'seri_basi',start,items,priorMap); if(r)recs.push(r); }       // seri üretim başında
     if(!cur.has('proses')){ for(let t=freq;t<durMin;t+=freq){ const jit=Math.round((Math.random()*10-5)*60000); // ±5 dk sapma — hep tam saat olmasın
