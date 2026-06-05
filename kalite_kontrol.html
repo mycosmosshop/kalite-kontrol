@@ -1698,6 +1698,7 @@ function exportRecords(recs){
 // ====================== İSTATİSTİK (SPC) ======================
 let STAT_FILT={stock:'',measure:'',start:'',end:'',stage:'',machine:''};
 let _statDraw=null;  // son çizim (yeniden boyutlandırma için)
+let _statFilterDeb=null; // tarih yazarken her tuşta render olmasın diye debounce
 let _statPrint=null; // SPC raporu PDF/yazdır (veri geldiğinde atanır)
 window.addEventListener('resize',()=>{ if(_statDraw && !$('#tab-istatistik').classList.contains('hidden')) _statDraw(); });
 // normal dağılım CDF (Abramowitz–Stegun yaklaşımı)
@@ -1768,8 +1769,8 @@ async function renderIstatistik(){
     mkSel('Ölçülecek Değer',STAT_FILT.measure,measures.length?measures.map(m=>[m,measLabel(m)]):[['','— sayısal ölçüm yok —']],v=>{STAT_FILT.measure=v;reload();},true),
     mkSel('Aşama',STAT_FILT.stage,[['','Tümü'],['seri_basi','Seri Başı'],['proses','Proses'],['son','Son Kontrol'],['giris','Giriş Kalite']],v=>{STAT_FILT.stage=v;reload();}),
     mkSel('Makine',STAT_FILT.machine,[['','Tümü'],...machines.map(m=>[m,m])],v=>{STAT_FILT.machine=v;reload();}),
-    el('div',{class:'field',style:'flex:0;min-width:140px'},el('label',{class:'lab'},'Başlangıç'),el('input',{type:'date',class:'inp',value:STAT_FILT.start,onchange:e=>{STAT_FILT.start=e.target.value;reload();}})),
-    el('div',{class:'field',style:'flex:0;min-width:140px'},el('label',{class:'lab'},'Bitiş'),el('input',{type:'date',class:'inp',value:STAT_FILT.end,onchange:e=>{STAT_FILT.end=e.target.value;reload();}})),
+    el('div',{class:'field',style:'flex:0;min-width:140px'},el('label',{class:'lab'},'Başlangıç'),el('input',{type:'date',class:'inp',value:STAT_FILT.start,onchange:e=>{STAT_FILT.start=e.target.value;clearTimeout(_statFilterDeb);_statFilterDeb=setTimeout(reload,800);}})),
+    el('div',{class:'field',style:'flex:0;min-width:140px'},el('label',{class:'lab'},'Bitiş'),el('input',{type:'date',class:'inp',value:STAT_FILT.end,onchange:e=>{STAT_FILT.end=e.target.value;clearTimeout(_statFilterDeb);_statFilterDeb=setTimeout(reload,800);}})),
     (STAT_FILT.stage||STAT_FILT.machine||STAT_FILT.start||STAT_FILT.end)?el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{STAT_FILT.stage='';STAT_FILT.machine='';STAT_FILT.start='';STAT_FILT.end='';reload();}},'Filtreyi Temizle'):''
   ));
   root.append(fcard);
@@ -1937,6 +1938,13 @@ async function renderIstatistik(){
     const wcap=mt('Potansiyel (Within) Yeterlilik',[['Cp',capTxt(W.cp)],['CPL',capTxt(W.cpl)],['CPU',capTxt(W.cpu)],['Cpk',capTxt(W.cpk)]]);
     const ocap=mt('Genel (Overall) Yeterlilik',[['Pp',capTxt(O.cp)],['PPL',capTxt(O.cpl)],['PPU',capTxt(O.cpu)],['Ppk',capTxt(O.cpk)],['Cpm',capTxt(Cpm)]]);
     const pcap=mt('Performans (PPM)',[['Gözlenen',TL(ppmObs)],['Beklenen (Within)',ppmW!=null?TL(ppmW):'—'],['Beklenen (Overall)',ppmO!=null?TL(ppmO):'—']]);
+    // kontrol grafiğine ait limit/merkez verileri
+    const cchart=mt('Kontrol Grafiği — '+chartTitle,[
+      [chartType==='IMR'?'Merkez (X̄)':'Merkez (X̿)', F(c1CL,3)+u],
+      ['UCL (üst kontrol)', F(c1U,3)], ['LCL (alt kontrol)', F(c1L,3)],
+      ['σ içsel', F(sWithin,4)], ['Kontrol dışı nokta', String(oocN)]]);
+    const dchart=mt((chartType==='IMR'?'Hareketli Aralık (MR)':(chartType==='XBARR'?'Aralık (R)':'Std. Sapma (S)'))+' Grafiği',[
+      [dLab+' (merkez)', F(d2CL,4)], ['UCL', F(d2U,4)], ['LCL', F(d2L,4)]]);
     const win=window.open('','_blank','width=1100,height=900');
     win.document.write(`<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><title>SPC Raporu — ${esc(STAT_FILT.stock)}</title>
 <style>
@@ -1955,7 +1963,7 @@ async function renderIstatistik(){
  .ft{margin-top:8px;font-size:9px;color:#666;text-align:right}
 </style></head><body>
  <div class="head">${logoSrc?`<img src="${logoSrc}">`:'<b>SANİFOAM</b>'}<div class="t"><b>İSTATİSTİKSEL PROSES KONTROL RAPORU</b><div>${filtTxt}</div></div></div>
- <div class="chart"><h4>Kontrol Grafiği (${chartTitle})</h4><img src="${img1}"></div>
+ <div class="chart"><h4>Kontrol Grafiği (${chartTitle})</h4><img src="${img1}"><div class="caps" style="margin-top:6px">${cchart}${dchart}</div></div>
  <div class="chart"><h4>${chartType==='IMR'?'Hareketli Aralık (MR)':(chartType==='XBARR'?'Altgrup Aralığı (R)':'Altgrup Std. Sapma (S)')}</h4><img src="${img2}"></div>
  <div class="chart"><h4>Süreç Yeterlilik — Histogram (Within &amp; Overall)</h4><img src="${img3}"></div>
  <div class="caps">${proc}${wcap}${ocap}${pcap}</div>
