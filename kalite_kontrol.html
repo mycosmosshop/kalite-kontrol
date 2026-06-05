@@ -338,6 +338,16 @@ async function deleteSelectedProds(){
   if(e2){ toast('Üretim silinemedi: '+esc(e2.message),'err'); return; }
   toast(`${ids.length} üretim ve kontrolleri silindi.`,'ok'); renderUretimler();
 }
+async function deleteSelectedRecs(){
+  const ids=[...document.querySelectorAll('#prodBody .prodChk:checked')].map(c=>Number(c.dataset.id));
+  if(!ids.length){ toast('Önce üretimleri seç (sol kutucuk).','err'); return; }
+  const {count}=await sb.from('control_records').select('id',{count:'exact',head:true}).in('production_id',ids);
+  if(!count){ toast('Seçili üretimlerde silinecek kontrol kaydı yok.','err'); return; }
+  if(!confirm(`Seçili ${ids.length} üretime ait ${count} kontrol kaydı (otomatik/üretilmiş tümü) silinecek. Üretimler KALACAK. Emin misin?`)) return;
+  const {error}=await sb.from('control_records').delete().in('production_id',ids);
+  if(error){ toast('Kontrol kayıtları silinemedi: '+esc(error.message),'err'); return; }
+  toast(`${count} kontrol kaydı silindi (üretimler korundu).`,'ok'); renderUretimler();
+}
 async function openManualProd(){
   const root=$('#modalRoot');
   const stocks=[...new Set(PRODS.map(p=>p.stock_code).filter(Boolean))];
@@ -421,7 +431,8 @@ async function renderUretimler(){
         el('div',{class:'auto-menu',onclick:e=>e.stopPropagation()},
           can('auto')?el('button',{class:'btn sm',onclick:()=>{closeAutozones();openBulkAuto();}},'🎲 Otomatik Kontrol Üret'):'',
           can('import')?el('button',{class:'btn sm',onclick:()=>{closeAutozones();openManualProd();}},'➕ Manuel Üretim Ekle'):'',
-          PROFILE.is_admin?el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteSelectedProds();}},'🗑 Seçilenleri Sil'):''
+          (can('delete')||PROFILE.is_admin)?el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteSelectedRecs();}},'🧹 Seçilenlerin Kontrollerini Sil'):'',
+          PROFILE.is_admin?el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteSelectedProds();}},'🗑 Seçilenleri Sil (üretim+kontrol)'):''
         )
       ):'',
       el('input',{class:'inp',id:'prodSearch',placeholder:'🔍 ara…',style:'max-width:220px',oninput:filterProdRows})
@@ -1017,19 +1028,31 @@ function genMeasure(it){
   return (val).toFixed(d);
 }
 const AUTO_MEASURER='Burak Silahlı';   // otomatik üretimlerde ölçümcü (kalite operatörü)
-function genSamples(it,n){ const out=[]; for(let i=0;i<n;i++)out.push(it.is_qualitative?{value:null,ok:true,by:AUTO_MEASURER}:{value:genMeasure(it),ok:true,by:AUTO_MEASURER}); return out; }
+// saate göre vardiya (3 vardiya: 1=08–16, 2=16–24, 3=00–08)
+function shiftForTime(d){ const dt=(d instanceof Date)?d:new Date(d); if(isNaN(dt))return null; const h=dt.getHours(); return (h>=8&&h<16)?1:(h>=16?2:3); }
+function genSamples(it,n,override){
+  const out=[];
+  for(let i=0;i<n;i++){
+    if(it.is_qualitative){ out.push({value:null,ok:true,by:AUTO_MEASURER}); continue; }
+    const ov=(override&&override.length)?override[i%override.length]:null;   // ilk yapılan değeri taşı (ör. yanma)
+    out.push({value:ov?ov.value:genMeasure(it),ok:true,by:AUTO_MEASURER});
+  }
+  return out;
+}
 // op + aşama filtreleri (toplu üretim için modül seviyesinde)
 function opItemsFor(items,op_no){ if(op_no==null)return items; const m=items.filter(it=>String(it.op_no)===String(op_no)); return m.length?m:items; }
 function stageItems(items,s){ return items.filter(it=> s==='giris'?(it.giris_kalite===true): s==='son'?(it.final_control!==false):(it.process_control!==false)); }
 function sampleCount(it,s){ const v=(s==='son'&&it.son_kontrol_ornekleme)?it.son_kontrol_ornekleme:it.sample_size; const n=Number(v); return n>0?n:1; }
-function buildAutoRec(p,stage,when,items){
+function buildAutoRec(p,stage,when,items,priorMap){
   const its=stageItems(items,stage); if(!its.length)return null;
   const vals=its.map(it=>{ const n=sampleCount(it,stage);
+    // yanma gibi periyodik ölçümlerde ilk yapılan kaydın değerini taşı
+    const ov=(priorMap&&/yanma/.test(deTr(it.measure_name||'')))?priorMap[p.stock_code+'|'+it.measure_name]:null;
     return {plan_item_id:it.id,measure_name:it.measure_name,target:it.target,unit:it.unit,nitel_hedef:it.nitel_hedef,
       lower_limit:it.lower_limit,upper_limit:it.upper_limit,method:it.method,sampling_frequency:it.sampling_frequency,
-      is_qualitative:it.is_qualitative,sample_size:n,samples:genSamples(it,n)}; });
+      is_qualitative:it.is_qualitative,sample_size:n,samples:genSamples(it,n,ov)}; });
   return {production_id:p.id,stock_code:p.stock_code,stock_name:p.stock_name,machine_code:p.machine_code,work_order:p.work_order,
-    stage,operator:AUTO_MEASURER,shift:p.shift,checked_at:when.toISOString(),vals,overall_result:'OK'};
+    stage,operator:AUTO_MEASURER,shift:shiftForTime(when)??p.shift,checked_at:when.toISOString(),vals,overall_result:'OK'};
 }
 async function openBulkAuto(){
   const root=$('#modalRoot');
@@ -1070,6 +1093,11 @@ async function runBulkAuto(prods,plan,cyc,regen,status,go){
   // mevcut kayıtlar: üretim başına hangi aşamalar var
   const {data:exr}=await sb.from('control_records').select('production_id,stage');
   const have={}; (exr||[]).forEach(r=>{(have[r.production_id]=have[r.production_id]||new Set()).add(r.stage);});
+  // yanma vb. ilk yapılan değerleri (stok|ölçüm → ilk örnekler) — regen silmeden ÖNCE topla
+  const stocks=[...new Set(prods.map(p=>p.stock_code).filter(Boolean))];
+  const priorMap={};
+  if(stocks.length){ const {data:hist}=await sb.from('control_records').select('stock_code,checked_at,vals').in('stock_code',stocks).order('checked_at',{ascending:true});
+    (hist||[]).forEach(rc=>{ (rc.vals||[]).forEach(v=>{ if(/yanma/.test(deTr(v.measure_name||''))){ const k=rc.stock_code+'|'+v.measure_name; if(!priorMap[k]&&Array.isArray(v.samples)&&v.samples.length) priorMap[k]=v.samples; } }); }); }
   let made=0,prodN=0,skipped=0;
   for(const p of prods){
     if(!p.start_time||!p.quantity||p.quantity<=0){skipped++;continue;}
@@ -1084,10 +1112,10 @@ async function runBulkAuto(prods,plan,cyc,regen,status,go){
     const items=opItemsFor(plan.filter(x=>x.stock_code===p.stock_code),p.op_no);
     const freq=Number((items.find(it=>it.sampling_frequency)||{}).sampling_frequency)||60;
     const recs=[];
-    if(!cur.has('seri_basi')){ const r=buildAutoRec(p,'seri_basi',start,items); if(r)recs.push(r); }       // seri üretim başında
-    if(!cur.has('proses')){ for(let t=freq;t<durMin;t+=freq){ const r=buildAutoRec(p,'proses',new Date(start.getTime()+t*60000),items); if(r)recs.push(r); } } // plana göre saatlik
-    if(!cur.has('son')){ const r=buildAutoRec(p,'son',end,items); if(r)recs.push(r); }                      // son: bitişte
-    if(!cur.has('giris')){ const r=buildAutoRec(p,'giris',start,items); if(r)recs.push(r); }
+    if(!cur.has('seri_basi')){ const r=buildAutoRec(p,'seri_basi',start,items,priorMap); if(r)recs.push(r); }       // seri üretim başında
+    if(!cur.has('proses')){ for(let t=freq;t<durMin;t+=freq){ const r=buildAutoRec(p,'proses',new Date(start.getTime()+t*60000),items,priorMap); if(r)recs.push(r); } } // plana göre saatlik
+    if(!cur.has('son')){ const r=buildAutoRec(p,'son',end,items,priorMap); if(r)recs.push(r); }                      // son: bitişte
+    if(!cur.has('giris')){ const r=buildAutoRec(p,'giris',start,items,priorMap); if(r)recs.push(r); }
     if(recs.length){ const {error}=await sb.from('control_records').insert(recs); if(error){console.warn(error.message);} else {made+=recs.length;prodN++;} }
     else skipped++;
     status.textContent=`İşleniyor… ${prodN} üretim, ${made} kayıt`;
@@ -1155,9 +1183,9 @@ async function renderKayitlar(){
   recs.forEach(r=>{
     const pr=pmap[r.production_id]||{};
     body.append(el('tr',{style:'cursor:pointer','data-s':`${r.stock_code} ${r.stock_name} ${r.machine_code} ${pr.customer||''} ${r.work_order||''}`.toLowerCase(),onclick:()=>editRecord(r,pr)},
-      el('td',{},fmtDate(pr.prod_date||pr.start_time||r.checked_at)),
+      el('td',{},fmtDate(r.checked_at||pr.prod_date||pr.start_time)),
       el('td',{style:'font-weight:600'},fmtTime(r.checked_at)),
-      el('td',{},String(r.shift??pr.shift??'')),
+      el('td',{},String((r.checked_at?shiftForTime(r.checked_at):null)??r.shift??pr.shift??'')),
       el('td',{},pr.customer||''),
       el('td',{},r.stock_code||''),
       el('td',{style:'font-size:11px;white-space:nowrap',title:r.stock_name||''},(r.stock_name||'').slice(0,40)),
