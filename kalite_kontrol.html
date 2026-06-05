@@ -667,9 +667,10 @@ function planSorted(items){ return [...items].sort((a,b)=> (Number(a.seq)||0)-(N
 function olcuNoMap(items){ const m={}; planSorted(items).forEach((it,i)=>m[it.id]=i+1); return m; }
 // verilen id sırasına göre seq=1..N yaz (manuel taşıma / Ölçü No düzenleme)
 async function reorderPlan(sc, orderedIds, msg){
+  const sy=window.scrollY;   // odak/scroll konumunu koru (yeniden çizimde başa kaymasın)
   const res=await Promise.all(orderedIds.map((id,i)=> sb.from('control_plan_items').update({seq:i+1}).eq('id',id)));
   const err=res.find(r=>r&&r.error); if(err){toast(esc(err.error.message),'err');return;}
-  toast(msg||'Sıralama güncellendi.','ok'); renderPlan();
+  toast(msg||'Sıralama güncellendi.','ok'); await renderPlan(); window.scrollTo(0,sy);
 }
 function planHeaderCard(sc,stockName){
   const canPlan=can('plan');
@@ -821,30 +822,6 @@ async function renderPlan(){
     )
   );
   root.append(impCard);
-
-  // ---- Manuel ekleme kartı ----
-  const addCard=el('div',{class:'card'},
-    el('h3',{},'Kontrol Planı Maddesi Ekle (Manuel)'),
-    el('p',{style:'color:var(--muted);margin:-6px 0 14px;font-size:13px'},'Seri başı = Proses (aynı maddeler); son kontrol de aynı plandan ilerler. Op No verirsen, kontrol girişinde sadece o operasyonun maddeleri gelir.'),
-    el('div',{class:'row'},
-      field('Stok Kodu','pi_stock','örn. 700.0.454',allStocks),
-      el('div',{class:'field',style:'flex:0;min-width:80px'},el('label',{class:'lab'},'Op No'),el('input',{class:'inp',id:'pi_op',placeholder:'3'})),
-      field('Ölçülecek Değer','pi_name','örn. BOŞALTMALAR'),
-      field('Nitel Hedef','pi_hedef','örn. TEMİZLENECEK'),
-      field('Yöntem','pi_method','örn. Gözle')
-    ),
-    el('div',{class:'row',style:'margin-top:10px'},
-      field('Hedef','pi_target',''),
-      field('Birim','pi_unit','mm'),
-      field('Alt Limit','pi_lo',''),
-      field('Üst Limit','pi_hi',''),
-      field('Örnekleme','pi_sample','1'),
-      el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Tip'),
-        sel('pi_qual',[['true','Nitel (OK/RET)'],['false','Ölçüm (sayısal)']])),
-      el('button',{class:'btn sm',style:'flex:0',onclick:addPlanItem},'+ Ekle')
-    )
-  );
-  root.append(addCard);
   } // /canPlan
 
   // mevcut maddeler — stok bazlı grup
@@ -902,7 +879,7 @@ async function renderPlan(){
         el('td',{},pin(it,'final_control',{bool:true})),
         el('td',{},pin(it,'measure_name',{w:'160px'})),
         el('td',{},pin(it,'target',{w:'58px'})),
-        el('td',{},pin(it, it.is_qualitative?'nitel_hedef':'unit', {w:it.is_qualitative?'200px':'56px'})),
+        el('td',{},pin(it, it.is_qualitative?'nitel_hedef':'unit', {w:'170px'})),
         el('td',{},pin(it,'lower_limit',{w:'60px'})),
         el('td',{},pin(it,'upper_limit',{w:'60px'})),
         el('td',{},pin(it,'sample_size',{num:true,w:'52px'})),
@@ -1026,11 +1003,23 @@ async function applyItemToHistory(item, mode, dateFrom){
     if(!stageItems([item], r.stage).length) continue;                                  // bu aşamaya uymuyor
     if(item.op_no!=null && opMap[r.production_id]!=null && String(opMap[r.production_id])!==String(item.op_no)) continue;  // op uyumsuz
     const vals=r.vals||[];
-    if(vals.some(v=>v.plan_item_id===item.id)) continue;                                // zaten var
-    const n=sampleCount(item, r.stage);
-    vals.push({plan_item_id:item.id,measure_name:item.measure_name,target:item.target,unit:item.unit,nitel_hedef:item.nitel_hedef,
-      lower_limit:item.lower_limit,upper_limit:item.upper_limit,method:item.method,sampling_frequency:item.sampling_frequency,
-      is_qualitative:item.is_qualitative,sample_size:n,samples:genSamples(item,n)});
+    const existing=vals.find(v=>v.plan_item_id===item.id);
+    if(existing){
+      // zaten ekli → yalnız MADDE DEĞİŞTİYSE güncelle (ad/limit/birim vb.); değer korunur, ok yeni limite göre yeniden hesaplanır
+      const changed = existing.measure_name!==item.measure_name || String(existing.lower_limit??'')!==String(item.lower_limit??'') ||
+        String(existing.upper_limit??'')!==String(item.upper_limit??'') || String(existing.target??'')!==String(item.target??'') ||
+        (existing.unit??'')!==(item.unit??'') || (existing.nitel_hedef??'')!==(item.nitel_hedef??'') || (existing.method??'')!==(item.method??'') || !!existing.is_qualitative!==!!item.is_qualitative;
+      if(!changed) continue;
+      Object.assign(existing,{measure_name:item.measure_name,target:item.target,unit:item.unit,nitel_hedef:item.nitel_hedef,
+        lower_limit:item.lower_limit,upper_limit:item.upper_limit,method:item.method,sampling_frequency:item.sampling_frequency,is_qualitative:item.is_qualitative});
+      if(!item.is_qualitative){ const lo=Number(item.lower_limit),hi=Number(item.upper_limit);
+        (existing.samples||[]).forEach(s=>{ const x=Number(s.value); if(s.value!=null&&isFinite(x)){ let ok=true; if(isFinite(lo)&&x<lo)ok=false; if(isFinite(hi)&&x>hi)ok=false; s.ok=ok; } }); }
+    } else {
+      const n=sampleCount(item, r.stage);
+      vals.push({plan_item_id:item.id,measure_name:item.measure_name,target:item.target,unit:item.unit,nitel_hedef:item.nitel_hedef,
+        lower_limit:item.lower_limit,upper_limit:item.upper_limit,method:item.method,sampling_frequency:item.sampling_frequency,
+        is_qualitative:item.is_qualitative,sample_size:n,samples:genSamples(item,n)});
+    }
     const overall = vals.flatMap(v=>v.samples||[]).some(s=>s.ok===false)?'RET':'OK';
     const {error:e2}=await sb.from('control_records').update({vals,overall_result:overall}).eq('id',r.id);
     if(!e2)updated++;
