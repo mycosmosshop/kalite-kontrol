@@ -107,6 +107,29 @@
   .chart-card canvas{width:100%;display:block;background:transparent}
   .chart-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:8px;font-size:12px;color:var(--muted)}
   .chart-legend i{display:inline-block;width:16px;height:0;border-top-width:3px;border-top-style:solid;vertical-align:middle;margin-right:5px}
+  /* grafik panosu (chart altı stat şeridi) */
+  .statstrip{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  .statstrip .si{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 12px;min-width:90px}
+  .statstrip .si.clk{cursor:pointer}
+  .statstrip .si .si-top b{display:block;font-size:16px;font-weight:800;color:var(--txt);font-variant-numeric:tabular-nums}
+  .statstrip .si .si-top span{font-size:11px;color:var(--muted)}
+  .statstrip .si.clk .si-top:hover b{color:var(--accent)}
+  .statstrip .si.good .si-top b{color:#22c55e}.statstrip .si.mid .si-top b{color:#f59e0b}.statstrip .si.bad .si-top b{color:#f87171}
+  .si-calc{margin-top:7px;font-size:11px;color:var(--txt);font-family:Consolas,'Courier New',monospace;line-height:1.45;max-width:300px;white-space:normal;border-top:1px dashed var(--line);padding-top:6px}
+  /* Minitab yeterlilik paneli */
+  .mtab{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-top:14px}
+  .mtab-sec{border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .mtab-title{background:var(--panel2);padding:8px 12px;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);border-bottom:1px solid var(--line)}
+  .mrow{border-bottom:1px solid var(--line)}
+  .mrow:last-child{border-bottom:none}
+  .mrow-top{display:flex;align-items:center;gap:8px;padding:7px 12px}
+  .mrow-top>span:first-child{flex:1;color:var(--muted);font-size:13px}
+  .mrow-top b{font-size:15px;font-weight:800;font-variant-numeric:tabular-nums}
+  .mrow.clk .mrow-top{cursor:pointer}
+  .mrow.clk .mrow-top:hover{background:var(--panel2)}
+  .mrow-caret{color:var(--muted);font-size:10px}
+  .mrow-calc{padding:9px 12px;background:var(--panel2);font-size:12px;line-height:1.5;color:var(--txt);border-top:1px dashed var(--line);font-family:Consolas,'Courier New',monospace;word-break:break-word}
+  .mrow.good b{color:#22c55e}.mrow.mid b{color:#f59e0b}.mrow.bad b{color:#f87171}
   details.defs{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
   details.defs summary{cursor:pointer;font-weight:700;color:var(--txt)}
   details.defs table{margin-top:10px}
@@ -1246,7 +1269,8 @@ async function runBulkAuto(prods,plan,cyc,regen,status,go){
     if(cs>0){ const durSec=p.quantity*cs; end=new Date(start.getTime()+durSec*1000); durMin=durSec/60;
       await sb.from('productions').update({end_time:end.toISOString(),duration_min:Math.round(durMin)}).eq('id',p.id);
       p.end_time=end.toISOString(); p.duration_min=Math.round(durMin);
-    } else { end=p.end_time?new Date(p.end_time):start; durMin=0; }  // çevrim yok → başlama/bitiş'e bakma, sadece seri başı + son
+    } else if(p.end_time){ end=new Date(p.end_time); durMin=Math.round((end.getTime()-start.getTime())/60000); if(durMin<0)durMin+=1440; // çevrim yok → mevcut başlama/bitişten süreyi hesapla (proses de üretilsin)
+    } else { end=start; durMin=0; }  // ne çevrim ne bitiş → sadece seri başı + son
     if(regen){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); }
     const cur=have[p.id]||new Set();
     const items=opItemsFor(plan.filter(x=>x.stock_code===p.stock_code),p.op_no);
@@ -1506,7 +1530,24 @@ function _normCdf(z){ const t=1/(1+0.2316419*Math.abs(z)), d=0.3989423*Math.exp(
 function _capClass(v){ if(v==null)return ''; if(!isFinite(v))return 'cap-exc'; if(v>=1.67)return 'cap-exc'; if(v>=1.33)return 'cap-good'; if(v>=1.0)return 'cap-mid'; return 'cap-bad'; }
 function _capWord(v){ if(v==null)return '—'; if(!isFinite(v))return 'mükemmel'; if(v>=1.67)return 'mükemmel'; if(v>=1.33)return 'yeterli'; if(v>=1.0)return 'sınırda'; return 'yetersiz'; }
 function _fmtN(v,d=3){ return (v==null||!isFinite(v))?'—':Number(v).toFixed(d); }
+function _capKind(v){ if(v==null||!isFinite(v))return ''; if(v>=1.33)return 'good'; if(v>=1.0)return 'mid'; return 'bad'; }
 function leg(color,style,label){ return el('span',{},el('i',{style:`border-top-color:${color};border-top-style:${style}`}),label); }
+// grafik panosu öğesi (tıklayınca hesabı açılır)
+function si(lab,val,calc,cls){
+  const box=el('div',{class:'si'+(cls?' '+cls:'')+(calc?' clk':'')});
+  const top=el('div',{class:'si-top'}, el('b',{},val), el('span',{},lab));
+  box.append(top);
+  if(calc){ const c=el('div',{class:'si-calc hidden'},calc); top.title='Hesabı göster/gizle'; top.onclick=()=>c.classList.toggle('hidden'); box.append(c); }
+  return box;
+}
+// Minitab paneli satırı (tıklayınca formül + sayılar açılır)
+function mrow(lab,val,calc,cls){
+  const r=el('div',{class:'mrow'+(calc?' clk':'')+(cls?' '+cls:'')});
+  const top=el('div',{class:'mrow-top'}, el('span',{},lab), el('b',{},val), calc?el('span',{class:'mrow-caret'},'▾'):'');
+  r.append(top);
+  if(calc){ const c=el('div',{class:'mrow-calc hidden'},calc); top.onclick=()=>c.classList.toggle('hidden'); r.append(c); }
+  return r;
+}
 
 async function renderIstatistik(){
   const root=$('#tab-istatistik');
@@ -1528,6 +1569,9 @@ async function renderIstatistik(){
   plan.filter(p=>p.stock_code===STAT_FILT.stock && p.is_qualitative!==true).forEach(p=>measMap.set(p.measure_name,{lower:p.lower_limit,upper:p.upper_limit,target:p.target,unit:p.unit}));
   recs.filter(r=>r.stock_code===STAT_FILT.stock).forEach(r=>(r.vals||[]).forEach(v=>{ if(v.is_qualitative===true)return; if(!measMap.has(v.measure_name))measMap.set(v.measure_name,{lower:v.lower_limit,upper:v.upper_limit,target:v.target,unit:v.unit}); }));
   const measures=[...measMap.keys()].filter(Boolean).sort();
+  const measLabel=m=>{ const L=measMap.get(m)||{}; const ex=[]; if(L.target!=null&&L.target!=='')ex.push(String(L.target)); if(L.unit)ex.push(L.unit);
+    const lim=[]; if(L.lower!=null&&L.lower!=='')lim.push(String(L.lower)); if(L.upper!=null&&L.upper!=='')lim.push(String(L.upper));
+    let s=m; if(ex.length)s+=' — '+ex.join(' '); if(lim.length===2)s+=' ['+lim[0]+'…'+lim[1]+']'; return s; };
   if(!STAT_FILT.measure || !measures.includes(STAT_FILT.measure)) STAT_FILT.measure=measures[0]||'';
   const machSet=new Set(); recs.filter(r=>r.stock_code===STAT_FILT.stock).forEach(r=>r.machine_code&&machSet.add(r.machine_code));
   const machines=[...machSet].sort();
@@ -1542,7 +1586,7 @@ async function renderIstatistik(){
   fcard.append(el('p',{style:'color:var(--muted);font-size:13px;margin:0 0 14px'},'Ölçüm sonuçlarını kontrol grafiği, histogram ve yeterlilik indeksleriyle (Cp, Cpk, Pp, Ppk) takip et. Limitler kontrol planından (alt/üst limit, hedef) alınır.'));
   fcard.append(el('div',{class:'row',style:'align-items:flex-end;gap:10px'},
     mkSel('Stok Kodu',STAT_FILT.stock,stocks.map(s=>[s,s]),v=>{STAT_FILT.stock=v;STAT_FILT.measure='';STAT_FILT.machine='';reload();}),
-    mkSel('Ölçülecek Değer',STAT_FILT.measure,measures.length?measures.map(m=>[m,m]):[['','— sayısal ölçüm yok —']],v=>{STAT_FILT.measure=v;reload();},true),
+    mkSel('Ölçülecek Değer',STAT_FILT.measure,measures.length?measures.map(m=>[m,measLabel(m)]):[['','— sayısal ölçüm yok —']],v=>{STAT_FILT.measure=v;reload();},true),
     mkSel('Aşama',STAT_FILT.stage,[['','Tümü'],['seri_basi','Seri Başı'],['proses','Proses'],['son','Son Kontrol'],['giris','Giriş Kalite']],v=>{STAT_FILT.stage=v;reload();}),
     mkSel('Makine',STAT_FILT.machine,[['','Tümü'],...machines.map(m=>[m,m])],v=>{STAT_FILT.machine=v;reload();}),
     el('div',{class:'field',style:'flex:0;min-width:140px'},el('label',{class:'lab'},'Başlangıç'),el('input',{type:'date',class:'inp',value:STAT_FILT.start,onchange:e=>{STAT_FILT.start=e.target.value;reload();}})),
@@ -1569,69 +1613,102 @@ async function renderIstatistik(){
   const xs=pts.map(p=>p.v);
   if(xs.length<2){ root.append(el('div',{class:'card'},el('div',{class:'empty'},`Seçili filtrede yeterli ölçüm yok (${xs.length} adet). En az 2 ölçüm gerekli.`))); return; }
 
-  // ---- İSTATİSTİK ----
+  // ---- İSTATİSTİK (Minitab tarzı) ----
   const n=xs.length, mean=xs.reduce((a,b)=>a+b,0)/n;
   const sOverall=Math.sqrt(xs.reduce((a,b)=>a+(b-mean)*(b-mean),0)/(n-1));
   const mrs=[]; for(let i=1;i<n;i++)mrs.push(Math.abs(xs[i]-xs[i-1]));
   const mrBar=mrs.length?mrs.reduce((a,b)=>a+b,0)/mrs.length:0;
   const sWithin=mrBar/1.128;
-  const minV=Math.min(...xs),maxV=Math.max(...xs);
-  const capPair=sig=>{ if(!(sig>0))return [Infinity,Infinity]; let cp=null,cpk=null;
-    if(LSL!=null&&USL!=null){ cp=(USL-LSL)/(6*sig); cpk=Math.min((USL-mean),(mean-LSL))/(3*sig); }
-    else if(USL!=null) cpk=(USL-mean)/(3*sig); else if(LSL!=null) cpk=(mean-LSL)/(3*sig);
-    return [cp,cpk]; };
-  const [Cp,Cpk]=capPair(sWithin), [Pp,Ppk]=capPair(sOverall);
+  const idx=sig=>{ const cpu=(USL!=null&&sig>0)?(USL-mean)/(3*sig):null, cpl=(LSL!=null&&sig>0)?(mean-LSL)/(3*sig):null,
+      cp=(USL!=null&&LSL!=null&&sig>0)?(USL-LSL)/(6*sig):null;
+    let cpk=null; if(cpu!=null&&cpl!=null)cpk=Math.min(cpu,cpl); else if(cpu!=null)cpk=cpu; else if(cpl!=null)cpk=cpl;
+    return {cp,cpu,cpl,cpk}; };
+  const W=idx(sWithin), O=idx(sOverall);
+  const Cpm=(TGT!=null&&USL!=null&&LSL!=null)?(USL-LSL)/(6*Math.sqrt(sOverall*sOverall+(mean-TGT)*(mean-TGT))):null;
   const CL=mean, sig3=(sWithin>0?sWithin:sOverall)*3, UCL=mean+sig3, LCL=mean-sig3;
   const ooc=xs.map(x=>x>UCL||x<LCL), oocN=ooc.filter(Boolean).length;
   let oos=0; xs.forEach(x=>{ if((USL!=null&&x>USL)||(LSL!=null&&x<LSL))oos++; });
-  let ppm=null; if(sOverall>0){ let p=0; if(USL!=null)p+=1-_normCdf((USL-mean)/sOverall); if(LSL!=null)p+=_normCdf((LSL-mean)/sOverall); ppm=Math.round(p*1e6); }
+  const ppmFor=sig=>{ if(!(sig>0))return null; let p=0; if(USL!=null)p+=1-_normCdf((USL-mean)/sig); if(LSL!=null)p+=_normCdf((LSL-mean)/sig); return p*1e6; };
+  const ppmObs=oos/n*1e6, ppmW=ppmFor(sWithin), ppmO=ppmFor(sOverall);
+  // formül metinleri (tıklayınca görünür)
+  const F=(v,d=3)=>_fmtN(v,d), u=unit?(' '+unit):'', capTxt=v=>(v==null||!isFinite(v))?'—':_fmtN(v,3);
+  const TL=v=>Math.round(v).toLocaleString('tr-TR');
+  const fX=`X̄ = Σxᵢ ÷ n = ${F(xs.reduce((a,b)=>a+b,0),2)} ÷ ${n} = ${F(mean,3)}${u}`;
+  const fSo=`σ(genel) = √[ Σ(xᵢ − X̄)² ÷ (n−1) ] = ${F(sOverall,4)}`;
+  const fSw=`σ(içsel) = MR̄ ÷ d₂ = ${F(mrBar,4)} ÷ 1.128 = ${F(sWithin,4)}`;
+  const capF=(pfx,r,sig,sn)=>({
+    cp : r.cp ==null?'':`${pfx==='C'?'Cp':'Pp'} = (ÜL − AL) ÷ (6·${sn}) = (${F(USL)} − ${F(LSL)}) ÷ (6 × ${F(sig,4)}) = ${F(r.cp)}`,
+    cpu: r.cpu==null?'':`${pfx}PU = (ÜL − X̄) ÷ (3·${sn}) = (${F(USL)} − ${F(mean)}) ÷ (3 × ${F(sig,4)}) = ${F(r.cpu)}`,
+    cpl: r.cpl==null?'':`${pfx}PL = (X̄ − AL) ÷ (3·${sn}) = (${F(mean)} − ${F(LSL)}) ÷ (3 × ${F(sig,4)}) = ${F(r.cpl)}`,
+    cpk: r.cpk==null?'':`${pfx==='C'?'Cpk':'Ppk'} = min(${pfx}PU, ${pfx}PL) = min(${F(r.cpu)}, ${F(r.cpl)}) = ${F(r.cpk)}`});
+  const WF=capF('C',W,sWithin,'σ_içsel'), OF=capF('P',O,sOverall,'σ_genel');
+  const fCpm=Cpm==null?'':`Cpm = (ÜL − AL) ÷ (6·√(σ² + (X̄−Hedef)²)) = (${F(USL)} − ${F(LSL)}) ÷ (6 × √(${F(sOverall,4)}² + (${F(mean)} − ${F(TGT)})²)) = ${F(Cpm)}`;
+  const fObs=`Gözlenen = (spec dışı ÷ n) × 10⁶ = (${oos} ÷ ${n}) × 10⁶ = ${TL(ppmObs)}`;
+  const fPpmW=ppmW==null?'':`Beklenen(Within) = [Φ(−(ÜL−X̄)/σ_içsel) + Φ((AL−X̄)/σ_içsel)] × 10⁶ ≈ ${TL(ppmW)}`;
+  const fPpmO=ppmO==null?'':`Beklenen(Overall) = [Φ(−(ÜL−X̄)/σ_genel) + Φ((AL−X̄)/σ_genel)] × 10⁶ ≈ ${TL(ppmO)}`;
 
-  // ---- ÖZET KARTLAR ----
-  const sg=el('div',{class:'stat-grid'});
-  const sc=(lab,val,sub,cls)=>el('div',{class:'scard'+(cls?' '+cls:'')},el('div',{class:'lab'},lab),el('div',{class:'val'},val),sub?el('div',{class:'sub'},sub):'');
-  const capTxt=v=> v==null?'—':(v===Infinity?'∞':_fmtN(v,2));
-  sg.append(sc('Cp',capTxt(Cp),'potansiyel yeterlilik',_capClass(Cp)));
-  sg.append(sc('Cpk',capTxt(Cpk),_capWord(Cpk),_capClass(Cpk)));
-  sg.append(sc('Pp',capTxt(Pp),'genel performans',_capClass(Pp)));
-  sg.append(sc('Ppk',capTxt(Ppk),_capWord(Ppk),_capClass(Ppk)));
-  sg.append(sc('Ortalama (X̄)',_fmtN(mean,3)+(unit?' '+unit:''),TGT!=null?('hedef '+_fmtN(TGT,3)):''));
-  sg.append(sc('σ (genel)',_fmtN(sOverall,4),'standart sapma'));
-  sg.append(sc('σ (içsel)',_fmtN(sWithin,4),'MR̄ / 1.128'));
-  sg.append(sc('Aralık',_fmtN(minV,3)+' – '+_fmtN(maxV,3),'min – maks'));
-  sg.append(sc('Ölçüm',String(n),'veri noktası'));
-  sg.append(sc('Spec dışı',oos+' ('+(100*oos/n).toFixed(1)+'%)',ppm!=null?('~'+ppm.toLocaleString('tr-TR')+' PPM tahmini'):'',oos>0?'cap-bad':'cap-good'));
-  if(LSL!=null||USL!=null) sg.append(sc('Limitler',(LSL!=null?_fmtN(LSL,2):'—')+' / '+(USL!=null?_fmtN(USL,2):'—'),'alt / üst limit'));
-  sg.append(sc('Kontrol dışı',String(oocN),oocN>0?'≥3σ nokta var':'tümü kontrol içi',oocN>0?'cap-mid':'cap-good'));
-  root.append(el('div',{class:'card'},sg));
-
-  // ---- KONTROL GRAFİĞİ (I) ----
+  // ---- I-CHART + kendi panosu ----
   const cc=el('div',{class:'card chart-card'});
   cc.append(el('h3',{style:'margin:0 0 2px'},'Kontrol Grafiği — Bireysel Değerler (I-Chart)'));
-  cc.append(el('p',{style:'margin:0 0 10px;color:var(--muted);font-size:12px'},`${esc(STAT_FILT.measure)} · ${n} ölçüm · merkez çizgi (X̄) ve ±3σ kontrol limitleri; kırmızı noktalar kontrol dışı.`));
+  cc.append(el('p',{style:'margin:0 0 10px;color:var(--muted);font-size:12px'},`${esc(STAT_FILT.measure)}${unit?(' ('+esc(unit)+')'):''} · ${n} ölçüm · merkez (X̄) ve ±3σ_içsel kontrol limitleri; kırmızı noktalar kontrol dışı.`));
   const ic=el('canvas'); ic.style.height='300px'; cc.append(ic);
   cc.append(el('div',{class:'chart-legend'},
     leg('var(--accent)','solid','Ölçüm'), leg('#22c55e','solid','Merkez (X̄)'), leg('#ef4444','dashed','UCL/LCL (±3σ)'),
     (USL!=null||LSL!=null)?leg('#f59e0b','dashed','Spec (USL/LSL)'):'', (TGT!=null)?leg('#38bdf8','dotted','Hedef'):''
   ));
+  cc.append(el('div',{class:'statstrip'},
+    si('X̄ (Merkez)',F(mean,3)+u,fX), si('UCL',F(UCL,3),`UCL = X̄ + 3·σ_içsel = ${F(mean,3)} + 3×${F(sWithin,4)} = ${F(UCL,3)}`),
+    si('LCL',F(LCL,3),`LCL = X̄ − 3·σ_içsel = ${F(mean,3)} − 3×${F(sWithin,4)} = ${F(LCL,3)}`),
+    si('σ içsel',F(sWithin,4),fSw), si('Kontrol dışı',String(oocN),'',oocN>0?'mid':'good')
+  ));
   root.append(cc);
 
-  // ---- HAREKETLİ ARALIK ----
+  // ---- MR CHART + panosu ----
   const mc=el('div',{class:'card chart-card'});
   mc.append(el('h3',{style:'margin:0 0 2px'},'Hareketli Aralık (Moving Range)'));
   mc.append(el('p',{style:'margin:0 0 10px;color:var(--muted);font-size:12px'},'Ardışık ölçümler arası fark |xᵢ − xᵢ₋₁|; sürecin kısa-dönem değişkenliği (UCL = 3.267 × MR̄).'));
   const mcan=el('canvas'); mcan.style.height='200px'; mc.append(mcan);
+  mc.append(el('div',{class:'statstrip'},
+    si('MR̄',F(mrBar,4),`MR̄ = Σ|xᵢ − xᵢ₋₁| ÷ (n−1) = ${F(mrBar,4)}`),
+    si('UCL',F(3.267*mrBar,4),`UCL = 3.267 × MR̄ = 3.267 × ${F(mrBar,4)} = ${F(3.267*mrBar,4)}`),
+    si('Maks MR',F(Math.max(...mrs,0),4),'')
+  ));
   root.append(mc);
 
-  // ---- HİSTOGRAM ----
+  // ---- HİSTOGRAM + YETERLİLİK (Minitab) ----
   const hc=el('div',{class:'card chart-card'});
-  hc.append(el('h3',{style:'margin:0 0 2px'},'Dağılım Histogramı + Normal Eğri'));
-  hc.append(el('p',{style:'margin:0 0 10px;color:var(--muted);font-size:12px'},'Ölçümlerin dağılımı; çan eğrisi normal dağılımı, dikey çizgiler spec limitlerini ve hedefi gösterir.'));
-  const hcan=el('canvas'); hcan.style.height='280px'; hc.append(hcan);
+  hc.append(el('h3',{style:'margin:0 0 2px'},'Süreç Yeterlilik — Histogram (Within & Overall)'));
+  hc.append(el('p',{style:'margin:0 0 10px;color:var(--muted);font-size:12px'},'Kırmızı düz eğri Within (σ_içsel), kesik eğri Overall (σ_genel) normal dağılımı; dikey çizgiler spec ve hedef. Bir değere tıkla → hesabı açılır.'));
+  const hcan=el('canvas'); hcan.style.height='300px'; hc.append(hcan);
+  const procSec=el('div',{class:'mtab-sec'}, el('div',{class:'mtab-title'},'Süreç Verisi'),
+    mrow('Alt Limit (AL)', LSL!=null?F(LSL,3):'—',''),
+    mrow('Hedef', TGT!=null?F(TGT,3):'—',''),
+    mrow('Üst Limit (ÜL)', USL!=null?F(USL,3):'—',''),
+    mrow('Örnek Ort. (X̄)', F(mean,3)+u, fX),
+    mrow('Örnek N', String(n),''),
+    mrow('StdSapma (Within)', F(sWithin,4), fSw),
+    mrow('StdSapma (Overall)', F(sOverall,4), fSo));
+  const withinSec=el('div',{class:'mtab-sec'}, el('div',{class:'mtab-title'},'Potansiyel (Within) Yeterlilik'),
+    mrow('Cp', capTxt(W.cp), WF.cp, _capKind(W.cp)),
+    mrow('CPL', capTxt(W.cpl), WF.cpl, _capKind(W.cpl)),
+    mrow('CPU', capTxt(W.cpu), WF.cpu, _capKind(W.cpu)),
+    mrow('Cpk', capTxt(W.cpk), WF.cpk, _capKind(W.cpk)));
+  const overSec=el('div',{class:'mtab-sec'}, el('div',{class:'mtab-title'},'Genel (Overall) Yeterlilik'),
+    mrow('Pp', capTxt(O.cp), OF.cp, _capKind(O.cp)),
+    mrow('PPL', capTxt(O.cpl), OF.cpl, _capKind(O.cpl)),
+    mrow('PPU', capTxt(O.cpu), OF.cpu, _capKind(O.cpu)),
+    mrow('Ppk', capTxt(O.cpk), OF.cpk, _capKind(O.cpk)),
+    mrow('Cpm', capTxt(Cpm), fCpm, _capKind(Cpm)));
+  const ppmSec=el('div',{class:'mtab-sec'}, el('div',{class:'mtab-title'},'Performans (PPM)'),
+    mrow('Gözlenen', TL(ppmObs), fObs, oos>0?'bad':'good'),
+    mrow('Beklenen (Within)', ppmW!=null?TL(ppmW):'—', fPpmW),
+    mrow('Beklenen (Overall)', ppmO!=null?TL(ppmO):'—', fPpmO));
+  hc.append(el('div',{class:'mtab'}, procSec, withinSec, overSec, ppmSec));
   root.append(hc);
 
   root.append(defsCard());
 
-  _statDraw=()=>{ drawIChart(ic,xs,pts,{CL,UCL,LCL,USL,LSL,TGT,ooc}); drawMR(mcan,mrs,mrBar); drawHist(hcan,xs,{mean,sOverall,LSL,USL,TGT}); };
+  _statDraw=()=>{ drawIChart(ic,xs,pts,{CL,UCL,LCL,USL,LSL,TGT,ooc}); drawMR(mcan,mrs,mrBar); drawHist(hcan,xs,{mean,sWithin,sOverall,LSL,USL,TGT}); };
   setTimeout(_statDraw,30);
 }
 function _setupCanvas(c){ const dpr=window.devicePixelRatio||1, w=c.clientWidth||c.parentElement.clientWidth||600, h=parseFloat(c.style.height)||260;
@@ -1666,20 +1743,32 @@ function drawMR(canvas,mrs,mrBar){
   mrs.forEach((v,i)=>{ const x=X(i),y=Y(v),bad=v>ucl; ctx.fillStyle=bad?'#ef4444':accent; ctx.beginPath(); ctx.arc(x,y,3,0,7); ctx.fill(); });
 }
 function drawHist(canvas,xs,o){
-  const {ctx,w,h}=_setupCanvas(canvas); const muted=_cv('--muted'),accent=_cv('--accent');
-  const padL=44,padR=20,padT=16,padB=28,pw=w-padL-padR,ph=h-padT-padB;
+  const {ctx,w,h}=_setupCanvas(canvas); const muted=_cv('--muted'),accent=_cv('--accent'),txt=_cv('--txt');
+  const padL=44,padR=20,padT=26,padB=28,pw=w-padL-padR,ph=h-padT-padB;
   let lo=Math.min(...xs),hi=Math.max(...xs);
   if(o.LSL!=null)lo=Math.min(lo,o.LSL); if(o.USL!=null)hi=Math.max(hi,o.USL); if(o.TGT!=null){lo=Math.min(lo,o.TGT);hi=Math.max(hi,o.TGT);}
-  if(lo===hi){lo-=1;hi+=1;} const span=hi-lo; lo-=span*0.05; hi+=span*0.05;
+  if(lo===hi){lo-=1;hi+=1;} const span=hi-lo; lo-=span*0.06; hi+=span*0.06;
   const nb=Math.min(14,Math.max(6,Math.round(Math.sqrt(xs.length)))), bw=(hi-lo)/nb, bins=new Array(nb).fill(0);
   xs.forEach(x=>{ let b=Math.floor((x-lo)/bw); if(b<0)b=0; if(b>=nb)b=nb-1; bins[b]++; });
-  const maxC=Math.max(...bins,1), X=v=>padL+((v-lo)/(hi-lo))*pw, Yb=c=>padT+(1-c/(maxC*1.15))*ph;
+  const maxC=Math.max(...bins,1);
+  // eğri tepe değerlerini de hesaba kat → kırpılma olmaz
+  const peak=sig=> (sig>0)? (1/(sig*Math.sqrt(2*Math.PI)))*xs.length*bw : 0;
+  const yTop=Math.max(maxC, peak(o.sWithin)||0, peak(o.sOverall)||0)*1.1;
+  const X=v=>padL+((v-lo)/(hi-lo))*pw, Yb=c=>padT+(1-c/yTop)*ph;
   ctx.fillStyle=accent; ctx.globalAlpha=.5; bins.forEach((c,i)=>{ if(!c)return; const x0=X(lo+i*bw),x1=X(lo+(i+1)*bw),y=Yb(c); ctx.fillRect(x0+1,y,Math.max(1,x1-x0-2),padT+ph-y); }); ctx.globalAlpha=1;
-  if(o.sOverall>0){ ctx.strokeStyle='#22c55e'; ctx.lineWidth=2; ctx.beginPath();
-    for(let px=0;px<=pw;px+=2){ const xv=lo+(px/pw)*(hi-lo), dens=Math.exp(-((xv-o.mean)**2)/(2*o.sOverall**2))/(o.sOverall*Math.sqrt(2*Math.PI)), y=Yb(dens*xs.length*bw); px?ctx.lineTo(padL+px,y):ctx.moveTo(padL+px,y); } ctx.stroke(); }
-  const vline=(v,color,dash,label)=>{ if(v==null||!isFinite(v))return; const x=X(v); ctx.save(); ctx.strokeStyle=color; ctx.setLineDash(dash); ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(x,padT); ctx.lineTo(x,padT+ph); ctx.stroke(); ctx.restore(); ctx.fillStyle=color; ctx.font='11px Segoe UI'; ctx.textAlign='center'; ctx.textBaseline='top'; ctx.fillText(label,x,padT-13); };
+  // normal eğriler: Overall (kesik, metin rengi) + Within (düz kırmızı) — Minitab tarzı
+  const curve=(sig,color,dash)=>{ if(!(sig>0))return; ctx.strokeStyle=color; ctx.lineWidth=2; ctx.setLineDash(dash); ctx.beginPath();
+    for(let px=0;px<=pw;px+=2){ const xv=lo+(px/pw)*(hi-lo), dens=Math.exp(-((xv-o.mean)**2)/(2*sig*sig))/(sig*Math.sqrt(2*Math.PI)), y=Yb(dens*xs.length*bw); px?ctx.lineTo(padL+px,y):ctx.moveTo(padL+px,y); } ctx.stroke(); ctx.setLineDash([]); };
+  curve(o.sOverall, txt, [6,4]);   // Overall: kesik
+  curve(o.sWithin, '#ef4444', []); // Within: düz kırmızı
+  const vline=(v,color,dash,label)=>{ if(v==null||!isFinite(v))return; const x=X(v); ctx.save(); ctx.strokeStyle=color; ctx.setLineDash(dash); ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(x,padT); ctx.lineTo(x,padT+ph); ctx.stroke(); ctx.restore(); ctx.fillStyle=color; ctx.font='11px Segoe UI'; ctx.textAlign='center'; ctx.textBaseline='bottom'; ctx.fillText(label,x,padT-2); };
   vline(o.LSL,'#f59e0b',[6,4],'LSL'); vline(o.USL,'#f59e0b',[6,4],'USL'); vline(o.TGT,'#38bdf8',[2,3],'Hedef'); vline(o.mean,'#22c55e',[],'X̄');
-  ctx.fillStyle=muted; ctx.font='11px Segoe UI'; ctx.textBaseline='top';
+  // efsane (sol üst)
+  ctx.textAlign='left'; ctx.textBaseline='top'; ctx.font='11px Segoe UI';
+  ctx.fillStyle='#ef4444'; ctx.fillText('▬ Within (σ içsel)',padL,4);
+  ctx.fillStyle=txt; ctx.fillText('┄ Overall (σ genel)',padL+118,4);
+  // x ekseni
+  ctx.fillStyle=muted; ctx.textBaseline='top';
   for(let k=0;k<=4;k++){ const v=lo+(hi-lo)*k/4,x=X(v); ctx.textAlign=k===0?'left':(k===4?'right':'center'); ctx.fillText(v.toFixed(2),x,h-padB+8); }
 }
 function defsCard(){
