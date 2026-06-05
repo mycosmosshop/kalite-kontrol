@@ -621,9 +621,15 @@ async function saveHdr(patch){
   const {error}=await sb.from('control_plan_headers').upsert(row,{onConflict:'stock_code'});
   error?toast(esc(error.message),'err'):toast('Antet kaydedildi.','ok');
 }
-// kontrol planı kanonik sırası: op no → seq → id. Soldaki "Ölçü No" bu sıraya göre verilir
-function planSorted(items){ return [...items].sort((a,b)=> (Number(a.op_no)||0)-(Number(b.op_no)||0) || (Number(a.seq)||0)-(Number(b.seq)||0) || ((a.id||0)-(b.id||0)) ); }
+// kontrol planı kanonik sırası: Ölçü No (seq) → op no → id. Soldaki "Ölçü No" düzenlenebilir/sürüklenebilir (seq)
+function planSorted(items){ return [...items].sort((a,b)=> (Number(a.seq)||0)-(Number(b.seq)||0) || (Number(a.op_no)||0)-(Number(b.op_no)||0) || ((a.id||0)-(b.id||0)) ); }
 function olcuNoMap(items){ const m={}; planSorted(items).forEach((it,i)=>m[it.id]=i+1); return m; }
+// verilen id sırasına göre seq=1..N yaz (manuel taşıma / Ölçü No düzenleme)
+async function reorderPlan(sc, orderedIds, msg){
+  const res=await Promise.all(orderedIds.map((id,i)=> sb.from('control_plan_items').update({seq:i+1}).eq('id',id)));
+  const err=res.find(r=>r&&r.error); if(err){toast(esc(err.error.message),'err');return;}
+  toast(msg||'Sıralama güncellendi.','ok'); renderPlan();
+}
 function planHeaderCard(sc,stockName){
   const canPlan=can('plan');
   const card=el('div',{class:'card'});
@@ -798,40 +804,58 @@ async function renderPlan(){
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px'},
       el('h3',{style:'margin:0'},`${sc} — ${esc(items[0].stock_name||'')} (${items.length} madde)`),
       el('div',{style:'display:flex;gap:8px;flex-wrap:wrap'},
-        canPlan?el('button',{class:'btn sm sec',title:'Maddeleri Op No’ya göre sıralayıp Ölçü No (1..N) yeniden atar',onclick:()=>renumberPlan(sc)},'↕ Op No’ya göre sırala'):'',
+        canPlan?el('button',{class:'btn sm sec',title:'Maddeleri Op No’ya göre sıralayıp Ölçü No (1..N) yeniden atar',onclick:()=>renumberByOp(sc)},'🔢 Op No’ya göre sırala'):'',
         canPlan?el('button',{class:'btn sm danger',onclick:()=>delPlanStock(sc)},'Bu planı sil'):el('span',{class:'pill gray'},'salt görünüm')
       )
     ));
-    if(canPlan) card.append(el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:12px'},'💡 Hücrelere tıklayıp değiştirebilirsin; başka yere tıklayınca otomatik kaydedilir. Tablo Op No’ya göre sıralıdır; en soldaki <b>Ölçü No</b> bu sıraya göre verilir.'));
+    if(canPlan) card.append(el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:12px',html:'💡 Hücrelere tıklayıp değiştir (otomatik kaydedilir). Sıralama <b>Ölçü No</b>’ya göredir: <b>Ölçü No’yu değiştir</b> → satır o sıraya taşınır, ya da <b>⠿ ile satırı sürükle</b>. «Op No’ya göre sırala» ile otomatik dizilir.'}));
     const sorted=planSorted(items);
     const tb=el('table');
     tb.append(el('thead',{},el('tr',{},...['Ölçü No','Op Kartı','Op No','Proses','Giriş','Son','Ölçülecek Değer','Nicel Hedef','Nitel Hedef / Birim','Alt Limit','Üst Limit','Örn. Büyük.','Örn. Sıklık','Son K. Örn.','Üretim Ekipmanı','FMEA No','Özel Kar.','Kontrol Yöntemi','Alt. Yöntem','Acil Eylem','DÖF','Tip',''].map(h=>el('th',{},h)))));
     const body=el('tbody');
-    sorted.forEach((it,oi)=>body.append(el('tr',{},
-      el('td',{style:'font-weight:800;text-align:center;color:var(--accent)'},String(oi+1)),
-      el('td',{},pin(it,'operasyon_karti',{w:'70px'})),
-      el('td',{},pin(it,'op_no',{num:true,w:'44px'})),
-      el('td',{},pin(it,'process_control',{bool:true})),
-      el('td',{},pin(it,'giris_kalite',{bool:true})),
-      el('td',{},pin(it,'final_control',{bool:true})),
-      el('td',{},pin(it,'measure_name',{w:'160px'})),
-      el('td',{},pin(it,'target',{w:'58px'})),
-      el('td',{},pin(it, it.is_qualitative?'nitel_hedef':'unit', {w:it.is_qualitative?'200px':'56px'})),
-      el('td',{},pin(it,'lower_limit',{w:'60px'})),
-      el('td',{},pin(it,'upper_limit',{w:'60px'})),
-      el('td',{},pin(it,'sample_size',{num:true,w:'52px'})),
-      el('td',{},pin(it,'sampling_frequency',{w:'56px'})),
-      el('td',{},pin(it,'son_kontrol_ornekleme',{w:'56px'})),
-      el('td',{},pin(it,'production_equipment',{w:'150px'})),
-      el('td',{},pin(it,'fmea_number',{w:'70px'})),
-      el('td',{},pin(it,'special_characteristic',{w:'66px'})),
-      el('td',{},pin(it,'method',{w:'110px'})),
-      el('td',{},pin(it,'backup_method',{w:'90px'})),
-      el('td',{},pin(it,'emergency_action_plan',{w:'70px'})),
-      el('td',{},pin(it,'capa_plan',{w:'60px'})),
-      el('td',{},pin(it,'is_qualitative',{select:true})),
-      el('td',{}, canPlan?el('button',{class:'btn sm danger',onclick:()=>delPlanItem(it.id)},'Sil'):'')
-    )));
+    sorted.forEach((it,oi)=>{
+      const olcuCell = canPlan
+        ? el('td',{style:'white-space:nowrap;text-align:center'},
+            el('span',{class:'drag-h',title:'Sürükleyerek taşı',style:'cursor:grab;color:var(--muted);margin-right:2px;user-select:none'},'⠿'),
+            el('input',{type:'number',min:'1',class:'cell-inp',style:'width:44px;text-align:center;font-weight:800;color:var(--accent)',value:String(oi+1),
+              title:'Ölçü No — değiştir, satır o sıraya taşınır',
+              onchange:e=>{ let t=parseInt(e.target.value,10); if(isNaN(t)||t<1)t=1; if(t>sorted.length)t=sorted.length;
+                const ids=sorted.map(x=>x.id); const [m]=ids.splice(oi,1); ids.splice(t-1,0,m); reorderPlan(sc,ids,'Ölçü No güncellendi.'); }}))
+        : el('td',{style:'font-weight:800;text-align:center;color:var(--accent)'},String(oi+1));
+      const tr=el('tr', canPlan?{draggable:'true',
+          ondragstart:e=>{ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain',String(oi)); tr.style.opacity='.45'; },
+          ondragend:e=>{ tr.style.opacity=''; },
+          ondragover:e=>{ e.preventDefault(); e.dataTransfer.dropEffect='move'; tr.style.boxShadow='inset 0 2px 0 0 var(--accent)'; },
+          ondragleave:e=>{ tr.style.boxShadow=''; },
+          ondrop:e=>{ e.preventDefault(); tr.style.boxShadow=''; const from=Number(e.dataTransfer.getData('text/plain')); if(isNaN(from)||from===oi)return;
+            const ids=sorted.map(x=>x.id); const [m]=ids.splice(from,1); ids.splice(oi,0,m); reorderPlan(sc,ids,'Satır taşındı.'); }
+        }:{},
+        olcuCell,
+        el('td',{},pin(it,'operasyon_karti',{w:'70px'})),
+        el('td',{},pin(it,'op_no',{num:true,w:'44px'})),
+        el('td',{},pin(it,'process_control',{bool:true})),
+        el('td',{},pin(it,'giris_kalite',{bool:true})),
+        el('td',{},pin(it,'final_control',{bool:true})),
+        el('td',{},pin(it,'measure_name',{w:'160px'})),
+        el('td',{},pin(it,'target',{w:'58px'})),
+        el('td',{},pin(it, it.is_qualitative?'nitel_hedef':'unit', {w:it.is_qualitative?'200px':'56px'})),
+        el('td',{},pin(it,'lower_limit',{w:'60px'})),
+        el('td',{},pin(it,'upper_limit',{w:'60px'})),
+        el('td',{},pin(it,'sample_size',{num:true,w:'52px'})),
+        el('td',{},pin(it,'sampling_frequency',{w:'56px'})),
+        el('td',{},pin(it,'son_kontrol_ornekleme',{w:'56px'})),
+        el('td',{},pin(it,'production_equipment',{w:'150px'})),
+        el('td',{},pin(it,'fmea_number',{w:'70px'})),
+        el('td',{},pin(it,'special_characteristic',{w:'66px'})),
+        el('td',{},pin(it,'method',{w:'110px'})),
+        el('td',{},pin(it,'backup_method',{w:'90px'})),
+        el('td',{},pin(it,'emergency_action_plan',{w:'70px'})),
+        el('td',{},pin(it,'capa_plan',{w:'60px'})),
+        el('td',{},pin(it,'is_qualitative',{select:true})),
+        el('td',{}, canPlan?el('button',{class:'btn sm danger',onclick:()=>delPlanItem(it.id)},'Sil'):'')
+      );
+      body.append(tr);
+    });
     tb.append(body); card.append(el('div',{class:'tbl-wrap'},tb));
     root.append(card);
   });
@@ -905,12 +929,10 @@ async function delPlanStock(sc){
   if(error){toast(esc(error.message),'err');return;}
   toast('Plan silindi.','ok'); renderPlan();
 }
-async function renumberPlan(sc){
-  const items=planSorted((PLAN||[]).filter(p=>p.stock_code===sc));
-  const res=await Promise.all(items.map((it,i)=> it.seq===i+1?Promise.resolve({}) : sb.from('control_plan_items').update({seq:i+1}).eq('id',it.id)));
-  const err=res.find(r=>r&&r.error);
-  err?toast(esc(err.error.message),'err'):toast('Op No’ya göre sıralandı, Ölçü No (1..'+items.length+') atandı.','ok');
-  renderPlan();
+async function renumberByOp(sc){
+  if(!confirm('Maddeler Op No’ya göre yeniden sıralanıp Ölçü No (1..N) atanacak. Mevcut elle sıralaman değişir. Devam?'))return;
+  const items=[...(PLAN||[]).filter(p=>p.stock_code===sc)].sort((a,b)=> (Number(a.op_no)||0)-(Number(b.op_no)||0) || (Number(a.seq)||0)-(Number(b.seq)||0) || ((a.id||0)-(b.id||0)) );
+  await reorderPlan(sc, items.map(x=>x.id), 'Op No’ya göre sıralandı, Ölçü No (1..'+items.length+') atandı.');
 }
 
 // ---- Kontrol Planı Excel parse (Türkçe LeanSys + İngilizce LEAR formatı) ----
