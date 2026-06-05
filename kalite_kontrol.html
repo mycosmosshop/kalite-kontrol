@@ -1604,38 +1604,71 @@ async function renderIstatistik(){
   const unit=lim.unit||'';
   const sd=STAT_FILT.start?new Date(STAT_FILT.start+'T00:00:00').getTime():null;
   const ed=STAT_FILT.end?new Date(STAT_FILT.end+'T23:59:59').getTime():null;
-  const pts=[];
+  // her kayıt (checked_at) seçili ölçüm için bir ALTGRUP oluşturur
+  const groups=[];
   recs.forEach(r=>{ if(r.stock_code!==STAT_FILT.stock)return; if(STAT_FILT.stage&&r.stage!==STAT_FILT.stage)return; if(STAT_FILT.machine&&r.machine_code!==STAT_FILT.machine)return;
     const tm=new Date(r.checked_at).getTime(); if(sd&&tm<sd)return; if(ed&&tm>ed)return;
-    (r.vals||[]).forEach(v=>{ if(v.measure_name!==STAT_FILT.measure)return; (v.samples||[]).forEach(s=>{ const x=Number(s.value); if(isFinite(x))pts.push({v:x,t:tm}); }); });
+    (r.vals||[]).forEach(v=>{ if(v.measure_name!==STAT_FILT.measure)return;
+      const gv=(v.samples||[]).map(s=>Number(s.value)).filter(x=>isFinite(x)); if(gv.length)groups.push({t:tm,v:gv}); });
   });
-  pts.sort((a,b)=>a.t-b.t);
+  groups.sort((a,b)=>a.t-b.t);
+  const pts=[]; groups.forEach(g=>g.v.forEach(x=>pts.push({v:x,t:g.t})));
   const xs=pts.map(p=>p.v);
   if(xs.length<2){ root.append(el('div',{class:'card'},el('div',{class:'empty'},`Seçili filtrede yeterli ölçüm yok (${xs.length} adet). En az 2 ölçüm gerekli.`))); return; }
 
-  // ---- İSTATİSTİK (Minitab tarzı) ----
-  const n=xs.length, mean=xs.reduce((a,b)=>a+b,0)/n;
+  // ---- İSTATİSTİK (altgrup boyuna göre I-MR / X̄-R / X̄-S) ----
+  const F=(v,d=3)=>_fmtN(v,d), u=unit?(' '+unit):'', capTxt=v=>(v==null||!isFinite(v))?'—':_fmtN(v,3), TL=v=>Math.round(v).toLocaleString('tr-TR');
+  const avg=arr=>arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:0;
+  const n=xs.length, mean=avg(xs);
   const sOverall=Math.sqrt(xs.reduce((a,b)=>a+(b-mean)*(b-mean),0)/(n-1));
-  const mrs=[]; for(let i=1;i<n;i++)mrs.push(Math.abs(xs[i]-xs[i-1]));
-  const mrBar=mrs.length?mrs.reduce((a,b)=>a+b,0)/mrs.length:0;
-  const sWithin=mrBar/1.128;
+  // altgrup boyu (en sık görülen numune adedi)
+  const sizes=groups.map(g=>g.v.length), sizeCount={}; sizes.forEach(s=>sizeCount[s]=(sizeCount[s]||0)+1);
+  let subN=1,bestc=-1; Object.keys(sizeCount).forEach(k=>{ if(sizeCount[k]>bestc){bestc=sizeCount[k];subN=Number(k);} });
+  const chartType = subN<=1?'IMR':(subN>=9?'XBARS':'XBARR');
+  const chartTitle = chartType==='IMR'?'I-MR (tekli)':(chartType==='XBARR'?'X̄-R':'X̄-S');
+  // SPC sabitleri (altgrup boyu n)
+  const D2={1:1.128,2:1.128,3:1.693,4:2.059,5:2.326,6:2.534,7:2.704,8:2.847,9:2.970,10:3.078};
+  const A2={2:1.880,3:1.023,4:0.729,5:0.577,6:0.483,7:0.419,8:0.373,9:0.337,10:0.308};
+  const D3={2:0,3:0,4:0,5:0,6:0,7:0.076,8:0.136,9:0.184,10:0.223};
+  const D4={2:3.267,3:2.574,4:2.282,5:2.114,6:2.004,7:1.924,8:1.864,9:1.816,10:1.777};
+  const c4n=subN>1?(4*(subN-1))/(4*subN-3):1;
+  const subMeans=groups.map(g=>avg(g.v)), subRanges=groups.map(g=>Math.max(...g.v)-Math.min(...g.v));
+  const subSds=groups.map(g=>{ const m=avg(g.v); return g.v.length>1?Math.sqrt(g.v.reduce((a,b)=>a+(b-m)*(b-m),0)/(g.v.length-1)):0; });
+  const Rbar=avg(subRanges), Sbar=avg(subSds), gMean=avg(subMeans);
+  const mrs=[]; for(let i=1;i<n;i++)mrs.push(Math.abs(xs[i]-xs[i-1])); const mrBar=avg(mrs);
+  // σ_içsel (within) — grafik tipine göre
+  let sWithin, swCalc;
+  if(chartType==='IMR'){ sWithin=mrBar/1.128; swCalc=`σ(içsel) = MR̄ ÷ d₂ = ${F(mrBar,4)} ÷ 1.128 = ${F(sWithin,4)}`; }
+  else if(chartType==='XBARR'){ sWithin=Rbar/(D2[subN]||1); swCalc=`σ(içsel) = R̄ ÷ d₂(${subN}) = ${F(Rbar,4)} ÷ ${F(D2[subN],4)} = ${F(sWithin,4)}`; }
+  else { sWithin=Sbar/c4n; swCalc=`σ(içsel) = S̄ ÷ c₄(${subN}) = ${F(Sbar,4)} ÷ ${F(c4n,4)} = ${F(sWithin,4)}`; }
+  // yeterlilik indeksleri
   const idx=sig=>{ const cpu=(USL!=null&&sig>0)?(USL-mean)/(3*sig):null, cpl=(LSL!=null&&sig>0)?(mean-LSL)/(3*sig):null,
       cp=(USL!=null&&LSL!=null&&sig>0)?(USL-LSL)/(6*sig):null;
     let cpk=null; if(cpu!=null&&cpl!=null)cpk=Math.min(cpu,cpl); else if(cpu!=null)cpk=cpu; else if(cpl!=null)cpk=cpl;
     return {cp,cpu,cpl,cpk}; };
   const W=idx(sWithin), O=idx(sOverall);
   const Cpm=(TGT!=null&&USL!=null&&LSL!=null)?(USL-LSL)/(6*Math.sqrt(sOverall*sOverall+(mean-TGT)*(mean-TGT))):null;
-  const CL=mean, sig3=(sWithin>0?sWithin:sOverall)*3, UCL=mean+sig3, LCL=mean-sig3;
-  const ooc=xs.map(x=>x>UCL||x<LCL), oocN=ooc.filter(Boolean).length;
+  // KONTROL GRAFİĞİ 1 (bireysel veya altgrup ort.)
+  const cData = chartType==='IMR'?xs:subMeans, cTimes = chartType==='IMR'?pts.map(p=>p.t):groups.map(g=>g.t);
+  let c1CL,c1U,c1L,c1calc,c1lcalc;
+  if(chartType==='IMR'){ c1CL=mean; c1U=mean+3*sWithin; c1L=mean-3*sWithin; c1calc=`UCL = X̄ + 3·σ_içsel = ${F(mean,3)} + 3×${F(sWithin,4)} = ${F(c1U,3)}`; c1lcalc=`LCL = X̄ − 3·σ_içsel = ${F(c1L,3)}`; }
+  else if(chartType==='XBARR'){ c1CL=gMean; const a=(A2[subN]||0)*Rbar; c1U=gMean+a; c1L=gMean-a; c1calc=`UCL = X̿ + A₂·R̄ = ${F(gMean,3)} + ${F(A2[subN],3)}×${F(Rbar,4)} = ${F(c1U,3)}`; c1lcalc=`LCL = X̿ − A₂·R̄ = ${F(c1L,3)}`; }
+  else { c1CL=gMean; const A3=3/(c4n*Math.sqrt(subN)), a=A3*Sbar; c1U=gMean+a; c1L=gMean-a; c1calc=`UCL = X̿ + A₃·S̄ = ${F(gMean,3)} + ${F(A3,3)}×${F(Sbar,4)} = ${F(c1U,3)}`; c1lcalc=`LCL = X̿ − A₃·S̄ = ${F(c1L,3)}`; }
+  const ooc=cData.map(x=>x>c1U||x<c1L), oocN=ooc.filter(Boolean).length;
+  // KONTROL GRAFİĞİ 2 (MR / R / S)
+  const dTimes = chartType==='IMR'?pts.slice(1).map(p=>p.t):groups.map(g=>g.t);
+  let dData,d2CL,d2U,d2L,dLab,dName,d2calc;
+  if(chartType==='IMR'){ dData=mrs; d2CL=mrBar; d2U=3.267*mrBar; d2L=0; dLab='MR̄'; dName='Hareketli Aralık (MR)'; d2calc=`UCL = 3.267 × MR̄ = 3.267 × ${F(mrBar,4)} = ${F(d2U,4)}`; }
+  else if(chartType==='XBARR'){ dData=subRanges; d2CL=Rbar; d2U=(D4[subN]||0)*Rbar; d2L=(D3[subN]||0)*Rbar; dLab='R̄'; dName='Altgrup Aralığı (R Grafiği)'; d2calc=`UCL = D₄·R̄ = ${F(D4[subN],3)} × ${F(Rbar,4)} = ${F(d2U,4)}`; }
+  else { const B4=1+(3/c4n)*Math.sqrt(1-c4n*c4n), B3=Math.max(0,1-(3/c4n)*Math.sqrt(1-c4n*c4n)); dData=subSds; d2CL=Sbar; d2U=B4*Sbar; d2L=B3*Sbar; dLab='S̄'; dName='Altgrup Std. Sapma (S Grafiği)'; d2calc=`UCL = B₄·S̄ = ${F(B4,3)} × ${F(Sbar,4)} = ${F(d2U,4)}`; }
+  // spec dışı + PPM
   let oos=0; xs.forEach(x=>{ if((USL!=null&&x>USL)||(LSL!=null&&x<LSL))oos++; });
   const ppmFor=sig=>{ if(!(sig>0))return null; let p=0; if(USL!=null)p+=1-_normCdf((USL-mean)/sig); if(LSL!=null)p+=_normCdf((LSL-mean)/sig); return p*1e6; };
   const ppmObs=oos/n*1e6, ppmW=ppmFor(sWithin), ppmO=ppmFor(sOverall);
   // formül metinleri (tıklayınca görünür)
-  const F=(v,d=3)=>_fmtN(v,d), u=unit?(' '+unit):'', capTxt=v=>(v==null||!isFinite(v))?'—':_fmtN(v,3);
-  const TL=v=>Math.round(v).toLocaleString('tr-TR');
   const fX=`X̄ = Σxᵢ ÷ n = ${F(xs.reduce((a,b)=>a+b,0),2)} ÷ ${n} = ${F(mean,3)}${u}`;
   const fSo=`σ(genel) = √[ Σ(xᵢ − X̄)² ÷ (n−1) ] = ${F(sOverall,4)}`;
-  const fSw=`σ(içsel) = MR̄ ÷ d₂ = ${F(mrBar,4)} ÷ 1.128 = ${F(sWithin,4)}`;
+  const fSw=swCalc;
   const capF=(pfx,r,sig,sn)=>({
     cp : r.cp ==null?'':`${pfx==='C'?'Cp':'Pp'} = (ÜL − AL) ÷ (6·${sn}) = (${F(USL)} − ${F(LSL)}) ÷ (6 × ${F(sig,4)}) = ${F(r.cp)}`,
     cpu: r.cpu==null?'':`${pfx}PU = (ÜL − X̄) ÷ (3·${sn}) = (${F(USL)} − ${F(mean)}) ÷ (3 × ${F(sig,4)}) = ${F(r.cpu)}`,
@@ -1647,31 +1680,33 @@ async function renderIstatistik(){
   const fPpmW=ppmW==null?'':`Beklenen(Within) = [Φ(−(ÜL−X̄)/σ_içsel) + Φ((AL−X̄)/σ_içsel)] × 10⁶ ≈ ${TL(ppmW)}`;
   const fPpmO=ppmO==null?'':`Beklenen(Overall) = [Φ(−(ÜL−X̄)/σ_genel) + Φ((AL−X̄)/σ_genel)] × 10⁶ ≈ ${TL(ppmO)}`;
 
-  // ---- I-CHART + kendi panosu ----
+  // ---- KONTROL GRAFİĞİ 1 (I veya X̄) + kendi panosu ----
+  const showSpec = chartType==='IMR';   // spec limitleri yalnız bireysel grafikte anlamlı
   const cc=el('div',{class:'card chart-card'});
-  cc.append(el('h3',{style:'margin:0 0 2px'},'Kontrol Grafiği — Bireysel Değerler (I-Chart)'));
-  cc.append(el('p',{style:'margin:0 0 10px;color:var(--muted);font-size:12px'},`${esc(STAT_FILT.measure)}${unit?(' ('+esc(unit)+')'):''} · ${n} ölçüm · merkez (X̄) ve ±3σ_içsel kontrol limitleri; kırmızı noktalar kontrol dışı.`));
+  cc.append(el('h3',{style:'margin:0 0 2px'}, chartType==='IMR'?'Kontrol Grafiği — Bireysel Değerler (I)':'Kontrol Grafiği — Altgrup Ortalamaları (X̄)'));
+  cc.append(el('p',{style:'margin:0 0 10px;color:var(--muted);font-size:12px'},`${esc(STAT_FILT.measure)}${unit?(' ('+esc(unit)+')'):''} · ${chartTitle} · altgrup n=${subN} · ${groups.length} altgrup / ${n} ölçüm · kırmızı noktalar kontrol dışı.`));
   const ic=el('canvas'); ic.style.height='300px'; cc.append(ic);
   cc.append(el('div',{class:'chart-legend'},
-    leg('var(--accent)','solid','Ölçüm'), leg('#22c55e','solid','Merkez (X̄)'), leg('#ef4444','dashed','UCL/LCL (±3σ)'),
-    (USL!=null||LSL!=null)?leg('#f59e0b','dashed','Spec (USL/LSL)'):'', (TGT!=null)?leg('#38bdf8','dotted','Hedef'):''
+    leg('var(--accent)','solid', chartType==='IMR'?'Ölçüm':'Altgrup ort.'), leg('#22c55e','solid', chartType==='IMR'?'Merkez (X̄)':'Merkez (X̿)'), leg('#ef4444','dashed','UCL/LCL'),
+    (showSpec&&(USL!=null||LSL!=null))?leg('#f59e0b','dashed','Spec (USL/LSL)'):'', (showSpec&&TGT!=null)?leg('#38bdf8','dotted','Hedef'):''
   ));
   cc.append(el('div',{class:'statstrip'},
-    si('X̄ (Merkez)',F(mean,3)+u,fX), si('UCL',F(UCL,3),`UCL = X̄ + 3·σ_içsel = ${F(mean,3)} + 3×${F(sWithin,4)} = ${F(UCL,3)}`),
-    si('LCL',F(LCL,3),`LCL = X̄ − 3·σ_içsel = ${F(mean,3)} − 3×${F(sWithin,4)} = ${F(LCL,3)}`),
-    si('σ içsel',F(sWithin,4),fSw), si('Kontrol dışı',String(oocN),'',oocN>0?'mid':'good')
+    si(chartType==='IMR'?'X̄ (Merkez)':'X̿ (Genel Ort.)',F(c1CL,3)+u,fX),
+    si('UCL',F(c1U,3),c1calc), si('LCL',F(c1L,3),c1lcalc),
+    si('σ içsel',F(sWithin,4),swCalc),
+    chartType!=='IMR'?si('Altgrup n',String(subN),`Grafik: ${chartTitle} (numune adedi ${subN})`):'',
+    si('Kontrol dışı',String(oocN),'',oocN>0?'mid':'good')
   ));
   root.append(cc);
 
-  // ---- MR CHART + panosu ----
+  // ---- KONTROL GRAFİĞİ 2 (MR / R / S) + panosu ----
   const mc=el('div',{class:'card chart-card'});
-  mc.append(el('h3',{style:'margin:0 0 2px'},'Hareketli Aralık (Moving Range)'));
-  mc.append(el('p',{style:'margin:0 0 10px;color:var(--muted);font-size:12px'},'Ardışık ölçümler arası fark |xᵢ − xᵢ₋₁|; sürecin kısa-dönem değişkenliği (UCL = 3.267 × MR̄).'));
+  mc.append(el('h3',{style:'margin:0 0 2px'},dName));
+  mc.append(el('p',{style:'margin:0 0 10px;color:var(--muted);font-size:12px'}, chartType==='IMR'?'Ardışık ölçümler arası fark |xᵢ − xᵢ₋₁|; sürecin kısa-dönem değişkenliği.':('Her altgrubun '+(chartType==='XBARR'?'aralığı (maks − min)':'standart sapması')+'; süreç-içi değişkenlik.')));
   const mcan=el('canvas'); mcan.style.height='200px'; mc.append(mcan);
   mc.append(el('div',{class:'statstrip'},
-    si('MR̄',F(mrBar,4),`MR̄ = Σ|xᵢ − xᵢ₋₁| ÷ (n−1) = ${F(mrBar,4)}`),
-    si('UCL',F(3.267*mrBar,4),`UCL = 3.267 × MR̄ = 3.267 × ${F(mrBar,4)} = ${F(3.267*mrBar,4)}`),
-    si('Maks MR',F(Math.max(...mrs,0),4),'')
+    si(dLab,F(d2CL,4),`${dLab} = altgrupların ortalaması = ${F(d2CL,4)}`),
+    si('UCL',F(d2U,4),d2calc), si('LCL',F(d2L,4),'')
   ));
   root.append(mc);
 
@@ -1686,6 +1721,8 @@ async function renderIstatistik(){
     mrow('Üst Limit (ÜL)', USL!=null?F(USL,3):'—',''),
     mrow('Örnek Ort. (X̄)', F(mean,3)+u, fX),
     mrow('Örnek N', String(n),''),
+    mrow('Altgrup boyu (n)', String(subN), `Grafik tipi: ${chartTitle} — n=1 → I-MR, n=2–8 → X̄-R, n≥9 → X̄-S`),
+    mrow('Altgrup sayısı', String(groups.length),''),
     mrow('StdSapma (Within)', F(sWithin,4), fSw),
     mrow('StdSapma (Overall)', F(sOverall,4), fSo));
   const withinSec=el('div',{class:'mtab-sec'}, el('div',{class:'mtab-title'},'Potansiyel (Within) Yeterlilik'),
@@ -1708,13 +1745,13 @@ async function renderIstatistik(){
 
   root.append(defsCard());
 
-  _statDraw=()=>{ drawIChart(ic,xs,pts,{CL,UCL,LCL,USL,LSL,TGT,ooc}); drawMR(mcan,mrs,mrBar); drawHist(hcan,xs,{mean,sWithin,sOverall,LSL,USL,TGT}); };
+  _statDraw=()=>{ drawIChart(ic,cData,cTimes,{CL:c1CL,UCL:c1U,LCL:c1L,USL:showSpec?USL:null,LSL:showSpec?LSL:null,TGT:showSpec?TGT:null,ooc,clLabel:chartType==='IMR'?'X̄':'X̿'}); drawDisp(mcan,dData,dTimes,{cl:d2CL,ucl:d2U,lcl:d2L,label:dLab}); drawHist(hcan,xs,{mean,sWithin,sOverall,LSL,USL,TGT}); };
   setTimeout(_statDraw,30);
 }
 function _setupCanvas(c){ const dpr=window.devicePixelRatio||1, w=c.clientWidth||c.parentElement.clientWidth||600, h=parseFloat(c.style.height)||260;
   c.width=Math.round(w*dpr); c.height=Math.round(h*dpr); const ctx=c.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,w,h); return {ctx,w,h}; }
 function _cv(n){ return getComputedStyle(document.body).getPropertyValue(n).trim()||'#888'; }
-function drawIChart(canvas,xs,pts,o){
+function drawIChart(canvas,xs,times,o){
   const {ctx,w,h}=_setupCanvas(canvas); const muted=_cv('--muted'),line=_cv('--line'),accent=_cv('--accent');
   const padL=54,padR=64,padT=14,padB=30,pw=w-padL-padR,ph=h-padT-padB;
   const cand=[...xs]; [o.UCL,o.LCL,o.USL,o.LSL,o.TGT].forEach(v=>{if(v!=null&&isFinite(v))cand.push(v);});
@@ -1724,23 +1761,26 @@ function drawIChart(canvas,xs,pts,o){
   ctx.strokeStyle=line; ctx.fillStyle=muted; ctx.lineWidth=1;
   for(let k=0;k<=4;k++){ const v=yMin+(yMax-yMin)*k/4,y=Y(v); ctx.globalAlpha=.3; ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w-padR,y); ctx.stroke(); ctx.globalAlpha=1; ctx.textAlign='right'; ctx.fillText(v.toFixed(2),padL-6,y); }
   const hline=(v,color,dash,label)=>{ if(v==null||!isFinite(v))return; const y=Y(v); ctx.save(); ctx.strokeStyle=color; ctx.setLineDash(dash); ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w-padR,y); ctx.stroke(); ctx.restore(); ctx.fillStyle=color; ctx.textAlign='left'; ctx.fillText(label,w-padR+4,y); };
-  hline(o.USL,'#f59e0b',[6,4],'USL'); hline(o.LSL,'#f59e0b',[6,4],'LSL'); hline(o.UCL,'#ef4444',[5,4],'UCL'); hline(o.LCL,'#ef4444',[5,4],'LCL'); hline(o.TGT,'#38bdf8',[2,3],'Hedef'); hline(o.CL,'#22c55e',[],'X̄');
+  hline(o.USL,'#f59e0b',[6,4],'USL'); hline(o.LSL,'#f59e0b',[6,4],'LSL'); hline(o.UCL,'#ef4444',[5,4],'UCL'); hline(o.LCL,'#ef4444',[5,4],'LCL'); hline(o.TGT,'#38bdf8',[2,3],'Hedef'); hline(o.CL,'#22c55e',[],o.clLabel||'X̄');
   ctx.strokeStyle=accent; ctx.lineWidth=1.5; ctx.setLineDash([]); ctx.beginPath(); xs.forEach((v,i)=>{ const x=X(i),y=Y(v); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.stroke();
   xs.forEach((v,i)=>{ const x=X(i),y=Y(v),bad=o.ooc&&o.ooc[i]; ctx.fillStyle=bad?'#ef4444':accent; ctx.beginPath(); ctx.arc(x,y,bad?4:3,0,7); ctx.fill(); if(bad){ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.stroke();} });
   ctx.fillStyle=muted; ctx.textBaseline='top'; const idxs=[0,Math.floor((xs.length-1)/2),xs.length-1];
-  idxs.forEach((i,k)=>{ ctx.textAlign=k===0?'left':(k===2?'right':'center'); ctx.fillText(fmtDate(pts[i].t),Math.min(Math.max(X(i),padL),w-padR),h-padB+8); });
+  idxs.forEach((i,k)=>{ ctx.textAlign=k===0?'left':(k===2?'right':'center'); ctx.fillText(fmtDate(times[i]),Math.min(Math.max(X(i),padL),w-padR),h-padB+8); });
 }
-function drawMR(canvas,mrs,mrBar){
+// genel dağılım grafiği (MR / R / S) — o={cl,ucl,lcl,label}
+function drawDisp(canvas,vals,times,o){
   const {ctx,w,h}=_setupCanvas(canvas); const muted=_cv('--muted'),line=_cv('--line'),accent=_cv('--accent');
-  const padL=54,padR=64,padT=12,padB=20,pw=w-padL-padR,ph=h-padT-padB;
-  const ucl=3.267*mrBar; let yMax=Math.max(ucl,...mrs,0.0001)*1.12; const yMin=0;
-  const X=i=>padL+(mrs.length<=1?pw/2:(i/(mrs.length-1))*pw), Y=v=>padT+(1-(v-yMin)/(yMax-yMin))*ph;
+  const padL=54,padR=64,padT=12,padB=22,pw=w-padL-padR,ph=h-padT-padB;
+  const ucl=o.ucl, lcl=o.lcl||0; let yMax=Math.max(ucl,...vals,0.0001)*1.12; const yMin=0;
+  const X=i=>padL+(vals.length<=1?pw/2:(i/(vals.length-1))*pw), Y=v=>padT+(1-(v-yMin)/(yMax-yMin))*ph;
   ctx.font='11px Segoe UI,sans-serif'; ctx.textBaseline='middle'; ctx.strokeStyle=line; ctx.fillStyle=muted;
   for(let k=0;k<=3;k++){ const v=yMin+(yMax-yMin)*k/3,y=Y(v); ctx.globalAlpha=.3; ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w-padR,y); ctx.stroke(); ctx.globalAlpha=1; ctx.textAlign='right'; ctx.fillText(v.toFixed(2),padL-6,y); }
-  const hline=(v,color,dash,label)=>{ const y=Y(v); ctx.save(); ctx.strokeStyle=color; ctx.setLineDash(dash); ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w-padR,y); ctx.stroke(); ctx.restore(); ctx.fillStyle=color; ctx.textAlign='left'; ctx.fillText(label,w-padR+4,y); };
-  hline(ucl,'#ef4444',[5,4],'UCL'); hline(mrBar,'#22c55e',[],'MR̄');
-  ctx.strokeStyle=accent; ctx.lineWidth=1.5; ctx.setLineDash([]); ctx.beginPath(); mrs.forEach((v,i)=>{ const x=X(i),y=Y(v); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.stroke();
-  mrs.forEach((v,i)=>{ const x=X(i),y=Y(v),bad=v>ucl; ctx.fillStyle=bad?'#ef4444':accent; ctx.beginPath(); ctx.arc(x,y,3,0,7); ctx.fill(); });
+  const hline=(v,color,dash,label)=>{ if(v==null||!isFinite(v))return; const y=Y(v); ctx.save(); ctx.strokeStyle=color; ctx.setLineDash(dash); ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w-padR,y); ctx.stroke(); ctx.restore(); ctx.fillStyle=color; ctx.textAlign='left'; ctx.fillText(label,w-padR+4,y); };
+  hline(ucl,'#ef4444',[5,4],'UCL'); if(lcl>0)hline(lcl,'#ef4444',[5,4],'LCL'); hline(o.cl,'#22c55e',[],o.label||'CL');
+  ctx.strokeStyle=accent; ctx.lineWidth=1.5; ctx.setLineDash([]); ctx.beginPath(); vals.forEach((v,i)=>{ const x=X(i),y=Y(v); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.stroke();
+  vals.forEach((v,i)=>{ const x=X(i),y=Y(v),bad=v>ucl||v<lcl; ctx.fillStyle=bad?'#ef4444':accent; ctx.beginPath(); ctx.arc(x,y,3,0,7); ctx.fill(); if(bad){ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.stroke();} });
+  if(times&&times.length){ ctx.fillStyle=muted; ctx.textBaseline='top'; const idxs=[0,Math.floor((vals.length-1)/2),vals.length-1];
+    idxs.forEach((i,k)=>{ ctx.textAlign=k===0?'left':(k===2?'right':'center'); ctx.fillText(fmtDate(times[i]),Math.min(Math.max(X(i),padL),w-padR),h-padB+6); }); }
 }
 function drawHist(canvas,xs,o){
   const {ctx,w,h}=_setupCanvas(canvas); const muted=_cv('--muted'),accent=_cv('--accent'),txt=_cv('--txt');
