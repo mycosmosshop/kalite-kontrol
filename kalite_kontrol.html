@@ -399,7 +399,14 @@ function switchTab(name){
   if(name==='istatistik')renderIstatistik();
   if(name==='admin')renderAdmin();
 }
-document.querySelectorAll('nav.tabs button').forEach(b=>b.onclick=()=>{ if(b.dataset.tab==='kayitlar')KAYIT_PROD=null; switchTab(b.dataset.tab); });
+document.querySelectorAll('nav.tabs button').forEach(b=>b.onclick=async()=>{
+  // plandan çıkarken kaydedilmemiş değişiklik varsa sor (yoksa sormadan geç)
+  if(PLAN_DIRTY && b.dataset.tab!=='plan' && !$('#tab-plan').classList.contains('hidden')){
+    if(confirm('Kontrol planında kaydedilmemiş değişiklikler var.\n\nTamam = Kaydet ve çık · İptal = Değişiklikleri at ve çık')) await savePlanChanges();
+    else { PLAN_PENDING={}; PLAN_DIRTY=false; }
+  }
+  if(b.dataset.tab==='kayitlar')KAYIT_PROD=null; switchTab(b.dataset.tab);
+});
 
 // ====================== ÜRETİMLER ======================
 let PRODS=[];
@@ -643,6 +650,16 @@ const num=v=>{if(v==null||v==='')return null;const n=Number(v);return isNaN(n)?n
 
 // ====================== KONTROL PLANI ======================
 let PLAN=[]; let PLAN_SEL=''; let PLAN_HDR={};
+let PLAN_PENDING={};  // {id:{field:val,...}} kaydedilmemiş hücre değişiklikleri (manuel kaydet)
+let PLAN_DIRTY=false;
+function updateSaveBtn(){ const b=$('#planSaveBtn'); if(b){ const nm=Object.keys(PLAN_PENDING).length; b.disabled=!nm; b.textContent=nm?('💾 Değişiklikleri Kaydet ('+nm+')'):'💾 Kaydedildi'; b.style.background=nm?'var(--warn)':''; } }
+async function savePlanChanges(){
+  const ids=Object.keys(PLAN_PENDING); if(!ids.length){ toast('Kaydedilecek değişiklik yok.','ok'); return; }
+  const res=await Promise.all(ids.map(id=> sb.from('control_plan_items').update(PLAN_PENDING[id]).eq('id',Number(id))));
+  const err=res.find(r=>r&&r.error); if(err){toast(esc(err.error.message),'err');return;}
+  PLAN_PENDING={}; PLAN_DIRTY=false; updateSaveBtn(); toast(ids.length+' madde kaydedildi.','ok');
+}
+window.addEventListener('beforeunload', e=>{ if(PLAN_DIRTY){ e.preventDefault(); e.returnValue=''; } });
 // kontrol planı antet (başlık) alanları — kalıcı: control_plan_headers (stok başına)
 const HDR_FIELDS=[
   ['doc_no','Doküman No (Dok.No)','text'],['doc_title','Doküman Başlığı','text'],['pub_date','Yayın Tarihi','date'],
@@ -803,6 +820,7 @@ async function renderPlan(){
   root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
   const {data}=await sb.from('control_plan_items').select('*').order('stock_code').order('seq');
   PLAN=data||[];
+  PLAN.forEach(p=>{ if(PLAN_PENDING[p.id]) Object.assign(p,PLAN_PENDING[p.id]); });   // bekleyen (kaydedilmemiş) hücre değişikliklerini koru
   root.innerHTML='';
   // ürün seçimi: üretimlerdeki stok kodları
   const prodStocks=[...new Map(PRODS.map(p=>[p.stock_code,p.stock_name])).entries()].filter(x=>x[0]);
@@ -845,11 +863,12 @@ async function renderPlan(){
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px'},
       el('h3',{style:'margin:0'},`${sc} — ${esc(items[0].stock_name||'')} (${items.length} madde)`),
       el('div',{style:'display:flex;gap:8px;flex-wrap:wrap'},
+        canPlan?el('button',{class:'btn sm',id:'planSaveBtn',disabled:!Object.keys(PLAN_PENDING).length,style:Object.keys(PLAN_PENDING).length?'background:var(--warn)':'',title:'Yaptığın hücre değişikliklerini kaydet',onclick:savePlanChanges},Object.keys(PLAN_PENDING).length?('💾 Değişiklikleri Kaydet ('+Object.keys(PLAN_PENDING).length+')'):'💾 Kaydedildi'):'',
         canPlan?el('button',{class:'btn sm sec',title:'Maddeleri Op No’ya göre sıralayıp Ölçü No (1..N) yeniden atar',onclick:()=>renumberByOp(sc)},'🔢 Op No’ya göre sırala'):'',
         canPlan?el('button',{class:'btn sm danger',onclick:()=>delPlanStock(sc)},'Bu planı sil'):el('span',{class:'pill gray'},'salt görünüm')
       )
     ));
-    if(canPlan) card.append(el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:12px',html:'💡 Hücrelere tıklayıp değiştir (otomatik kaydedilir). Sıralama <b>Ölçü No</b>’ya göredir: <b>Ölçü No’yu değiştir</b> → satır o sıraya taşınır, ya da <b>⠿ ile satırı sürükle</b>. Satır sonundaki <b>＋</b> ile iki ölçünün arasına yeni madde eklersin. «Op No’ya göre sırala» ile otomatik dizilir.'}));
+    if(canPlan) card.append(el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:12px',html:'💡 Hücrelere tıklayıp değiştir; değişiklikler <b>«Değişiklikleri Kaydet»</b> ile toplu kaydedilir. Sıralama <b>Ölçü No</b>’ya göredir: <b>Ölçü No’yu değiştir</b> → satır o sıraya taşınır, ya da <b>⠿ ile satırı sürükle</b>. Satır sonundaki <b>＋</b> ile iki ölçünün arasına yeni madde eklersin.'}));
     const sorted=planSorted(items);
     const tb=el('table');
     tb.append(el('thead',{},el('tr',{},...['Ölçü No','Op Kartı','Op No','Proses','Giriş','Son','Ölçülecek Değer','Nicel Hedef','Nitel Hedef / Birim','Alt Limit','Üst Limit','Örn. Büyük.','Örn. Sıklık','Son K. Örn.','Üretim Ekipmanı','FMEA No','Özel Kar.','Kontrol Yöntemi','Alt. Yöntem','Acil Eylem','DÖF','Tip',''].map(h=>el('th',{},h)))));
@@ -940,11 +959,10 @@ function pin(it,field,o){
       updatePlan(it,{[field]:v});
     }});
 }
-async function updatePlan(it,patch){
-  const {error}=await sb.from('control_plan_items').update(patch).eq('id',it.id);
-  if(error){toast(esc(error.message),'err');return;}
+function updatePlan(it,patch){   // anında DB'ye yazma — tampona al (manuel «Kaydet» ile yazılır)
   Object.assign(it,patch);
-  toast('Kaydedildi ✓','ok');
+  PLAN_PENDING[it.id]=Object.assign(PLAN_PENDING[it.id]||{}, patch);
+  PLAN_DIRTY=true; updateSaveBtn();
 }
 async function addPlanItem(){
   const stock=$('#pi_stock').value.trim(), name=$('#pi_name').value.trim();
@@ -1966,15 +1984,15 @@ async function renderIstatistik(){
   const fSo=`σ(genel) = √[ Σ(xᵢ − X̄)² ÷ (n−1) ] = ${F(sOverall,4)}`;
   const fSw=swCalc;
   const capF=(pfx,r,sig,sn)=>({
-    cp : r.cp ==null?'':`${pfx==='C'?'Cp':'Pp'} = (ÜL − AL) ÷ (6·${sn}) = (${F(USL)} − ${F(LSL)}) ÷ (6 × ${F(sig,4)}) = ${F(r.cp)}`,
-    cpu: r.cpu==null?'':`${pfx}PU = (ÜL − X̄) ÷ (3·${sn}) = (${F(USL)} − ${F(mean)}) ÷ (3 × ${F(sig,4)}) = ${F(r.cpu)}`,
-    cpl: r.cpl==null?'':`${pfx}PL = (X̄ − AL) ÷ (3·${sn}) = (${F(mean)} − ${F(LSL)}) ÷ (3 × ${F(sig,4)}) = ${F(r.cpl)}`,
+    cp : r.cp ==null?'':`${pfx==='C'?'Cp':'Pp'} = (USL − LSL) ÷ (6·${sn}) = (${F(USL)} − ${F(LSL)}) ÷ (6 × ${F(sig,4)}) = ${F(r.cp)}`,
+    cpu: r.cpu==null?'':`${pfx}PU = (USL − X̄) ÷ (3·${sn}) = (${F(USL)} − ${F(mean)}) ÷ (3 × ${F(sig,4)}) = ${F(r.cpu)}`,
+    cpl: r.cpl==null?'':`${pfx}PL = (X̄ − LSL) ÷ (3·${sn}) = (${F(mean)} − ${F(LSL)}) ÷ (3 × ${F(sig,4)}) = ${F(r.cpl)}`,
     cpk: r.cpk==null?'':`${pfx==='C'?'Cpk':'Ppk'} = min(${pfx}PU, ${pfx}PL) = min(${F(r.cpu)}, ${F(r.cpl)}) = ${F(r.cpk)}`});
   const WF=capF('C',W,sWithin,'σ_içsel'), OF=capF('P',O,sOverall,'σ_genel');
-  const fCpm=Cpm==null?'':`Cpm = (ÜL − AL) ÷ (6·√(σ² + (X̄−Hedef)²)) = (${F(USL)} − ${F(LSL)}) ÷ (6 × √(${F(sOverall,4)}² + (${F(mean)} − ${F(TGT)})²)) = ${F(Cpm)}`;
+  const fCpm=Cpm==null?'':`Cpm = (USL − LSL) ÷ (6·√(σ² + (X̄−Hedef)²)) = (${F(USL)} − ${F(LSL)}) ÷ (6 × √(${F(sOverall,4)}² + (${F(mean)} − ${F(TGT)})²)) = ${F(Cpm)}`;
   const fObs=`Gözlenen = (spec dışı ÷ n) × 10⁶ = (${oos} ÷ ${n}) × 10⁶ = ${TL(ppmObs)}`;
-  const fPpmW=ppmW==null?'':`Beklenen(Within) = [Φ(−(ÜL−X̄)/σ_içsel) + Φ((AL−X̄)/σ_içsel)] × 10⁶ ≈ ${TL(ppmW)}`;
-  const fPpmO=ppmO==null?'':`Beklenen(Overall) = [Φ(−(ÜL−X̄)/σ_genel) + Φ((AL−X̄)/σ_genel)] × 10⁶ ≈ ${TL(ppmO)}`;
+  const fPpmW=ppmW==null?'':`Beklenen(Within) = [Φ(−(USL−X̄)/σ_içsel) + Φ((LSL−X̄)/σ_içsel)] × 10⁶ ≈ ${TL(ppmW)}`;
+  const fPpmO=ppmO==null?'':`Beklenen(Overall) = [Φ(−(USL−X̄)/σ_genel) + Φ((LSL−X̄)/σ_genel)] × 10⁶ ≈ ${TL(ppmO)}`;
 
   // ---- KONTROL GRAFİĞİ 1 (I veya X̄) + kendi panosu ----
   const showSpec = chartType==='IMR';   // spec limitleri yalnız bireysel grafikte anlamlı
@@ -2022,10 +2040,15 @@ async function renderIstatistik(){
   hc.append(el('h3',{style:'margin:0 0 2px'},'Süreç Yeterlilik — Histogram (Within & Overall)'));
   hc.append(el('p',{style:'margin:0 0 10px;color:var(--muted);font-size:12px'},'Kırmızı düz eğri Within (σ_içsel), kesik eğri Overall (σ_genel) normal dağılımı; dikey çizgiler spec ve hedef. Bir değere tıkla → hesabı açılır.'));
   const hcan=el('canvas'); hcan.style.cssText='height:330px;max-width:720px;width:100%;display:block;margin:0 auto'; hc.append(hcan);
+  // Within/Overall efsanesi — grafiğin ALTINDA, biraz boşlukla
+  hc.append(el('div',{class:'chart-legend',style:'justify-content:center;margin-top:18px'},
+    leg('#ef4444','solid','Within (σ içsel)'), leg('#475569','dashed','Overall (σ genel)'),
+    leg('#f59e0b','dashed','Spec (LSL/USL)'), (TGT!=null)?leg('#38bdf8','dotted','Hedef'):''
+  ));
   const procSec=el('div',{class:'mtab-sec'}, el('div',{class:'mtab-title'},'Süreç Verisi'),
-    mrow('Alt Limit (AL)', LSL!=null?F(LSL,3):'—',''),
+    mrow('Alt Limit (LSL)', LSL!=null?F(LSL,3):'—',''),
     mrow('Hedef', TGT!=null?F(TGT,3):'—',''),
-    mrow('Üst Limit (ÜL)', USL!=null?F(USL,3):'—',''),
+    mrow('Üst Limit (USL)', USL!=null?F(USL,3):'—',''),
     mrow('Örnek Ort. (X̄)', F(mean,3)+u, fX),
     mrow('Örnek N', String(n),''),
     mrow('Altgrup boyu (n)', String(subN), `Grafik tipi: ${chartTitle} — n=1 → I-MR, n=2–8 → X̄-R, n≥9 → X̄-S`),
@@ -2064,7 +2087,7 @@ async function renderIstatistik(){
     const tolTxt = (LSL!=null||USL!=null)?(' · <b>Tolerans:</b> '+(LSL!=null?F(LSL,2):'…')+' – '+(USL!=null?F(USL,2):'…')+uTxt):'';
     const filtTxt=`Stok: ${esc(STAT_FILT.stock)} · Ölçüm: <b>${esc(STAT_FILT.measure)}</b>${unit?(' ('+esc(unit)+')'):''}${hedefTxt}${tolTxt} · Aşama: ${STAT_FILT.stage?STAGES[STAT_FILT.stage]:'Tümü'} · Makine: ${esc(STAT_FILT.machine||'Tümü')}${(STAT_FILT.start||STAT_FILT.end)?(' · '+(STAT_FILT.start||'…')+' – '+(STAT_FILT.end||'…')):''}`;
     const mt=(title,rows)=>`<table class="mt"><tr><th colspan="2">${esc(title)}</th></tr>${rows.map(([k,v])=>`<tr><td>${esc(k)}</td><td class="v">${esc(v)}</td></tr>`).join('')}</table>`;
-    const proc=mt('Süreç Verisi',[['Alt Limit (AL)',LSL!=null?F(LSL,3):'—'],['Hedef',TGT!=null?F(TGT,3):'—'],['Üst Limit (ÜL)',USL!=null?F(USL,3):'—'],['Örnek Ort. (X̄)',F(mean,3)+u],['Örnek N',String(n)],['Altgrup boyu (n)',subN+' ('+chartTitle+')'],['Altgrup sayısı',String(groups.length)],['StdSapma (Within)',F(sWithin,4)],['StdSapma (Overall)',F(sOverall,4)]]);
+    const proc=mt('Süreç Verisi',[['Alt Limit (LSL)',LSL!=null?F(LSL,3):'—'],['Hedef',TGT!=null?F(TGT,3):'—'],['Üst Limit (USL)',USL!=null?F(USL,3):'—'],['Örnek Ort. (X̄)',F(mean,3)+u],['Örnek N',String(n)],['Altgrup boyu (n)',subN+' ('+chartTitle+')'],['Altgrup sayısı',String(groups.length)],['StdSapma (Within)',F(sWithin,4)],['StdSapma (Overall)',F(sOverall,4)]]);
     const wcap=mt('Potansiyel (Within) Yeterlilik',[['Cp',capTxt(W.cp)],['CPL',capTxt(W.cpl)],['CPU',capTxt(W.cpu)],['Cpk',capTxt(W.cpk)]]);
     const ocap=mt('Genel (Overall) Yeterlilik',[['Pp',capTxt(O.cp)],['PPL',capTxt(O.cpl)],['PPU',capTxt(O.cpu)],['Ppk',capTxt(O.cpk)],['Cpm',capTxt(Cpm)]]);
     const pcap=mt('Performans (PPM)',[['Gözlenen',TL(ppmObs)],['Beklenen (Within)',ppmW!=null?TL(ppmW):'—'],['Beklenen (Overall)',ppmO!=null?TL(ppmO):'—']]);
@@ -2158,7 +2181,7 @@ function drawDisp(canvas,vals,times,o){
 }
 function drawHist(canvas,xs,o){
   const {ctx,w,h}=_setupCanvas(canvas); const muted=_cv('--muted'),accent=_cv('--accent'),txt=_cv('--txt');
-  const padL=44,padR=20,padT=26,padB=28,pw=w-padL-padR,ph=h-padT-padB;
+  const padL=44,padR=20,padT=16,padB=28,pw=w-padL-padR,ph=h-padT-padB;
   let lo=Math.min(...xs),hi=Math.max(...xs);
   if(o.LSL!=null)lo=Math.min(lo,o.LSL); if(o.USL!=null)hi=Math.max(hi,o.USL); if(o.TGT!=null){lo=Math.min(lo,o.TGT);hi=Math.max(hi,o.TGT);}
   if(lo===hi){lo-=1;hi+=1;} const span=hi-lo; lo-=span*0.03; hi+=span*0.03;
@@ -2184,10 +2207,7 @@ function drawHist(canvas,xs,o){
   curve(o.sWithin, '#ef4444', []); // Within: düz kırmızı
   const vline=(v,color,dash,label)=>{ if(v==null||!isFinite(v))return; const x=X(v); ctx.save(); ctx.strokeStyle=color; ctx.setLineDash(dash); ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(x,padT); ctx.lineTo(x,padT+ph); ctx.stroke(); ctx.restore(); ctx.fillStyle=color; ctx.font='11px Segoe UI'; ctx.textAlign='center'; ctx.textBaseline='bottom'; ctx.fillText(label,x,padT-2); };
   vline(o.LSL,'#f59e0b',[6,4],'LSL'); vline(o.USL,'#f59e0b',[6,4],'USL'); vline(o.TGT,'#38bdf8',[2,3],'Hedef'); vline(o.mean,'#22c55e',[],'X̄');
-  // efsane (sol üst)
-  ctx.textAlign='left'; ctx.textBaseline='top'; ctx.font='11px Segoe UI';
-  ctx.fillStyle='#ef4444'; ctx.fillText('▬ Within (σ içsel)',padL,4);
-  ctx.fillStyle=txt; ctx.fillText('┄ Overall (σ genel)',padL+118,4);
+  // (Within/Overall efsanesi grafiğin ALTINDA HTML olarak gösterilir)
   // x ekseni
   ctx.fillStyle=muted; ctx.textBaseline='top';
   for(let k=0;k<=4;k++){ const v=lo+(hi-lo)*k/4,x=X(v); ctx.textAlign=k===0?'left':(k===4?'right':'center'); ctx.fillText(v.toFixed(2),x,h-padB+8); }
