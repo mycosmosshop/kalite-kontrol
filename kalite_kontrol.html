@@ -1116,7 +1116,9 @@ async function runBulkAuto(prods,plan,cyc,regen,status,go){
     const freq=Number((items.find(it=>it.sampling_frequency)||{}).sampling_frequency)||60;
     const recs=[];
     if(!cur.has('seri_basi')){ const r=buildAutoRec(p,'seri_basi',start,items,priorMap); if(r)recs.push(r); }       // seri üretim başında
-    if(!cur.has('proses')){ for(let t=freq;t<durMin;t+=freq){ const r=buildAutoRec(p,'proses',new Date(start.getTime()+t*60000),items,priorMap); if(r)recs.push(r); } } // plana göre saatlik
+    if(!cur.has('proses')){ for(let t=freq;t<durMin;t+=freq){ const jit=Math.round((Math.random()*10-5)*60000); // ±5 dk sapma — hep tam saat olmasın
+      let tm=start.getTime()+t*60000+jit; tm=Math.min(Math.max(tm,start.getTime()+60000),end.getTime()-60000); // aralıkta kal
+      const r=buildAutoRec(p,'proses',new Date(tm),items,priorMap); if(r)recs.push(r); } } // plana göre saatlik
     if(!cur.has('son')){ const r=buildAutoRec(p,'son',end,items,priorMap); if(r)recs.push(r); }                      // son: bitişte
     if(!cur.has('giris')){ const r=buildAutoRec(p,'giris',start,items,priorMap); if(r)recs.push(r); }
     if(recs.length){ const {error}=await sb.from('control_records').insert(recs); if(error){console.warn(error.message);} else {made+=recs.length;prodN++;} }
