@@ -96,6 +96,12 @@
   .stat{display:inline-flex;flex-direction:column;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 16px;min-width:110px}
   .stat b{font-size:22px}
   .stat span{color:var(--muted);font-size:12px}
+  /* kayıt modalı üst bilgi (etiketli iki sütun) */
+  .kk-meta{display:grid;grid-template-columns:1fr 1fr;gap:7px 28px;margin:4px 0 16px;padding:13px 16px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;font-size:13.5px}
+  .kk-meta-item{line-height:1.4}
+  .kk-meta-l{color:var(--muted)}
+  .kk-meta-item b{color:var(--txt);font-weight:700}
+  @media(max-width:600px){ .kk-meta{grid-template-columns:1fr;gap:6px} }
   /* SPC istatistik */
   .stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
   .scard{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:var(--panel2);position:relative;overflow:hidden}
@@ -1578,9 +1584,25 @@ async function editRecord(r,prod){
     const m=el('div',{class:'modal',style:'position:relative;max-width:1500px'});
     m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
     m.append(el('h3',{},`${STAGES[stage]} Kontrol Kaydı`));
-    const pdate=prod?(fmtDate(prod.prod_date||prod.start_time)+(prod.start_time?' '+fmtTime(prod.start_time)+(prod.end_time?'–'+fmtTime(prod.end_time):''):'')):fmtDT(r.checked_at);
-    const wo=r.work_order||(prod&&prod.work_order)||'';
-    m.append(el('div',{class:'meta',html:`<b>${esc(r.stock_code)}</b> — ${esc(r.stock_name||'')}<br>${esc(r.machine_code||'')}${prod&&prod.customer?' · '+esc(prod.customer):''}${prod&&prod.quantity!=null?' · '+prod.quantity+' '+esc(prod.unit||''):''}${wo?' · İş Emri: '+esc(wo):''} · ${pdate}`}));
+    const P=prod||{};
+    const wo=r.work_order||P.work_order||'';
+    const dtTxt = P.start_time ? (fmtDate(P.prod_date||P.start_time)+' '+fmtTime(P.start_time)+(P.end_time?'–'+fmtTime(P.end_time):'')) : fmtDate(P.prod_date||r.checked_at);
+    const metaFields=[
+      ['Ürün Kodu', r.stock_code||P.stock_code],
+      ['Müşteri', P.customer],
+      ['Makine Adı', P.machine_name],
+      ['Makine Kodu', r.machine_code||P.machine_code],
+      ['Miktar', P.quantity!=null?(P.quantity+' '+(P.unit||'')):''],
+      ['Op No', P.op_no!=null?String(P.op_no):''],
+      ['İş Emri', wo],
+      ['Vardiya', P.shift!=null?String(P.shift):''],
+      ['Üretim Zamanı', dtTxt],
+      ['Kontrol Saati', fmtTime(r.checked_at)],
+      ['Üretim Operatörü', P.operator]
+    ];
+    const metaHtml = `<div class="kk-meta-item" style="grid-column:1/-1"><span class="kk-meta-l">» Ürün Adı:</span> <b>${esc(r.stock_name||P.stock_name||'')}</b></div>`
+      + metaFields.filter(f=>f[1]!=null&&f[1]!=='').map(f=>`<div class="kk-meta-item"><span class="kk-meta-l">» ${esc(f[0])}:</span> <b>${esc(f[1])}</b></div>`).join('');
+    m.append(el('div',{class:'kk-meta',html:metaHtml}));
     m.append(el('div',{class:'row',style:'margin-bottom:14px'},
       el('div',{class:'field grow'},el('label',{class:'lab'},'Operatör'),el('input',{class:'inp',id:'er_oper',value:oper,disabled:canEdit?undefined:true,oninput:e=>oper=e.target.value}))
     ));
