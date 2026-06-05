@@ -1758,17 +1758,39 @@ function exportRecords(recs){
 
 // ====================== İSTATİSTİK (SPC) ======================
 let STAT_FILT={stock:'',measure:'',start:'',end:'',stage:'',machine:''};
-// kontrol grafiği özel-neden testleri (Batı Elektrik / Nelson) — çoktan seçmeli
+// Kontrol Grafiği Özel Neden Testleri — Nelson / Western Electric Kuralları (çoktan seçmeli)
 const SPC_TESTS=[
-  {n:1,name:'1 nokta merkeze 3σ’dan uzak (kontrol limiti dışı)'},
-  {n:2,name:'Üst üste 9 nokta merkezin aynı tarafında'},
-  {n:3,name:'Üst üste 6 nokta sürekli artan veya azalan (trend)'},
-  {n:4,name:'Üst üste 14 nokta dönüşümlü artıp-azalan'},
-  {n:5,name:'3 noktanın 2’si merkeze 2σ’dan uzak (aynı taraf)'},
-  {n:6,name:'5 noktanın 4’ü merkeze 1σ’dan uzak (aynı taraf)'},
-  {n:7,name:'Üst üste 15 nokta 1σ içinde (merkeze çok yakın)'},
-  {n:8,name:'Üst üste 8 nokta 1σ dışında (her iki taraf)'}
+  {n:1,name:'1 nokta merkeze 3σ’dan uzak (kontrol limiti dışı)',mean:'Ani büyük kayma / hata'},
+  {n:2,name:'Üst üste 9 nokta merkezin aynı tarafında',mean:'Ortalama kayması'},
+  {n:3,name:'Üst üste 6 nokta sürekli artan veya azalan (trend)',mean:'Trend / sürüklenme (aşınma, ısınma)'},
+  {n:4,name:'Üst üste 14 nokta dönüşümlü artıp-azalan',mean:'Sistematik salınım (over-control, 2 kaynak)'},
+  {n:5,name:'3 noktanın 2’si merkeze 2σ’dan uzak (aynı taraf)',mean:'Küçük ama belirgin kayma'},
+  {n:6,name:'5 noktanın 4’ü merkeze 1σ’dan uzak (aynı taraf)',mean:'Küçük kalıcı kayma'},
+  {n:7,name:'Üst üste 15 nokta 1σ içinde (merkeze çok yakın)',mean:'Değişkenlik gerçekçi değil (yanlış altgruplama)'},
+  {n:8,name:'Üst üste 8 nokta 1σ dışında (her iki taraf)',mean:'Karışım / 2 farklı süreç'}
 ];
+// her test için küçük örnek grafik (anlaşılması için) — 8 nokta, merkez ve ±limit çizgileri
+function testMiniSvg(t){
+  const W=92,H=40,cy=H/2,padX=4,pw=W-padX*2, n=8;
+  const X=i=>padX+(i/(n-1))*pw, Y=z=>cy-z*(H*0.32);   // z: -3..3 bölge
+  // her test için z örüntüsü (zone) ve hangi noktalar kırmızı
+  const P={
+    1:{z:[.3,-.2,.5,-.4,.2,3.4,-.1,.3],bad:[5]},
+    2:{z:[.6,.8,.5,.9,.7,1,.6,.8],bad:[0,1,2,3,4,5,6,7]},
+    3:{z:[-1.4,-1,-.6,-.1,.5,1,1.5,2],bad:[0,1,2,3,4,5,6,7]},
+    4:{z:[1,-1,1.1,-1,1,-1.1,1,-1],bad:[0,1,2,3,4,5,6,7]},
+    5:{z:[.3,-.2,2.3,.4,2.5,2.2,-.3,.2],bad:[2,4,5]},
+    6:{z:[.2,1.4,1.6,.3,1.5,1.7,1.3,.2],bad:[1,2,4,5,6]},
+    7:{z:[.3,-.4,.2,-.3,.4,-.2,.3,-.4],bad:[0,1,2,3,4,5,6,7]},
+    8:{z:[1.4,-1.5,1.6,-1.4,1.5,-1.6,1.4,-1.5],bad:[0,1,2,3,4,5,6,7]}
+  }[t]||{z:[0,0,0,0,0,0,0,0],bad:[]};
+  const line=(z,c,d)=>`<line x1="${padX}" y1="${Y(z)}" x2="${W-padX}" y2="${Y(z)}" stroke="${c}" stroke-width="1"${d?' stroke-dasharray="3 2"':''}/>`;
+  let pts=''; const path=P.z.map((z,i)=>`${X(i).toFixed(1)},${Y(z).toFixed(1)}`).join(' ');
+  P.z.forEach((z,i)=>{ const bad=P.bad.includes(i); pts+=`<circle cx="${X(i).toFixed(1)}" cy="${Y(z).toFixed(1)}" r="${bad?2.4:1.8}" fill="${bad?'#ef4444':'#2563eb'}"/>`; });
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px">`+
+    line(3,'#f59e0b',1)+line(-3,'#f59e0b',1)+line(2,'#cbd5e1',1)+line(-2,'#cbd5e1',1)+line(1,'#e2e8f0',1)+line(-1,'#e2e8f0',1)+line(0,'#22c55e',0)+
+    `<polyline points="${path}" fill="none" stroke="#2563eb" stroke-width="1"/>`+pts+`</svg>`;
+}
 let STAT_TESTS=[true,false,false,false,false,false,false,false]; // varsayılan: yalnız Test 1
 // her nokta için ihlal edilen test numaraları
 function spcTests(xs, cl, sigma, en){
@@ -1863,7 +1885,7 @@ async function renderIstatistik(){
   // --- kontrol grafiği testleri (gizli dropdown, çoktan seçmeli) ---
   const selCount=STAT_TESTS.filter(Boolean).length;
   const testsBox=el('details',{class:'defs',style:'margin-top:12px'});
-  testsBox.append(el('summary',{},`🧪 Kontrol grafiği testleri (Batı Elektrik / Nelson) — ${selCount} test seçili`));
+  testsBox.append(el('summary',{},`🧪 Kontrol Grafiği Özel Neden Testleri — Nelson / Western Electric Kuralları (${selCount} test seçili)`));
   const tg=el('div',{style:'display:grid;grid-template-columns:1fr 1fr;gap:5px 18px;margin-top:10px;font-size:12.5px'});
   SPC_TESTS.forEach((t,i)=>{
     const cb=el('input',{type:'checkbox',style:'margin-right:7px;margin-top:2px;flex:0 0 auto'}); cb.checked=STAT_TESTS[i];
@@ -1982,6 +2004,17 @@ async function renderIstatistik(){
     chartType!=='IMR'?si('Altgrup n',String(subN),`Grafik: ${chartTitle} (numune adedi ${subN})`):'',
     si('Kontrol dışı',String(oocN),'',oocN>0?'mid':'good')
   ));
+  // seçili testlerden grafikte çıkanlar → kısa açıklama (grafik altında + PDF'te)
+  const violMap={}; viol.forEach((ts,i)=>ts.forEach(tn=>{(violMap[tn]=violMap[tn]||[]).push(i);}));
+  const violTests=Object.keys(violMap).map(Number).sort((a,b)=>a-b);
+  let violSummaryHtml='';
+  if(violTests.length){
+    violSummaryHtml='<b style="color:#dc2626">⚠ Özel neden tespit edildi — '+violTests.length+' test ihlali:</b><ul style="margin:6px 0 0;padding-left:18px">'
+      + violTests.map(tn=>{ const t=SPC_TESTS[tn-1]||{}; const idxs=violMap[tn]; const dates=[...new Set(idxs.map(i=>fmtDate(cTimes[i])))];
+          return `<li><b>Test ${tn}</b>: ${esc(t.name||'')} → <i>${esc(t.mean||'')}</i>. (${idxs.length} nokta${dates.length<=3?' · '+dates.join(', '):''})</li>`; }).join('')
+      + '</ul><div style="margin-top:5px;color:var(--muted);font-size:11.5px">Bu örüntü süreçte rastgele olmayan bir <i>özel neden</i> olduğunu gösterir; kök neden araştırılmalı.</div>';
+    cc.append(el('div',{style:'margin-top:10px;padding:9px 12px;background:rgba(220,38,38,.07);border:1px solid #ef4444;border-radius:8px;font-size:12.5px',html:violSummaryHtml}));
+  }
   root.append(cc);
 
   // ---- KONTROL GRAFİĞİ 2 (MR / R / S) + panosu ----
@@ -2074,7 +2107,7 @@ async function renderIstatistik(){
  .ft{margin-top:8px;font-size:9px;color:#666;text-align:right}
 </style></head><body>
  <div class="head">${logoSrc?`<img src="${logoSrc}">`:'<b>SANİFOAM</b>'}<div class="t"><span class="rtitle">İSTATİSTİKSEL PROSES KONTROL RAPORU</span><div class="sub">${filtTxt}</div></div></div>
- <div class="chart"><h4>Kontrol Grafiği (${chartTitle})</h4><img src="${img1}"><div class="caps" style="margin-top:6px">${cchart}${dchart}</div></div>
+ <div class="chart"><h4>Kontrol Grafiği (${chartTitle})</h4><img src="${img1}"><div class="caps" style="margin-top:6px">${cchart}${dchart}</div>${violSummaryHtml?`<div style="margin-top:6px;padding:6px 9px;background:#fdeaea;border:1px solid #ef4444;border-radius:4px;font-size:9.5px;line-height:1.4">${violSummaryHtml}</div>`:''}</div>
  <div class="chart"><h4>${chartType==='IMR'?'Hareketli Aralık (MR)':(chartType==='XBARR'?'Altgrup Aralığı (R)':'Altgrup Std. Sapma (S)')}</h4><img src="${img2}"></div>
  <div class="chart hist"><h4>Süreç Yeterlilik — Histogram (Within &amp; Overall)</h4><img src="${img3}"></div>
  <div class="caps">${proc}${wcap}${ocap}${pcap}</div>
@@ -2148,7 +2181,13 @@ function drawHist(canvas,xs,o){
   const peak=sig=> (sig>0)? (1/(sig*Math.sqrt(2*Math.PI)))*xs.length*bw : 0;
   const yTop=Math.max(maxC, peak(o.sWithin)||0, peak(o.sOverall)||0)*1.1;
   const X=v=>padL+((v-lo)/(hi-lo))*pw, Yb=c=>padT+(1-c/yTop)*ph;
-  ctx.fillStyle=accent; ctx.globalAlpha=.5; bins.forEach((c,i)=>{ if(!c)return; const x0=X(lo+i*bw),x1=X(lo+(i+1)*bw),y=Yb(c); ctx.fillRect(x0+1,y,Math.max(1,x1-x0-2),padT+ph-y); }); ctx.globalAlpha=1;
+  // plot zemini (Minitab tarzı hafif gri)
+  ctx.fillStyle='rgba(148,163,184,.13)'; ctx.fillRect(padL,padT,pw,ph);
+  // barlar — bitişik (toplu); spec dışındaki barlar kırmızı
+  bins.forEach((c,i)=>{ if(!c)return; const x0=X(lo+i*bw),x1=X(lo+(i+1)*bw),y=Yb(c),bwpx=Math.max(1,x1-x0); const center=lo+(i+0.5)*bw;
+    const oos=(o.LSL!=null&&center<o.LSL)||(o.USL!=null&&center>o.USL);
+    ctx.fillStyle=oos?'rgba(239,68,68,.72)':'rgba(37,99,235,.58)'; ctx.fillRect(x0,y,bwpx,padT+ph-y);
+    ctx.strokeStyle=oos?'#b91c1c':'#1e40af'; ctx.lineWidth=.7; ctx.strokeRect(x0+.35,y+.35,bwpx-.7,padT+ph-y-.35); });
   // normal eğriler: Overall (kesik, metin rengi) + Within (düz kırmızı) — Minitab tarzı
   const curve=(sig,color,dash)=>{ if(!(sig>0))return; ctx.strokeStyle=color; ctx.lineWidth=2; ctx.setLineDash(dash); ctx.beginPath();
     for(let px=0;px<=pw;px+=2){ const xv=lo+(px/pw)*(hi-lo), dens=Math.exp(-((xv-o.mean)**2)/(2*sig*sig))/(sig*Math.sqrt(2*Math.PI)), y=Yb(dens*xs.length*bw); px?ctx.lineTo(padL+px,y):ctx.moveTo(padL+px,y); } ctx.stroke(); ctx.setLineDash([]); };
@@ -2201,18 +2240,11 @@ function defsCard(){
       <p style="margin:8px 0 0;color:var(--muted)">Özetle: <b>Cpk</b> = «bugün müşteriye ne veriyorum» (kısa dönem, merkez dahil). <b>Ppk</b> = «uzun vadede gerçekte ne veriyorum». İkisi de <b>≥ 1.33</b> hedeflenir; <b>Cpk − Ppk</b> farkı büyükse süreç <u>kararsız</u>, <b>Cp − Cpk</b> farkı büyükse süreç <u>merkezden kaymış</u> demektir.</p>
     </div>
     <div style="margin-top:14px;padding:11px 13px;background:rgba(220,38,38,.06);border:1px solid var(--line);border-radius:8px">
-      <p style="margin:0 0 6px"><b>🧪 Kontrol grafiği testleri (Batı Elektrik / Nelson kuralları)</b> — süreçte <i>özel neden</i> (rastgele olmayan örüntü) ararlar. Kontrol limitleri arasında 3 bölge vardır: <b>C</b> (0–1σ), <b>B</b> (1–2σ), <b>A</b> (2–3σ). Filtre kartındaki «🧪 Kontrol grafiği testleri» menüsünden istediğin testleri aç; ihlal eden noktalar grafikte <span style="color:#ef4444">kırmızı</span> işaretlenir ve yanına test numarası yazılır.</p>
+      <p style="margin:0 0 6px"><b>🧪 Kontrol Grafiği Özel Neden Testleri — Nelson / Western Electric Kuralları</b> — süreçte <i>özel neden</i> (rastgele olmayan örüntü) ararlar. Kontrol limitleri arasında 3 bölge vardır: <b>C</b> (0–1σ), <b>B</b> (1–2σ), <b>A</b> (2–3σ). Filtre kartındaki testler menüsünden istediğin testleri aç; ihlal eden noktalar grafikte <span style="color:#ef4444">kırmızı</span> işaretlenir ve yanına test numarası yazılır.</p>
       <table>
-        <thead><tr><th>Test</th><th>Kural</th><th>İşaret ettiği</th></tr></thead>
+        <thead><tr><th>Test</th><th>Örnek</th><th>Kural</th><th>İşaret ettiği</th></tr></thead>
         <tbody>
-          <tr><td>1</td><td>1 nokta merkeze 3σ’dan uzak (kontrol limiti dışı)</td><td>Ani büyük kayma / hata</td></tr>
-          <tr><td>2</td><td>Üst üste 9 nokta merkezin aynı tarafında</td><td>Ortalama kayması</td></tr>
-          <tr><td>3</td><td>Üst üste 6 nokta sürekli artan veya azalan</td><td>Trend / sürüklenme (aşınma, ısınma)</td></tr>
-          <tr><td>4</td><td>Üst üste 14 nokta dönüşümlü artıp-azalan</td><td>Sistematik salınım (over-control, 2 kaynak)</td></tr>
-          <tr><td>5</td><td>3 noktanın 2’si merkeze 2σ’dan uzak (aynı taraf)</td><td>Küçük ama belirgin kayma</td></tr>
-          <tr><td>6</td><td>5 noktanın 4’ü merkeze 1σ’dan uzak (aynı taraf)</td><td>Küçük kalıcı kayma</td></tr>
-          <tr><td>7</td><td>Üst üste 15 nokta 1σ içinde (merkeze çok yakın)</td><td>Değişkenlik gerçekçi değil (yanlış altgruplama / veri kuşkusu)</td></tr>
-          <tr><td>8</td><td>Üst üste 8 nokta 1σ dışında (her iki taraf)</td><td>Karışım / 2 farklı süreç</td></tr>
+          ${SPC_TESTS.map(t=>`<tr><td style="text-align:center;font-weight:700">${t.n}</td><td>${testMiniSvg(t.n)}</td><td>${esc(t.name)}</td><td>${esc(t.mean)}</td></tr>`).join('')}
         </tbody>
       </table>
       <p style="margin:7px 0 0;color:var(--muted)">Varsayılan yalnız <b>Test 1</b> açıktır (klasik limit-dışı). Daha hassas izleme için Test 2–8’i de açabilirsin; her ek test «yanlış alarm» olasılığını biraz artırır.</p>
