@@ -1659,15 +1659,10 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
     const endMs=(end&&end.getTime()>start.getTime())?end.getTime():(start.getTime()+6*60000);
     const offWhen=()=>new Date(Math.min(start.getTime()+Math.round((1+Math.random()*4)*60000), endMs-30000));
     if(!cur.has('seri_basi')){ const r=buildAutoRec(p,'seri_basi',offWhen(),items,priorMap); if(r)recs.push(r); }       // seri üretim başından birkaç dk sonra
-    if(!cur.has('proses')){
-      const ptimes=[];
-      for(let t=freq;t<durMin;t+=freq){ const jit=Math.round((Math.random()*10-5)*60000); // ±5 dk sapma — hep tam saat olmasın
-        let tm=start.getTime()+t*60000+jit; tm=Math.min(Math.max(tm,start.getTime()+60000),end.getTime()-60000); // aralıkta kal
-        ptimes.push(tm); } // plana göre saatlik
-      // süre çok kısa/sıfır olsa bile plan proses maddesi içeriyorsa EN AZ BİR proses kontrolü üret
-      if(!ptimes.length && stageItems(items,'proses').length){ let tm=Math.min(start.getTime()+120000, endMs-30000); if(tm<=start.getTime())tm=start.getTime()+60000; ptimes.push(tm); }
-      ptimes.forEach(tm=>{ const r=buildAutoRec(p,'proses',new Date(tm),items,priorMap); if(r)recs.push(r); });
-    }
+    // proses: plana göre saatlik (freq). Seri başından sonra 1 freq (ör. 1 saat) GEÇMEDİYSE proses üretilmez (kısa üretim → sadece Seri Başı + Son)
+    if(!cur.has('proses')){ for(let t=freq;t<durMin;t+=freq){ const jit=Math.round((Math.random()*10-5)*60000); // ±5 dk sapma — hep tam saat olmasın
+      let tm=start.getTime()+t*60000+jit; tm=Math.min(Math.max(tm,start.getTime()+60000),end.getTime()-60000); // aralıkta kal
+      const r=buildAutoRec(p,'proses',new Date(tm),items,priorMap); if(r)recs.push(r); } }
     if(!cur.has('son')){ const r=buildAutoRec(p,'son',end,items,priorMap); if(r)recs.push(r); }                      // son: bitişte
     if(!cur.has('giris')){ const r=buildAutoRec(p,'giris',offWhen(),items,priorMap); if(r)recs.push(r); }
     // boş (ölçüm girilmemiş) mevcut kayıtları otomatik doldur
