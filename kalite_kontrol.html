@@ -2321,6 +2321,12 @@ function defsCard(){
     <p><b>Cp</b> = (USL − LSL) / (6σ<sub>içsel</sub>): Sürecin <i>potansiyel</i> yeterliliği — dağılımın tolerans bandına sığıp sığmadığı (ortalamanın kaymasını dikkate almaz).</p>
     <p><b>Cpk</b> = min(USL − X̄, X̄ − LSL) / (3σ<sub>içsel</sub>): <i>Gerçek</i> yeterlilik — ortalamanın merkezden kaymasını da hesaba katar. σ<sub>içsel</sub>, ardışık ölçüm farklarından (MR̄/1.128) tahmin edilir.</p>
     <p><b>Pp / Ppk</b>: Cp/Cpk ile aynı formüller, ancak <b>genel standart sapma</b> (tüm verinin σ'sı) kullanılır. Cp/Cpk «kısa dönem / yetenek», Pp/Ppk «uzun dönem / performans» olarak yorumlanır.</p>
+    <div style="margin-top:12px;padding:11px 13px;background:rgba(37,99,235,.08);border:1px solid var(--line);border-radius:8px">
+      <p style="margin:0 0 7px"><b>📐 Within (σ içsel) ile Overall (σ genel) arasındaki fark nedir?</b> İkisi de aynı verinin yayılımını ölçer ama <b>farklı kaynaktan</b>:</p>
+      <p style="margin:0 0 6px"><b>σ içsel (Within / kısa dönem):</b> Yalnızca <b>birbirine yakın ölçümler arasındaki</b> doğal değişkenliği kullanır — ardışık ölçüm farkından (MR̄/d₂) veya altgrup-içi yayılımdan (R̄/d₂, S̄/c₄) hesaplanır. Yani «makine bir anda, en iyi şartlarda ne kadar tutarlı?» sorusunun cevabıdır. Altgruplar <u>arası</u> kaymaları (vardiya/parti/ayar değişimi, sürüklenme) <b>görmez</b>. → <b>Cp / Cpk</b> bununla hesaplanır = sürecin <i>potansiyeli / yeteneği</i>.</p>
+      <p style="margin:0 0 6px"><b>σ genel (Overall / uzun dönem):</b> <b>Tüm ölçümlerin</b> ortalamadan sapmasını kullanır (√[Σ(xᵢ−X̄)²/(n−1)]). Yani altgruplar <u>arası</u> tüm kaymaları, sürüklenmeleri, vardiya/parti farklarını <b>dahil eder</b>. «Süreç gerçekte, uzun vadede ne kadar dağılıyor?» → <b>Pp / Ppk</b> bununla hesaplanır = gerçek <i>performans</i>.</p>
+      <p style="margin:0;color:var(--muted)">Benzetme: <b>Within</b> = bir atıcının arka arkaya attığı 3 okun birbirine yakınlığı (anlık tutarlılık). <b>Overall</b> = gün boyu attığı tüm okların yayılımı (rüzgâr, yorgunluk dahil). Süreç kararlıysa ikisi <b>yakın</b> (σ_içsel ≈ σ_genel, dolayısıyla Cpk ≈ Ppk). Süreç zamanla kayıyorsa <b>σ_genel daha büyük</b> olur (Cpk ≫ Ppk) — yani «kâğıt üzerinde yetenekli ama pratikte tutarsız».</p>
+    </div>
     <table>
       <thead><tr><th>İndeks değeri</th><th>Yorum</th><th>Yaklaşık hata oranı</th></tr></thead>
       <tbody>
