@@ -1701,6 +1701,32 @@ function exportRecords(recs){
 
 // ====================== İSTATİSTİK (SPC) ======================
 let STAT_FILT={stock:'',measure:'',start:'',end:'',stage:'',machine:''};
+// kontrol grafiği özel-neden testleri (Batı Elektrik / Nelson) — çoktan seçmeli
+const SPC_TESTS=[
+  {n:1,name:'1 nokta merkeze 3σ’dan uzak (kontrol limiti dışı)'},
+  {n:2,name:'Üst üste 9 nokta merkezin aynı tarafında'},
+  {n:3,name:'Üst üste 6 nokta sürekli artan veya azalan (trend)'},
+  {n:4,name:'Üst üste 14 nokta dönüşümlü artıp-azalan'},
+  {n:5,name:'3 noktanın 2’si merkeze 2σ’dan uzak (aynı taraf)'},
+  {n:6,name:'5 noktanın 4’ü merkeze 1σ’dan uzak (aynı taraf)'},
+  {n:7,name:'Üst üste 15 nokta 1σ içinde (merkeze çok yakın)'},
+  {n:8,name:'Üst üste 8 nokta 1σ dışında (her iki taraf)'}
+];
+let STAT_TESTS=[true,false,false,false,false,false,false,false]; // varsayılan: yalnız Test 1
+// her nokta için ihlal edilen test numaraları
+function spcTests(xs, cl, sigma, en){
+  const n=xs.length, viol=xs.map(()=>[]); if(!(sigma>0)){ if(en[0]) xs.forEach((x,i)=>{}); return viol; }
+  const side=x=> x>cl?1:(x<cl?-1:0), z=x=>(x-cl)/sigma, mark=(a,b,t)=>{ for(let j=a;j<=b;j++) if(!viol[j].includes(t))viol[j].push(t); };
+  if(en[0]) for(let i=0;i<n;i++) if(Math.abs(z(xs[i]))>3) viol[i].push(1);
+  if(en[1]) for(let i=8;i<n;i++){ const s=side(xs[i]); if(!s)continue; let ok=true; for(let j=i-8;j<=i;j++) if(side(xs[j])!==s){ok=false;break;} if(ok)mark(i-8,i,2); }
+  if(en[2]) for(let i=5;i<n;i++){ let inc=true,dec=true; for(let j=i-5;j<i;j++){ if(!(xs[j+1]>xs[j]))inc=false; if(!(xs[j+1]<xs[j]))dec=false; } if(inc||dec)mark(i-5,i,3); }
+  if(en[3]) for(let i=13;i<n;i++){ let alt=true,prev=0; for(let j=i-13;j<i;j++){ const d=Math.sign(xs[j+1]-xs[j]); if(d===0||(prev!==0&&d===prev)){alt=false;break;} prev=d; } if(alt)mark(i-13,i,4); }
+  if(en[4]) for(let i=2;i<n;i++) for(const s of [1,-1]){ let c=0; for(let j=i-2;j<=i;j++) if(side(xs[j])===s&&Math.abs(z(xs[j]))>2)c++; if(c>=2&&side(xs[i])===s&&Math.abs(z(xs[i]))>2) for(let j=i-2;j<=i;j++) if(side(xs[j])===s&&Math.abs(z(xs[j]))>2&&!viol[j].includes(5))viol[j].push(5); }
+  if(en[5]) for(let i=4;i<n;i++) for(const s of [1,-1]){ let c=0; for(let j=i-4;j<=i;j++) if(side(xs[j])===s&&Math.abs(z(xs[j]))>1)c++; if(c>=4&&side(xs[i])===s&&Math.abs(z(xs[i]))>1) for(let j=i-4;j<=i;j++) if(side(xs[j])===s&&Math.abs(z(xs[j]))>1&&!viol[j].includes(6))viol[j].push(6); }
+  if(en[6]) for(let i=14;i<n;i++){ let ok=true; for(let j=i-14;j<=i;j++) if(Math.abs(z(xs[j]))>=1){ok=false;break;} if(ok)mark(i-14,i,7); }
+  if(en[7]) for(let i=7;i<n;i++){ let ok=true; for(let j=i-7;j<=i;j++) if(Math.abs(z(xs[j]))<=1){ok=false;break;} if(ok)mark(i-7,i,8); }
+  return viol;
+}
 let _statDraw=null;  // son çizim (yeniden boyutlandırma için)
 let _statFilterDeb=null; // tarih yazarken her tuşta render olmasın diye debounce
 let _statPrint=null; // SPC raporu PDF/yazdır (veri geldiğinde atanır)
@@ -1777,6 +1803,22 @@ async function renderIstatistik(){
     el('div',{class:'field',style:'flex:0;min-width:140px'},el('label',{class:'lab'},'Bitiş'),el('input',{type:'date',class:'inp',value:STAT_FILT.end,onchange:e=>{STAT_FILT.end=e.target.value;clearTimeout(_statFilterDeb);_statFilterDeb=setTimeout(reload,800);}})),
     (STAT_FILT.stage||STAT_FILT.machine||STAT_FILT.start||STAT_FILT.end)?el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{STAT_FILT.stage='';STAT_FILT.machine='';STAT_FILT.start='';STAT_FILT.end='';reload();}},'Filtreyi Temizle'):''
   ));
+  // --- kontrol grafiği testleri (gizli dropdown, çoktan seçmeli) ---
+  const selCount=STAT_TESTS.filter(Boolean).length;
+  const testsBox=el('details',{class:'defs',style:'margin-top:12px'});
+  testsBox.append(el('summary',{},`🧪 Kontrol grafiği testleri (Batı Elektrik / Nelson) — ${selCount} test seçili`));
+  const tg=el('div',{style:'display:grid;grid-template-columns:1fr 1fr;gap:5px 18px;margin-top:10px;font-size:12.5px'});
+  SPC_TESTS.forEach((t,i)=>{
+    const cb=el('input',{type:'checkbox',style:'margin-right:7px;margin-top:2px;flex:0 0 auto'}); cb.checked=STAT_TESTS[i];
+    cb.onchange=()=>{ STAT_TESTS[i]=cb.checked; reload(); };
+    tg.append(el('label',{style:'display:flex;align-items:flex-start;cursor:pointer'},cb,el('span',{},`Test ${t.n}: ${t.name}`)));
+  });
+  testsBox.append(tg);
+  testsBox.append(el('div',{style:'margin-top:8px;display:flex;gap:8px;flex-wrap:wrap'},
+    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{STAT_TESTS=[true,true,true,true,true,true,true,true];reload();}},'Tümünü seç'),
+    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{STAT_TESTS=[true,false,false,false,false,false,false,false];reload();}},'Varsayılan (yalnız Test 1)')
+  ));
+  fcard.append(testsBox);
   root.append(fcard);
 
   if(!STAT_FILT.measure){ root.append(el('div',{class:'card'},el('div',{class:'empty'},'Bu stok için sayısal (ölçülebilir) kontrol maddesi bulunamadı.'))); return; }
@@ -1838,7 +1880,9 @@ async function renderIstatistik(){
   if(chartType==='IMR'){ c1CL=mean; c1U=mean+3*sWithin; c1L=mean-3*sWithin; c1calc=`UCL = X̄ + 3·σ_içsel = ${F(mean,3)} + 3×${F(sWithin,4)} = ${F(c1U,3)}`; c1lcalc=`LCL = X̄ − 3·σ_içsel = ${F(c1L,3)}`; }
   else if(chartType==='XBARR'){ c1CL=gMean; const a=(A2[subN]||0)*Rbar; c1U=gMean+a; c1L=gMean-a; c1calc=`UCL = X̿ + A₂·R̄ = ${F(gMean,3)} + ${F(A2[subN],3)}×${F(Rbar,4)} = ${F(c1U,3)}`; c1lcalc=`LCL = X̿ − A₂·R̄ = ${F(c1L,3)}`; }
   else { c1CL=gMean; const A3=3/(c4n*Math.sqrt(subN)), a=A3*Sbar; c1U=gMean+a; c1L=gMean-a; c1calc=`UCL = X̿ + A₃·S̄ = ${F(gMean,3)} + ${F(A3,3)}×${F(Sbar,4)} = ${F(c1U,3)}`; c1lcalc=`LCL = X̿ − A₃·S̄ = ${F(c1L,3)}`; }
-  const ooc=cData.map(x=>x>c1U||x<c1L), oocN=ooc.filter(Boolean).length;
+  const cSigma=(c1U-c1CL)/3;
+  const viol=spcTests(cData, c1CL, cSigma, STAT_TESTS);   // seçili testlere göre ihlaller
+  const ooc=viol.map(v=>v.length>0), oocN=ooc.filter(Boolean).length;
   // KONTROL GRAFİĞİ 2 (MR / R / S)
   const dTimes = chartType==='IMR'?pts.slice(1).map(p=>p.t):groups.map(g=>g.t);
   let dData,d2CL,d2U,d2L,dLab,dName,d2calc;
@@ -1868,7 +1912,7 @@ async function renderIstatistik(){
   const showSpec = chartType==='IMR';   // spec limitleri yalnız bireysel grafikte anlamlı
   const cc=el('div',{class:'card chart-card'});
   cc.append(el('h3',{style:'margin:0 0 2px'}, chartType==='IMR'?'Kontrol Grafiği — Bireysel Değerler (I)':'Kontrol Grafiği — Altgrup Ortalamaları (X̄)'));
-  cc.append(el('p',{style:'margin:0 0 10px;color:var(--muted);font-size:12px'},`${esc(STAT_FILT.measure)}${unit?(' ('+esc(unit)+')'):''} · ${chartTitle} · altgrup n=${subN} · ${groups.length} altgrup / ${n} ölçüm · kırmızı noktalar kontrol dışı.`));
+  cc.append(el('p',{style:'margin:0 0 10px;color:var(--muted);font-size:12px'},`${esc(STAT_FILT.measure)}${unit?(' ('+esc(unit)+')'):''} · ${chartTitle} · altgrup n=${subN} · ${groups.length} altgrup / ${n} ölçüm · kırmızı + numaralı noktalar test ihlali (${STAT_TESTS.filter(Boolean).length} test aktif).`));
   const ic=el('canvas'); ic.style.height='300px'; cc.append(ic);
   cc.append(el('div',{class:'chart-legend'},
     leg('var(--accent)','solid', chartType==='IMR'?'Ölçüm':'Altgrup ort.'), leg('#22c55e','solid', chartType==='IMR'?'Merkez (X̄)':'Merkez (X̿)'), leg('#ef4444','dashed','UCL/LCL'),
@@ -1929,7 +1973,7 @@ async function renderIstatistik(){
 
   root.append(defsCard());
 
-  _statDraw=()=>{ drawIChart(ic,cData,cTimes,{CL:c1CL,UCL:c1U,LCL:c1L,USL:showSpec?USL:null,LSL:showSpec?LSL:null,TGT:showSpec?TGT:null,ooc,unit,clLabel:chartType==='IMR'?'X̄':'X̿'}); drawDisp(mcan,dData,dTimes,{cl:d2CL,ucl:d2U,lcl:d2L,label:dLab}); drawHist(hcan,xs,{mean,sWithin,sOverall,LSL,USL,TGT}); };
+  _statDraw=()=>{ drawIChart(ic,cData,cTimes,{CL:c1CL,UCL:c1U,LCL:c1L,USL:showSpec?USL:null,LSL:showSpec?LSL:null,TGT:showSpec?TGT:null,ooc,viol,unit,clLabel:chartType==='IMR'?'X̄':'X̿'}); drawDisp(mcan,dData,dTimes,{cl:d2CL,ucl:d2U,lcl:d2L,label:dLab}); drawHist(hcan,xs,{mean,sWithin,sOverall,LSL,USL,TGT}); };
   setTimeout(_statDraw,30);
   // ---- SPC raporu PDF (yazdır) ----
   _statPrint=()=>{
@@ -1958,21 +2002,23 @@ async function renderIstatistik(){
  @page{size:A4 portrait;margin:10mm}
  *{box-sizing:border-box} body{font-family:Arial,Helvetica,sans-serif;color:#000;margin:0;padding:4px;font-size:11px}
  .head{display:flex;align-items:center;gap:12px;border:2px solid #000;padding:8px 12px;margin-bottom:8px}
- .head img{max-height:46px} .head .t{flex:1;text-align:center} .head .t b{font-size:16px}
- .head .t div{font-size:10px;color:#333;margin-top:3px}
+ .head img{max-height:46px} .head .t{flex:1;text-align:center} .head .t .rtitle{font-size:16px;font-weight:bold}
+ .head .t .sub{font-size:10px;color:#333;margin-top:3px}
+ .head .t .sub b{font-weight:700}
  .chart{border:1px solid #999;border-radius:4px;padding:5px;margin-bottom:8px;page-break-inside:avoid}
  .chart h4{margin:0 0 4px;font-size:12px}
  .chart img{width:100%;height:auto;display:block}
+ .chart.hist img{max-width:560px;margin:0 auto}
  .caps{display:flex;gap:8px;flex-wrap:wrap}
  table.mt{border-collapse:collapse;flex:1;min-width:165px}
  table.mt th{background:#0d3055;color:#fff;font-size:10px;padding:4px 6px;text-align:left}
  table.mt td{border:1px solid #bbb;padding:3px 6px;font-size:10px} table.mt td.v{text-align:right;font-weight:700}
  .ft{margin-top:8px;font-size:9px;color:#666;text-align:right}
 </style></head><body>
- <div class="head">${logoSrc?`<img src="${logoSrc}">`:'<b>SANİFOAM</b>'}<div class="t"><b>İSTATİSTİKSEL PROSES KONTROL RAPORU</b><div>${filtTxt}</div></div></div>
+ <div class="head">${logoSrc?`<img src="${logoSrc}">`:'<b>SANİFOAM</b>'}<div class="t"><span class="rtitle">İSTATİSTİKSEL PROSES KONTROL RAPORU</span><div class="sub">${filtTxt}</div></div></div>
  <div class="chart"><h4>Kontrol Grafiği (${chartTitle})</h4><img src="${img1}"><div class="caps" style="margin-top:6px">${cchart}${dchart}</div></div>
  <div class="chart"><h4>${chartType==='IMR'?'Hareketli Aralık (MR)':(chartType==='XBARR'?'Altgrup Aralığı (R)':'Altgrup Std. Sapma (S)')}</h4><img src="${img2}"></div>
- <div class="chart"><h4>Süreç Yeterlilik — Histogram (Within &amp; Overall)</h4><img src="${img3}"></div>
+ <div class="chart hist"><h4>Süreç Yeterlilik — Histogram (Within &amp; Overall)</h4><img src="${img3}"></div>
  <div class="caps">${proc}${wcap}${ocap}${pcap}</div>
  <div class="ft">Sanifoam — Kalite Kontrol · ${esc(STAT_FILT.stock)} · ${n} ölçüm</div>
  <script>window.onload=function(){setTimeout(function(){window.print();},300);}<\/script>
@@ -2005,10 +2051,13 @@ function drawIChart(canvas,xs,times,o){
   hline(o.USL,'#f59e0b',[6,4],'USL'); hline(o.LSL,'#f59e0b',[6,4],'LSL'); hline(o.UCL,'#ef4444',[5,4],'UCL'); hline(o.LCL,'#ef4444',[5,4],'LCL'); hline(o.TGT,'#38bdf8',[2,3],'Hedef'); hline(o.CL,'#22c55e',[],o.clLabel||'X̄');
   ctx.strokeStyle=accent; ctx.lineWidth=1.5; ctx.setLineDash([]); ctx.beginPath(); xs.forEach((v,i)=>{ const x=X(i),y=Y(v); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.stroke();
   const PT=[];
-  xs.forEach((v,i)=>{ const x=X(i),y=Y(v),bad=o.ooc&&o.ooc[i]; ctx.fillStyle=bad?'#ef4444':accent; ctx.beginPath(); ctx.arc(x,y,bad?4:3,0,7); ctx.fill(); if(bad){ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.stroke();} PT.push({x,y,v,t:times[i],bad}); });
-  ctx.fillStyle=muted; ctx.textBaseline='top'; const idxs=[0,Math.floor((xs.length-1)/2),xs.length-1];
+  xs.forEach((v,i)=>{ const x=X(i),y=Y(v); const tv=(o.viol&&o.viol[i])||[]; const bad=tv.length>0||(o.ooc&&o.ooc[i]);
+    ctx.fillStyle=bad?'#ef4444':accent; ctx.beginPath(); ctx.arc(x,y,bad?4:3,0,7); ctx.fill(); if(bad){ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.stroke();}
+    if(tv.length){ ctx.fillStyle='#ef4444'; ctx.font='bold 9px Segoe UI,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='bottom'; ctx.fillText(tv.join(','), x, y-5); }
+    PT.push({x,y,v,t:times[i],bad,tests:tv}); });
+  ctx.fillStyle=muted; ctx.font='11px Segoe UI,sans-serif'; ctx.textBaseline='top'; const idxs=[0,Math.floor((xs.length-1)/2),xs.length-1];
   idxs.forEach((i,k)=>{ ctx.textAlign=k===0?'left':(k===2?'right':'center'); ctx.fillText(fmtDate(times[i]),Math.min(Math.max(X(i),padL),w-padR),h-padB+8); });
-  canvas._hover=PT; attachHover(canvas, p=>`<b>${esc(fmtDT(p.t)||'')}</b><br>${o.clLabel==='X̿'?'Altgrup ort.':'Ölçüm'}: ${_fmtN(p.v,3)}${o.unit?(' '+esc(o.unit)):''}${p.bad?'<br><span style="color:#fca5a5">⚠ kontrol dışı</span>':''}`);
+  canvas._hover=PT; attachHover(canvas, p=>`<b>${esc(fmtDT(p.t)||'')}</b><br>${o.clLabel==='X̿'?'Altgrup ort.':'Ölçüm'}: ${_fmtN(p.v,3)}${o.unit?(' '+esc(o.unit)):''}${p.tests&&p.tests.length?'<br><span style="color:#fca5a5">⚠ İhlal: Test '+p.tests.join(', ')+'</span>':''}`);
 }
 // genel dağılım grafiği (MR / R / S) — o={cl,ucl,lcl,label}
 function drawDisp(canvas,vals,times,o){
@@ -2032,8 +2081,9 @@ function drawHist(canvas,xs,o){
   const padL=44,padR=20,padT=26,padB=28,pw=w-padL-padR,ph=h-padT-padB;
   let lo=Math.min(...xs),hi=Math.max(...xs);
   if(o.LSL!=null)lo=Math.min(lo,o.LSL); if(o.USL!=null)hi=Math.max(hi,o.USL); if(o.TGT!=null){lo=Math.min(lo,o.TGT);hi=Math.max(hi,o.TGT);}
-  if(lo===hi){lo-=1;hi+=1;} const span=hi-lo; lo-=span*0.06; hi+=span*0.06;
-  const nb=Math.min(14,Math.max(6,Math.round(Math.sqrt(xs.length)))), bw=(hi-lo)/nb, bins=new Array(nb).fill(0);
+  if(lo===hi){lo-=1;hi+=1;} const span=hi-lo; lo-=span*0.03; hi+=span*0.03;
+  // daha çok bin → daha derli toplu, klasik Minitab histogramı
+  const nb=Math.min(22,Math.max(9,Math.round(Math.sqrt(xs.length)*1.5))), bw=(hi-lo)/nb, bins=new Array(nb).fill(0);
   xs.forEach(x=>{ let b=Math.floor((x-lo)/bw); if(b<0)b=0; if(b>=nb)b=nb-1; bins[b]++; });
   const maxC=Math.max(...bins,1);
   // eğri tepe değerlerini de hesaba kat → kırpılma olmaz
@@ -2091,6 +2141,23 @@ function defsCard(){
         </tbody>
       </table>
       <p style="margin:8px 0 0;color:var(--muted)">Özetle: <b>Cpk</b> = «bugün müşteriye ne veriyorum» (kısa dönem, merkez dahil). <b>Ppk</b> = «uzun vadede gerçekte ne veriyorum». İkisi de <b>≥ 1.33</b> hedeflenir; <b>Cpk − Ppk</b> farkı büyükse süreç <u>kararsız</u>, <b>Cp − Cpk</b> farkı büyükse süreç <u>merkezden kaymış</u> demektir.</p>
+    </div>
+    <div style="margin-top:14px;padding:11px 13px;background:rgba(220,38,38,.06);border:1px solid var(--line);border-radius:8px">
+      <p style="margin:0 0 6px"><b>🧪 Kontrol grafiği testleri (Batı Elektrik / Nelson kuralları)</b> — süreçte <i>özel neden</i> (rastgele olmayan örüntü) ararlar. Kontrol limitleri arasında 3 bölge vardır: <b>C</b> (0–1σ), <b>B</b> (1–2σ), <b>A</b> (2–3σ). Filtre kartındaki «🧪 Kontrol grafiği testleri» menüsünden istediğin testleri aç; ihlal eden noktalar grafikte <span style="color:#ef4444">kırmızı</span> işaretlenir ve yanına test numarası yazılır.</p>
+      <table>
+        <thead><tr><th>Test</th><th>Kural</th><th>İşaret ettiği</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>1 nokta merkeze 3σ’dan uzak (kontrol limiti dışı)</td><td>Ani büyük kayma / hata</td></tr>
+          <tr><td>2</td><td>Üst üste 9 nokta merkezin aynı tarafında</td><td>Ortalama kayması</td></tr>
+          <tr><td>3</td><td>Üst üste 6 nokta sürekli artan veya azalan</td><td>Trend / sürüklenme (aşınma, ısınma)</td></tr>
+          <tr><td>4</td><td>Üst üste 14 nokta dönüşümlü artıp-azalan</td><td>Sistematik salınım (over-control, 2 kaynak)</td></tr>
+          <tr><td>5</td><td>3 noktanın 2’si merkeze 2σ’dan uzak (aynı taraf)</td><td>Küçük ama belirgin kayma</td></tr>
+          <tr><td>6</td><td>5 noktanın 4’ü merkeze 1σ’dan uzak (aynı taraf)</td><td>Küçük kalıcı kayma</td></tr>
+          <tr><td>7</td><td>Üst üste 15 nokta 1σ içinde (merkeze çok yakın)</td><td>Değişkenlik gerçekçi değil (yanlış altgruplama / veri kuşkusu)</td></tr>
+          <tr><td>8</td><td>Üst üste 8 nokta 1σ dışında (her iki taraf)</td><td>Karışım / 2 farklı süreç</td></tr>
+        </tbody>
+      </table>
+      <p style="margin:7px 0 0;color:var(--muted)">Varsayılan yalnız <b>Test 1</b> açıktır (klasik limit-dışı). Daha hassas izleme için Test 2–8’i de açabilirsin; her ek test «yanlış alarm» olasılığını biraz artırır.</p>
     </div>
     <p style="color:var(--muted);margin-top:12px"><b>PPM</b>: Milyonda kusur tahmini (normal dağılım, genel σ). <b>Histogram</b>: ölçümlerin dağılım şekli; çan eğrisine yakınlık normalliği, spec çizgilerine taşma kusur riskini gösterir.</p>
   `}));
