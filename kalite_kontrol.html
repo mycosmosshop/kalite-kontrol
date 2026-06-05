@@ -891,6 +891,7 @@ async function renderPlan(){
         canPlan?el('button',{class:'btn sm',id:'planSaveBtn',disabled:!Object.keys(PLAN_PENDING).length,style:'background:'+(Object.keys(PLAN_PENDING).length?'var(--ret)':'var(--ok)')+';cursor:'+(Object.keys(PLAN_PENDING).length?'pointer':'default'),title:'Yaptığın hücre değişikliklerini kaydet',onclick:savePlanChanges},Object.keys(PLAN_PENDING).length?('💾 Kaydet ('+Object.keys(PLAN_PENDING).length+')'):'💾 Kaydedildi'):'',
         canPlan?el('button',{class:'btn sm sec',title:'Maddeleri Op No’ya göre sıralayıp Ölçü No (1..N) yeniden atar',onclick:()=>renumberByOp(sc)},'🔢 Op No’ya göre sırala'):'',
         canPlan?el('button',{class:'btn sm sec',title:'Versiyonla / arşivle / geri yükle',onclick:()=>openPlanArchive(sc, items[0].stock_name||'')},'🗂 Versiyonlar'):'',
+        canPlan?el('button',{class:'btn sm sec',title:'Bu planı başka bir ürün koduna kopyala',onclick:()=>openCopyPlan(sc, items[0].stock_name||'')},'📋 Başka Koda Kopyala'):'',
         canPlan?el('button',{class:'btn sm danger',onclick:()=>delPlanStock(sc)},'Bu planı sil'):el('span',{class:'pill gray'},'salt görünüm')
       )
     ));
@@ -1032,7 +1033,7 @@ function openApplyHistory(item){
     toast(cnt>0 ? (cnt+' geçmiş kayda uygulandı.') : 'Uygun geçmiş kayıt bulunamadı (değişiklik yok) — yeni kontrollerde uygulanacak.','ok');
   }},'Uygula');
   m.append(go,status);
-  bg.append(m); root.append(bg);
+  bg.append(m); root.innerHTML=''; root.append(bg);   // yükleniyor placeholder'ını temizle
 }
 async function applyItemToHistory(item, mode, dateFrom){
   let q=sb.from('control_records').select('id,stage,production_id,vals,checked_at').eq('stock_code',item.stock_code);
@@ -1176,7 +1177,7 @@ async function openPlanArchive(sc, stockName){
     )));
     tb.append(body); list.append(el('div',{class:'tbl-wrap'},tb)); }
   m.append(list);
-  bg.append(m); root.append(bg);
+  bg.append(m); root.innerHTML=''; root.append(bg);   // yükleniyor placeholder'ını temizle
 }
 async function restorePlanVersion(sc, stockName, archive, curItems, curHdr){
   // 1) güvenlik: mevcut planı önce yedekle
@@ -1190,6 +1191,50 @@ async function restorePlanVersion(sc, stockName, archive, curItems, curHdr){
   const ah=Object.assign({}, archive.header||{}); delete ah.updated_at;
   await sb.from('control_plan_headers').upsert(Object.assign(ah,{stock_code:sc, rev_date:new Date().toISOString().slice(0,10), rev_reason:'Rev '+(archive.version_label||'?')+' arşivinden geri yüklendi ('+fmtDate(new Date())+')'}),{onConflict:'stock_code'});
   $('#modalRoot').innerHTML=''; toast('Rev '+archive.version_label+' geri yüklendi — bu plan artık aktif.','ok'); renderPlan();
+}
+// ---- AYNI PLANI BAŞKA ÜRÜN KODUNA KOPYALA ----
+async function openCopyPlan(sc, stockName){
+  const root=$('#modalRoot');
+  root.innerHTML='<div class="modal-bg"><div class="modal"><div class="empty">Yükleniyor…</div></div></div>';
+  const [{data:items},{data:hdrRows},{data:prods}]=await Promise.all([
+    sb.from('control_plan_items').select('*').eq('stock_code',sc),
+    sb.from('control_plan_headers').select('*').eq('stock_code',sc),
+    sb.from('productions').select('stock_code,stock_name')
+  ]);
+  const hdr=(hdrRows&&hdrRows[0])||null;
+  const stockMap={}; (prods||[]).forEach(p=>{ if(p.stock_code&&!stockMap[p.stock_code])stockMap[p.stock_code]=p.stock_name||''; });
+  const codes=Object.keys(stockMap).filter(c=>c!==sc).sort();
+  const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
+  const m=el('div',{class:'modal',style:'position:relative;max-width:560px'});
+  m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
+  m.append(el('h3',{},'📋 Planı Başka Ürün Koduna Kopyala'));
+  m.append(el('div',{class:'meta',html:`Kaynak: <b>${esc(sc)}</b> — ${esc(stockName||'')} · <b>${(items||[]).length}</b> madde + antet`}));
+  const dl=el('datalist',{id:'cpStocks'}); codes.forEach(c=>dl.append(el('option',{value:c},stockMap[c]||'')));
+  const codeInp=el('input',{class:'inp',list:'cpStocks',placeholder:'örn. 700.0.455'});
+  const nameInp=el('input',{class:'inp',placeholder:'Hedef ürün adı (opsiyonel)'});
+  codeInp.oninput=()=>{ const v=codeInp.value.trim(); if(stockMap[v]!=null) nameInp.value=stockMap[v]; };
+  const warn=el('div',{style:'font-size:12px;color:var(--muted);margin-top:8px'});
+  codeInp.addEventListener('change',async()=>{ const v=codeInp.value.trim(); warn.textContent='';
+    if(v&&v!==sc){ const {data:ex}=await sb.from('control_plan_items').select('id').eq('stock_code',v).limit(1); if(ex&&ex.length) warn.innerHTML='⚠ <b>'+esc(v)+'</b> kodunda zaten bir plan var — kopyalarsan ÜZERİNE YAZILIR.'; } });
+  m.append(dl,el('div',{class:'row',style:'margin-top:6px'},
+    el('div',{class:'field',style:'flex:0;min-width:170px'},el('label',{class:'lab'},'Hedef Stok Kodu'),codeInp),
+    el('div',{class:'field grow'},el('label',{class:'lab'},'Hedef Ürün Adı'),nameInp)),warn);
+  m.append(el('div',{style:'display:flex;gap:8px;justify-content:flex-end;margin-top:14px'},
+    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>root.innerHTML=''},'İptal'),
+    el('button',{class:'btn sm',style:'flex:0',onclick:async()=>{
+      const target=codeInp.value.trim(); if(!target){toast('Hedef stok kodu gir.','err');return;}
+      if(target===sc){toast('Kaynak ile aynı kod olamaz.','err');return;}
+      if(!(items||[]).length){toast('Kaynak planda madde yok.','err');return;}
+      const {data:ex}=await sb.from('control_plan_items').select('id').eq('stock_code',target).limit(1);
+      if(ex&&ex.length){ if(!confirm(target+' kodunda zaten bir plan var. Üzerine yazılsın mı? (Hedef kodun mevcut planı silinip yenisiyle değiştirilir.)'))return; await sb.from('control_plan_items').delete().eq('stock_code',target); }
+      const tname=nameInp.value.trim()||stockMap[target]||stockName||'';
+      const rows=(items||[]).map(it=>{ const {id,created_at,...rest}=it; return Object.assign(rest,{stock_code:target,stock_name:tname}); });
+      const {error}=await sb.from('control_plan_items').insert(rows);
+      if(error){toast('Kopyalanamadı: '+esc(error.message),'err');return;}
+      if(hdr){ const hr=Object.assign({},hdr); delete hr.id; delete hr.created_at; delete hr.updated_at; await sb.from('control_plan_headers').upsert(Object.assign(hr,{stock_code:target}),{onConflict:'stock_code'}); }
+      root.innerHTML=''; toast(rows.length+' madde kopyalandı → '+target,'ok'); PLAN_SEL=target; PLAN_PENDING={}; PLAN_DIRTY=false; renderPlan();
+    }},'📋 Kopyala')));
+  bg.append(m); root.innerHTML=''; root.append(bg);   // yükleniyor placeholder'ını temizle
 }
 
 // ---- Kontrol Planı Excel parse (Türkçe LeanSys + İngilizce LEAR formatı) ----
@@ -1558,7 +1603,7 @@ async function openBulkAuto(){
   const status=el('div',{style:'margin-top:6px;color:var(--muted);font-size:13px'});
   const go=el('button',{class:'btn',onclick:()=>runBulkAuto(prods,plan,cyc,regenCb.checked,status,go)},'🎲 Üret');
   m.append(el('div',{},go),status);
-  bg.append(m); root.append(bg);
+  bg.append(m); root.innerHTML=''; root.append(bg);   // yükleniyor placeholder'ını temizle
 }
 async function runBulkAuto(prods,plan,cyc,regen,status,go){
   // çevrim girilmediyse: mevcut başlama–bitiş sürelerine göre üret (proses dahil)
