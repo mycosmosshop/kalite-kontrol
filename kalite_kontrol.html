@@ -98,7 +98,7 @@
   .stat span{color:var(--muted);font-size:12px}
   /* SPC aksiyon/CAPA not kartı */
   .note-bg{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.25)}
-  .note-card{position:fixed;width:330px;max-width:94vw;background:var(--panel);border:1px solid var(--accent);border-radius:12px;padding:14px 16px;box-shadow:0 12px 34px rgba(0,0,0,.45);z-index:61}
+  .note-card{position:fixed;width:330px;max-width:94vw;max-height:88vh;overflow-y:auto;background:var(--panel);border:1px solid var(--accent);border-radius:12px;padding:14px 16px;box-shadow:0 12px 34px rgba(0,0,0,.45);z-index:61}
   .note-card .note-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:2px}
   .note-card .note-h b{font-size:14px}
   .note-card .note-x{background:none;border:none;color:var(--muted);font-size:20px;line-height:1;padding:0 2px}
@@ -1874,6 +1874,10 @@ function openNoteCard(pointTime, px, py){
   btns.append(el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>root.innerHTML=''},'Kapat'));
   card.append(btns);
   bg.append(card); root.append(bg);
+  // ekrandan taşmasın: gerçek yüksekliğe göre konumu yeniden ayarla (butonlara hep ulaşılır)
+  const ch=card.offsetHeight; let top=py-10;
+  if(top+ch > window.innerHeight-8) top=Math.max(8, window.innerHeight-ch-8);
+  card.style.top=top+'px';
 }
 // kontrol grafiği noktasına küçük not işareti (açık=turuncu, tamamlandı=yeşil ✓)
 function drawNoteMarker(ctx, x, y, done){
