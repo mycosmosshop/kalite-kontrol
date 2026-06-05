@@ -515,9 +515,9 @@ async function renderUretimler(){
   if(can('import')){
     const collapsed=localStorage.getItem('kk_imp_collapse')==='1';
     const body=el('div',{class:collapsed?'hidden':''},
-      el('p',{class:'det',style:'color:var(--muted);margin:-2px 0 14px;font-size:13px'},'LeanSys → Dışa Aktar ile aldığın Excel (.xlsx) dosyasını seç. Tekrar yüklesen de aynı üretim iki kez eklenmez.'),
+      el('p',{class:'det',style:'color:var(--muted);margin:-2px 0 14px;font-size:13px',html:'LeanSys → Dışa Aktar ile aldığın Excel (.xlsx) dosyalarını seç. <b>Birden fazla dosya seçip topluca</b> aktarabilirsin (Ctrl/Shift ile çoklu seçim). Tekrar yüklesen de aynı üretim iki kez eklenmez.'}),
       el('div',{class:'row'},
-        el('input',{type:'file',accept:'.xlsx,.xls',class:'inp grow',id:'prodFile'}),
+        el('input',{type:'file',accept:'.xlsx,.xls',multiple:'true',class:'inp grow',id:'prodFile'}),
         el('button',{class:'btn sm',style:'flex:0',onclick:importProds},'İçe Aktar')
       )
     );
@@ -627,48 +627,58 @@ const HEADER_MAP={
 };
 function normHdr(s){return deTr(s);}   // Türkçe İ/ı vb. güvenli normalizasyon
 const HMAP={}; Object.keys(HEADER_MAP).forEach(k=>HMAP[deTr(k)]=HEADER_MAP[k]);
+// tek bir Excel dosyasını parse eder → {rows, err}
+function parseProdFile(buf){
+  const wb=XLSX.read(buf,{cellDates:true});
+  const ws=wb.Sheets[wb.SheetNames[0]];
+  const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:null});
+  let hi=rows.findIndex(r=>r&&r.some(c=>normHdr(c)==='makine kodu'));
+  if(hi<0) return {rows:[],err:'başlık (Makine Kodu) bulunamadı'};
+  const hdr=rows[hi].map(normHdr);
+  const idx={}; hdr.forEach((h,i)=>{ if(HMAP[h]!==undefined) idx[HMAP[h]]=i; });
+  if(idx.machine_code===undefined||idx.stock_code===undefined) return {rows:[],err:'gerekli sütunlar yok'};
+  const out=[];
+  for(let r=hi+1;r<rows.length;r++){
+    const row=rows[r]; if(!row)continue;
+    const mc=row[idx.machine_code]; const sc=idx.stock_code!=null?row[idx.stock_code]:null;
+    if(!mc||/^makine grup/i.test(String(mc)))continue;       // grup başlığı / boş
+    if(!sc)continue;
+    const g=k=>idx[k]!=null?row[idx[k]]:null;
+    const toISO=v=>v instanceof Date?v.toISOString():(v?new Date(v).toISOString():null);
+    const start=toISO(g('start_time')), end=toISO(g('end_time'));
+    // Excel tarihi yerel gece yarısı olarak okunur → toISOString() UTC'ye kaydırır (1 gün geri). Yerel bileşenlerle al:
+    const dt=g('prod_date'); const pdate=dt instanceof Date?isoDateLocal(dt):(dt?String(dt):null);
+    out.push({
+      machine_code:String(mc).trim(), machine_name:str(g('machine_name')), customer:str(g('customer')),
+      stock_code:String(sc).trim(), stock_name:str(g('stock_name')),
+      quantity:num(g('quantity')), unit:str(g('unit')), prod_date:pdate, shift:num(g('shift')),
+      start_time:start, end_time:end, duration_min:num(g('duration_min')), operator:str(g('operator')),
+      op_no:num(g('op_no')), work_order:str(g('work_order')), customer_order_no:str(g('customer_order_no')),
+      order_serial:str(g('order_serial')), order_seq:str(g('order_seq')),
+      fingerprint:`${String(mc).trim()}|${start||''}|${String(sc).trim()}|${num(g('op_no'))??''}`
+    });
+  }
+  return {rows:out,err:null};
+}
 async function importProds(){
-  const f=$('#prodFile').files[0];
-  if(!f){toast('Önce dosya seç.','err');return;}
-  try{
-    const buf=await f.arrayBuffer();
-    const wb=XLSX.read(buf,{cellDates:true});
-    const ws=wb.Sheets[wb.SheetNames[0]];
-    const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:null});
-    // başlık satırını bul
-    let hi=rows.findIndex(r=>r&&r.some(c=>normHdr(c)==='makine kodu'));
-    if(hi<0){toast('Başlık satırı bulunamadı (Makine Kodu).','err');return;}
-    const hdr=rows[hi].map(normHdr);
-    const idx={}; hdr.forEach((h,i)=>{ if(HMAP[h]!==undefined) idx[HMAP[h]]=i; });
-    if(idx.machine_code===undefined||idx.stock_code===undefined){toast('Gerekli sütunlar yok.','err');return;}
-    const out=[];
-    for(let r=hi+1;r<rows.length;r++){
-      const row=rows[r]; if(!row)continue;
-      const mc=row[idx.machine_code]; const sc=idx.stock_code!=null?row[idx.stock_code]:null;
-      if(!mc||/^makine grup/i.test(String(mc)))continue;       // grup başlığı / boş
-      if(!sc)continue;
-      const g=k=>idx[k]!=null?row[idx[k]]:null;
-      const toISO=v=>v instanceof Date?v.toISOString():(v?new Date(v).toISOString():null);
-      const start=toISO(g('start_time')), end=toISO(g('end_time'));
-      // Excel tarihi yerel gece yarısı olarak okunur → toISOString() UTC'ye kaydırır (1 gün geri). Yerel bileşenlerle al:
-      const dt=g('prod_date'); const pdate=dt instanceof Date?isoDateLocal(dt):(dt?String(dt):null);
-      const rec={
-        machine_code:String(mc).trim(), machine_name:str(g('machine_name')), customer:str(g('customer')),
-        stock_code:String(sc).trim(), stock_name:str(g('stock_name')),
-        quantity:num(g('quantity')), unit:str(g('unit')), prod_date:pdate, shift:num(g('shift')),
-        start_time:start, end_time:end, duration_min:num(g('duration_min')), operator:str(g('operator')),
-        op_no:num(g('op_no')), work_order:str(g('work_order')), customer_order_no:str(g('customer_order_no')),
-        order_serial:str(g('order_serial')), order_seq:str(g('order_seq')),
-        fingerprint:`${String(mc).trim()}|${start||''}|${String(sc).trim()}|${num(g('op_no'))??''}`
-      };
-      out.push(rec);
-    }
-    if(!out.length){toast('İçe aktarılacak satır bulunamadı.','err');return;}
-    const {error,count}=await sb.from('productions').upsert(out,{onConflict:'fingerprint',count:'exact'});
-    if(error)throw error;
-    toast(`${out.length} satır işlendi (tekrarlar atlandı).`,'ok');
-    renderUretimler();
-  }catch(e){ toast('İçe aktarma hatası: '+esc(e.message),'err'); }
+  const files=[...$('#prodFile').files];
+  if(!files.length){toast('Önce dosya seç.','err');return;}
+  const all=[]; const msgs=[]; let okFiles=0;
+  for(const f of files){
+    try{ const {rows,err}=parseProdFile(await f.arrayBuffer());
+      if(err){ msgs.push(`⚠ ${f.name}: ${err}`); continue; }
+      all.push(...rows); okFiles++; msgs.push(`✓ ${f.name}: ${rows.length} satır`);
+    }catch(e){ msgs.push(`✗ ${f.name}: ${e.message}`); }
+  }
+  if(!all.length){ toast('İçe aktarılacak satır bulunamadı. '+msgs.join(' · '),'err'); return; }
+  // dosyalar arası aynı üretimi (fingerprint) tekrar etme
+  const seen=new Set(); const dedup=all.filter(r=>{ if(seen.has(r.fingerprint))return false; seen.add(r.fingerprint); return true; });
+  // büyük toplu yüklemeleri parça parça gönder
+  for(let i=0;i<dedup.length;i+=500){ const {error}=await sb.from('productions').upsert(dedup.slice(i,i+500),{onConflict:'fingerprint'}); if(error){ toast('İçe aktarma hatası: '+esc(error.message),'err'); return; } }
+  const fileNote = files.length>1 ? `${files.length} dosya · ` : '';
+  toast(`${fileNote}${dedup.length} üretim işlendi (tekrarlar atlandı).`,'ok');
+  if(files.length>1) console.log('İçe aktarma:', msgs.join('\n'));
+  renderUretimler();
 }
 const str=v=>{const s=(v==null?'':String(v)).trim();return s===''?null:s;};
 const num=v=>{if(v==null||v==='')return null;const n=Number(v);return isNaN(n)?null:n;};
