@@ -890,6 +890,7 @@ async function renderPlan(){
       el('div',{style:'display:flex;gap:8px;flex-wrap:wrap'},
         canPlan?el('button',{class:'btn sm',id:'planSaveBtn',disabled:!Object.keys(PLAN_PENDING).length,style:'background:'+(Object.keys(PLAN_PENDING).length?'var(--ret)':'var(--ok)')+';cursor:'+(Object.keys(PLAN_PENDING).length?'pointer':'default'),title:'Yaptığın hücre değişikliklerini kaydet',onclick:savePlanChanges},Object.keys(PLAN_PENDING).length?('💾 Kaydet ('+Object.keys(PLAN_PENDING).length+')'):'💾 Kaydedildi'):'',
         canPlan?el('button',{class:'btn sm sec',title:'Maddeleri Op No’ya göre sıralayıp Ölçü No (1..N) yeniden atar',onclick:()=>renumberByOp(sc)},'🔢 Op No’ya göre sırala'):'',
+        canPlan?el('button',{class:'btn sm sec',title:'Versiyonla / arşivle / geri yükle',onclick:()=>openPlanArchive(sc, items[0].stock_name||'')},'🗂 Versiyonlar'):'',
         canPlan?el('button',{class:'btn sm danger',onclick:()=>delPlanStock(sc)},'Bu planı sil'):el('span',{class:'pill gray'},'salt görünüm')
       )
     ));
@@ -1098,6 +1099,73 @@ async function renumberByOp(sc){
   if(!confirm('Maddeler Op No’ya göre yeniden sıralanıp Ölçü No (1..N) atanacak. Mevcut elle sıralaman değişir. Devam?'))return;
   const items=[...(PLAN||[]).filter(p=>p.stock_code===sc)].sort((a,b)=> (Number(a.op_no)||0)-(Number(b.op_no)||0) || (Number(a.seq)||0)-(Number(b.seq)||0) || ((a.id||0)-(b.id||0)) );
   await reorderPlan(sc, items.map(x=>x.id), 'Op No’ya göre sıralandı, Ölçü No (1..'+items.length+') atandı.');
+}
+// ---- KONTROL PLANI VERSİYONLAMA / ARŞİV (canlı plana dokunmaz, JSON snapshot) ----
+async function openPlanArchive(sc, stockName){
+  const root=$('#modalRoot');
+  root.innerHTML='<div class="modal-bg"><div class="modal"><div class="empty">Yükleniyor…</div></div></div>';
+  const [{data:items},{data:hdrRows},{data:arcs}]=await Promise.all([
+    sb.from('control_plan_items').select('*').eq('stock_code',sc),
+    sb.from('control_plan_headers').select('*').eq('stock_code',sc),
+    sb.from('control_plan_archives').select('id,version_label,reason,archived_at,items').eq('stock_code',sc).order('archived_at',{ascending:false})
+  ]);
+  const hdr=(hdrRows&&hdrRows[0])||{}; const curRev=hdr.rev_no||'0';
+  const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
+  const m=el('div',{class:'modal',style:'position:relative;max-width:780px'});
+  m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
+  m.append(el('h3',{},'🗂 Kontrol Planı Versiyonları / Arşiv'));
+  m.append(el('div',{class:'meta',html:`<b>${esc(sc)}</b> — ${esc(stockName||'')} · Güncel Rev: <b>${esc(curRev)}</b> · ${(items||[]).length} madde`}));
+  const nextRev=(/^\d+$/.test(String(curRev))?String(Number(curRev)+1):'');
+  const revInp=el('input',{class:'inp',style:'max-width:120px',value:nextRev,placeholder:'örn. 1'});
+  const reasonInp=el('input',{class:'inp',placeholder:'Revizyon nedeni / değişiklik'});
+  m.append(el('div',{class:'card',style:'background:var(--panel2)'},
+    el('div',{style:'font-weight:700;margin-bottom:4px'},'📦 Mevcut planı arşivle → yeni versiyona geç'),
+    el('p',{style:'color:var(--muted);font-size:12px;margin:0 0 10px'},`Güncel plan (Rev ${esc(curRev)}) olduğu gibi arşivlenir; canlı plan yeni revizyon olarak düzenlenmeye devam eder. <b>Mevcut kontrol kayıtları etkilenmez.</b>`),
+    el('div',{class:'row'},
+      el('div',{class:'field',style:'flex:0;min-width:120px'},el('label',{class:'lab'},'Yeni Rev No'),revInp),
+      el('div',{class:'field grow'},el('label',{class:'lab'},'Revizyon Nedeni'),reasonInp),
+      el('button',{class:'btn sm',style:'flex:0',onclick:async()=>{
+        if(!confirm(`Güncel plan (Rev ${curRev}) arşivlenip yeni versiyona (Rev ${revInp.value.trim()||'?'}) geçilsin mi?`))return;
+        const {error}=await sb.from('control_plan_archives').insert({stock_code:sc,stock_name:stockName,version_label:String(curRev),reason:hdr.rev_reason||null,items:items||[],header:hdr||{},archived_by:ME&&ME.id});
+        if(error){toast('Arşivlenemedi: '+esc(error.message),'err');return;}
+        await sb.from('control_plan_headers').upsert({stock_code:sc,rev_no:revInp.value.trim()||null,rev_date:new Date().toISOString().slice(0,10),rev_reason:reasonInp.value.trim()||null},{onConflict:'stock_code'});
+        root.innerHTML=''; toast('Rev '+curRev+' arşivlendi, yeni versiyona geçildi.','ok'); renderPlan();
+      }},'📦 Arşivle & Yeni Versiyon')
+    )
+  ));
+  const list=el('div',{class:'card'});
+  list.append(el('div',{style:'font-weight:700;margin-bottom:8px'},'🗄 Arşivlenmiş versiyonlar ('+(arcs||[]).length+')'));
+  if(!(arcs||[]).length) list.append(el('div',{class:'empty'},'Henüz arşivlenmiş versiyon yok.'));
+  else { const tb=el('table'); tb.append(el('thead',{},el('tr',{},...['Versiyon','Tarih','Neden','Madde','İşlem'].map(h=>el('th',{},h)))));
+    const body=el('tbody');
+    (arcs||[]).forEach(a=>body.append(el('tr',{},
+      el('td',{style:'font-weight:700;white-space:nowrap'},'Rev '+(a.version_label||'?')),
+      el('td',{style:'white-space:nowrap'},fmtDT(a.archived_at)),
+      el('td',{style:'font-size:12px;color:var(--muted)'},a.reason||'-'),
+      el('td',{style:'text-align:center'},String((a.items||[]).length)),
+      el('td',{style:'white-space:nowrap'},
+        el('button',{class:'btn sm',onclick:async()=>{
+          if(!confirm(`«Rev ${a.version_label}» geri yüklensin mi?\n\nÖnce güncel plan otomatik yedeklenir; sonra bu versiyon AKTİF olur (bu tarihten itibaren geçerli). Mevcut kontrol kayıtları korunur.`))return;
+          await restorePlanVersion(sc, stockName, a, items, hdr);
+        }},'↩ Geri Yükle'),
+        el('button',{class:'btn sm danger',style:'margin-left:5px',title:'Bu arşivi sil',onclick:async()=>{ if(!confirm('Bu arşiv versiyonu silinsin mi?'))return; await sb.from('control_plan_archives').delete().eq('id',a.id); openPlanArchive(sc,stockName); }},'Sil'))
+    )));
+    tb.append(body); list.append(el('div',{class:'tbl-wrap'},tb)); }
+  m.append(list);
+  bg.append(m); root.append(bg);
+}
+async function restorePlanVersion(sc, stockName, archive, curItems, curHdr){
+  // 1) güvenlik: mevcut planı önce yedekle
+  await sb.from('control_plan_archives').insert({stock_code:sc,stock_name:stockName,version_label:String(curHdr.rev_no||'?')+' (geri yükleme öncesi)',reason:'Otomatik yedek',items:curItems||[],header:curHdr||{},archived_by:ME&&ME.id});
+  // 2) canlı maddeleri arşivdekiyle değiştir (id/created_at hariç, yeni id'lerle)
+  const {error:eDel}=await sb.from('control_plan_items').delete().eq('stock_code',sc);
+  if(eDel){toast('Geri yükleme hatası (silme): '+esc(eDel.message),'err');return;}
+  const rows=(archive.items||[]).map(it=>{ const {id,created_at,...rest}=it; return {...rest, stock_code:sc, stock_name:stockName, active:true}; });
+  if(rows.length){ const {error}=await sb.from('control_plan_items').insert(rows); if(error){toast('Geri yükleme hatası (ekleme): '+esc(error.message),'err'); return; } }
+  // 3) anteti geri yükle (rev tarihi = bugün, neden = geri yüklendi)
+  const ah=Object.assign({}, archive.header||{}); delete ah.updated_at;
+  await sb.from('control_plan_headers').upsert(Object.assign(ah,{stock_code:sc, rev_date:new Date().toISOString().slice(0,10), rev_reason:'Rev '+(archive.version_label||'?')+' arşivinden geri yüklendi ('+fmtDate(new Date())+')'}),{onConflict:'stock_code'});
+  $('#modalRoot').innerHTML=''; toast('Rev '+archive.version_label+' geri yüklendi — bu plan artık aktif.','ok'); renderPlan();
 }
 
 // ---- Kontrol Planı Excel parse (Türkçe LeanSys + İngilizce LEAR formatı) ----
