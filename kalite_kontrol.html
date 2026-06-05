@@ -604,7 +604,7 @@ const num=v=>{if(v==null||v==='')return null;const n=Number(v);return isNaN(n)?n
 let PLAN=[]; let PLAN_SEL=''; let PLAN_HDR={};
 // kontrol planı antet (başlık) alanları — kalıcı: control_plan_headers (stok başına)
 const HDR_FIELDS=[
-  ['form_no','Form No','text'],['doc_no','Doküman No','text'],['doc_title','Doküman Başlığı','text'],
+  ['doc_no','Doküman No (Dok.No)','text'],['doc_title','Doküman Başlığı','text'],['pub_date','Yayın Tarihi','date'],
   ['rev_no','Revizyon No','text'],['rev_date','Rev. Tarihi','date'],['plan_no','Kontrol Planı No','text'],
   ['customer','Cari Kartı','text'],['contact','İlgili Kişi','text'],['control_type','Kontrol Tipi','text'],
   ['core_team','Çekirdek Takım','text'],['tolerance_table','Tolerans Tablosu','text'],
@@ -631,7 +631,7 @@ function planHeaderCard(sc,stockName){
   card.append(el('div',{style:'display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:12px'},
     logoSrc?el('img',{src:logoSrc,style:'height:36px;border-radius:4px'}):'',
     el('div',{style:'flex:1;min-width:160px'},
-      el('div',{style:'font-size:15px;font-weight:800'},(PLAN_HDR.doc_title||'KONTROL PLANI')+(PLAN_HDR.form_no?(' · '+PLAN_HDR.form_no):'')),
+      el('div',{style:'font-size:15px;font-weight:800'},(PLAN_HDR.doc_title||'KONTROL PLANI')+(PLAN_HDR.doc_no?(' · '+PLAN_HDR.doc_no):'')),
       el('div',{style:'font-size:12px;color:var(--muted)'},`${sc} — ${esc(stockName||'')}`)),
     el('button',{class:'btn sm',onclick:()=>exportPlanExcel(sc,stockName)},'⬇ Excel'),
     el('button',{class:'btn sm sec',onclick:()=>printPlan(sc,stockName)},'🖨 PDF / Yazdır')
@@ -664,10 +664,10 @@ function exportPlanExcel(sc,stockName){
   const pad=r=>{ while(r.length<W)r.push(''); return r; };
   const aoa=[];
   aoa.push(pad(['SANİFOAM — '+(H.doc_title||'KONTROL PLANI')]));
-  aoa.push(pad(['Form No',H.form_no||'PL41','Doküman No',H.doc_no||'','Revizyon No',H.rev_no||'','Rev. Tarihi',hv('rev_date'),'Kontrol Planı No',H.plan_no||'','Revizyon Nedeni',H.rev_reason||'']));
+  aoa.push(pad(['Dok. No',H.doc_no||'','Yayın Tarihi',hv('pub_date'),'Revizyon No',H.rev_no||'','Rev. Tarihi',hv('rev_date'),'Kontrol Planı No',H.plan_no||'','Revizyon Nedeni',H.rev_reason||'']));
   aoa.push(pad(['Stok Kodu',sc,'Stok Adı',stockName||'','Cari Kartı',H.customer||'','İlgili Kişi',H.contact||'','Kontrol Tipi',H.control_type||'','Çekirdek Takım',H.core_team||'']));
   aoa.push(pad(['Müh. Onay',hv('eng_approve_date'),'Kalite Onay',hv('quality_approve_date'),'Plan Onay',hv('plan_approve_date'),'Diğer Onay',hv('other_approve_date'),'Tolerans Tablosu',H.tolerance_table||'']));
-  aoa.push(pad(['Tek. Resim Rev No',H.tech_rev_no||'','Tek. Resim Rev Tarihi',hv('tech_rev_date'),'Madde Sayısı',items.length,'Baskı Tarihi',fmtDate(new Date())]));
+  aoa.push(pad(['Tek. Resim Rev No',H.tech_rev_no||'','Tek. Resim Rev Tarihi',hv('tech_rev_date')]));
   aoa.push(pad([]));
   aoa.push(head);
   rows.forEach(r=>aoa.push(r));
@@ -691,25 +691,35 @@ function printPlan(sc,stockName){
  table.antet{width:100%;border-collapse:collapse;margin-bottom:5px}
  table.antet td,table.antet th{border:1px solid #000;padding:3px 6px;vertical-align:middle}
  table.antet th{background:#e8e8e8;text-align:left;font-size:8.5px;white-space:nowrap;font-weight:700}
- .logo-cell{width:160px;text-align:center;padding:4px} .logo-cell img{max-width:150px;max-height:48px}
- .title-cell{text-align:center;font-size:16px;font-weight:800;letter-spacing:.05em}
+ .logo-cell{width:170px;text-align:center;padding:4px} .logo-cell img{max-width:160px;max-height:50px}
+ .title-cell{text-align:center;font-size:17px;font-weight:800;letter-spacing:.05em}
  table.antet td{font-size:9px}
+ table.docbox{border-collapse:collapse;width:230px} table.docbox td{border:1px solid #000;padding:2px 6px;font-size:8.5px}
+ table.docbox td:first-child{background:#e8e8e8;font-weight:700;width:78px;white-space:nowrap}
  table.data{width:100%;border-collapse:collapse;table-layout:fixed}
  table.data th{background:#dce6f2;border:1px solid #555;padding:3px 4px;font-size:7px;text-transform:uppercase;text-align:left;word-wrap:break-word}
  table.data td{border:1px solid #999;padding:3px 4px;font-size:8px;vertical-align:top;word-wrap:break-word}
  .footer{margin-top:6px;font-size:8px;color:#666;display:flex;justify-content:space-between}
 </style></head><body>
 <table class="antet">
- <tr><td class="logo-cell" rowspan="3">${logoSrc?`<img src="${logoSrc}">`:'SANİFOAM'}</td>
-     <td class="title-cell" colspan="6">${esc(H.doc_title||'KONTROL PLANI')}</td></tr>
- <tr><th>Form No</th><td>${esc(H.form_no||'PL41')}</td><th>Doküman No</th><td>${esc(H.doc_no||'')}</td><th>Revizyon No</th><td>${esc(H.rev_no||'')}</td></tr>
- <tr><th>Rev. Tarihi</th><td>${esc(hv('rev_date'))}</td><th>Kontrol Planı No</th><td>${esc(H.plan_no||'')}</td><th>Revizyon Nedeni</th><td>${esc(H.rev_reason||'')}</td></tr>
+ <tr>
+   <td class="logo-cell">${logoSrc?`<img src="${logoSrc}">`:'SANİFOAM'}</td>
+   <td class="title-cell">${esc(H.doc_title||'KONTROL PLANI')}</td>
+   <td style="width:232px;padding:0">
+     <table class="docbox">
+       <tr><td>Dok.No</td><td>${esc(H.doc_no||'')}</td></tr>
+       <tr><td>Yayın Trh.</td><td>${esc(hv('pub_date'))}</td></tr>
+       <tr><td>Rev. No/Trh</td><td>${esc(H.rev_no||'')}${(H.rev_no&&hv('rev_date'))?' / ':''}${esc(hv('rev_date'))}</td></tr>
+       <tr><td>Sayfa</td><td>1/1</td></tr>
+     </table>
+   </td>
+ </tr>
 </table>
 <table class="antet">
  <tr><th>Stok Kodu</th><td>${esc(sc)}</td><th>Stok Adı</th><td colspan="3">${esc(stockName||'')}</td><th>Kontrol Tipi</th><td>${esc(H.control_type||'')}</td></tr>
  <tr><th>Cari Kartı</th><td>${esc(H.customer||'')}</td><th>İlgili Kişi</th><td>${esc(H.contact||'')}</td><th>Çekirdek Takım</th><td>${esc(H.core_team||'')}</td><th>Tolerans Tablosu</th><td>${esc(H.tolerance_table||'')}</td></tr>
  <tr><th>Müh. Onay</th><td>${esc(hv('eng_approve_date'))}</td><th>Kalite Onay</th><td>${esc(hv('quality_approve_date'))}</td><th>Plan Onay</th><td>${esc(hv('plan_approve_date'))}</td><th>Diğer Onay</th><td>${esc(hv('other_approve_date'))}</td></tr>
- <tr><th>Tek. Resim Rev No</th><td>${esc(H.tech_rev_no||'')}</td><th>Tek. Resim Rev Tarihi</th><td>${esc(hv('tech_rev_date'))}</td><th>Madde Sayısı</th><td>${items.length}</td><th>Baskı Tarihi</th><td>${esc(fmtDate(new Date()))}</td></tr>
+ <tr><th>Tek. Resim Rev No</th><td>${esc(H.tech_rev_no||'')}</td><th>Tek. Resim Rev Tarihi</th><td>${esc(hv('tech_rev_date'))}</td><th>Kontrol Planı No</th><td>${esc(H.plan_no||'')}</td><th>Revizyon Nedeni</th><td>${esc(H.rev_reason||'')}</td></tr>
 </table>
 <table class="data"><thead><tr>${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table>
 <div class="footer"><span>Sanifoam — Kalite Kontrol</span><span>${esc(sc)} · ${items.length} madde</span></div>
@@ -1552,6 +1562,7 @@ function exportRecords(recs){
 // ====================== İSTATİSTİK (SPC) ======================
 let STAT_FILT={stock:'',measure:'',start:'',end:'',stage:'',machine:''};
 let _statDraw=null;  // son çizim (yeniden boyutlandırma için)
+let _statPrint=null; // SPC raporu PDF/yazdır (veri geldiğinde atanır)
 window.addEventListener('resize',()=>{ if(_statDraw && !$('#tab-istatistik').classList.contains('hidden')) _statDraw(); });
 // normal dağılım CDF (Abramowitz–Stegun yaklaşımı)
 function _normCdf(z){ const t=1/(1+0.2316419*Math.abs(z)), d=0.3989423*Math.exp(-z*z/2);
@@ -1579,7 +1590,7 @@ function mrow(lab,val,calc,cls){
 }
 
 async function renderIstatistik(){
-  const root=$('#tab-istatistik');
+  const root=$('#tab-istatistik'); _statPrint=null;
   root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
   const [{data:planD},{data:recD}]=await Promise.all([
     sb.from('control_plan_items').select('*'),
@@ -1611,8 +1622,11 @@ async function renderIstatistik(){
     opts.forEach(([v,t])=>{ const o=el('option',{value:v},t); if(v===val)o.selected=true; s.append(o); });
     return el('div',{class:'field'+(grow?' grow':''),style:grow?'':'flex:0;min-width:150px'},el('label',{class:'lab'},label),s); };
   const fcard=el('div',{class:'card'});
-  fcard.append(el('h3',{style:'margin:0 0 4px'},'📊 İstatistiksel Proses Kontrol (SPC)'));
-  fcard.append(el('p',{style:'color:var(--muted);font-size:13px;margin:0 0 14px'},'Ölçüm sonuçlarını kontrol grafiği, histogram ve yeterlilik indeksleriyle (Cp, Cpk, Pp, Ppk) takip et. Limitler kontrol planından (alt/üst limit, hedef) alınır.'));
+  fcard.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap'},
+    el('h3',{style:'margin:0 0 4px'},'📊 İstatistiksel Proses Kontrol (SPC)'),
+    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{ if(_statPrint)_statPrint(); else toast('Önce yeterli veri olan bir ölçüm seç.','err'); }},'🖨 PDF / Yazdır')
+  ));
+  fcard.append(el('p',{style:'color:var(--muted);font-size:13px;margin:0 0 14px'},'Ölçüm sonuçlarını kontrol grafiği, histogram ve yeterlilik indeksleriyle (Cp, Cpk, Pp, Ppk) takip et. Limitler kontrol planından (alt/üst limit, hedef) alınır. 💡 Grafik noktalarının üzerine gelince tarih ve değer görünür.'));
   fcard.append(el('div',{class:'row',style:'align-items:flex-end;gap:10px'},
     mkSel('Stok Kodu',STAT_FILT.stock,stocks.map(s=>[s,s]),v=>{STAT_FILT.stock=v;STAT_FILT.measure='';STAT_FILT.machine='';reload();}),
     mkSel('Ölçülecek Değer',STAT_FILT.measure,measures.length?measures.map(m=>[m,measLabel(m)]):[['','— sayısal ölçüm yok —']],v=>{STAT_FILT.measure=v;reload();},true),
@@ -1774,12 +1788,59 @@ async function renderIstatistik(){
 
   root.append(defsCard());
 
-  _statDraw=()=>{ drawIChart(ic,cData,cTimes,{CL:c1CL,UCL:c1U,LCL:c1L,USL:showSpec?USL:null,LSL:showSpec?LSL:null,TGT:showSpec?TGT:null,ooc,clLabel:chartType==='IMR'?'X̄':'X̿'}); drawDisp(mcan,dData,dTimes,{cl:d2CL,ucl:d2U,lcl:d2L,label:dLab}); drawHist(hcan,xs,{mean,sWithin,sOverall,LSL,USL,TGT}); };
+  _statDraw=()=>{ drawIChart(ic,cData,cTimes,{CL:c1CL,UCL:c1U,LCL:c1L,USL:showSpec?USL:null,LSL:showSpec?LSL:null,TGT:showSpec?TGT:null,ooc,unit,clLabel:chartType==='IMR'?'X̄':'X̿'}); drawDisp(mcan,dData,dTimes,{cl:d2CL,ucl:d2U,lcl:d2L,label:dLab}); drawHist(hcan,xs,{mean,sWithin,sOverall,LSL,USL,TGT}); };
   setTimeout(_statDraw,30);
+  // ---- SPC raporu PDF (yazdır) ----
+  _statPrint=()=>{
+    _statDraw();   // grafikleri tazele
+    const logoSrc=(document.querySelector('.brand-logo')||{}).src||'';
+    const img1=ic.toDataURL('image/png'), img2=mcan.toDataURL('image/png'), img3=hcan.toDataURL('image/png');
+    const filtTxt=`Stok: ${esc(STAT_FILT.stock)} · Ölçüm: ${esc(STAT_FILT.measure)}${unit?(' ('+esc(unit)+')'):''} · Aşama: ${STAT_FILT.stage?STAGES[STAT_FILT.stage]:'Tümü'} · Makine: ${esc(STAT_FILT.machine||'Tümü')}${(STAT_FILT.start||STAT_FILT.end)?(' · '+(STAT_FILT.start||'…')+' – '+(STAT_FILT.end||'…')):''}`;
+    const mt=(title,rows)=>`<table class="mt"><tr><th colspan="2">${esc(title)}</th></tr>${rows.map(([k,v])=>`<tr><td>${esc(k)}</td><td class="v">${esc(v)}</td></tr>`).join('')}</table>`;
+    const proc=mt('Süreç Verisi',[['Alt Limit (AL)',LSL!=null?F(LSL,3):'—'],['Hedef',TGT!=null?F(TGT,3):'—'],['Üst Limit (ÜL)',USL!=null?F(USL,3):'—'],['Örnek Ort. (X̄)',F(mean,3)+u],['Örnek N',String(n)],['Altgrup boyu (n)',subN+' ('+chartTitle+')'],['Altgrup sayısı',String(groups.length)],['StdSapma (Within)',F(sWithin,4)],['StdSapma (Overall)',F(sOverall,4)]]);
+    const wcap=mt('Potansiyel (Within) Yeterlilik',[['Cp',capTxt(W.cp)],['CPL',capTxt(W.cpl)],['CPU',capTxt(W.cpu)],['Cpk',capTxt(W.cpk)]]);
+    const ocap=mt('Genel (Overall) Yeterlilik',[['Pp',capTxt(O.cp)],['PPL',capTxt(O.cpl)],['PPU',capTxt(O.cpu)],['Ppk',capTxt(O.cpk)],['Cpm',capTxt(Cpm)]]);
+    const pcap=mt('Performans (PPM)',[['Gözlenen',TL(ppmObs)],['Beklenen (Within)',ppmW!=null?TL(ppmW):'—'],['Beklenen (Overall)',ppmO!=null?TL(ppmO):'—']]);
+    const win=window.open('','_blank','width=1100,height=900');
+    win.document.write(`<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><title>SPC Raporu — ${esc(STAT_FILT.stock)}</title>
+<style>
+ @page{size:A4 portrait;margin:10mm}
+ *{box-sizing:border-box} body{font-family:Arial,Helvetica,sans-serif;color:#000;margin:0;padding:4px;font-size:11px}
+ .head{display:flex;align-items:center;gap:12px;border:2px solid #000;padding:8px 12px;margin-bottom:8px}
+ .head img{max-height:46px} .head .t{flex:1;text-align:center} .head .t b{font-size:16px}
+ .head .t div{font-size:10px;color:#333;margin-top:3px}
+ .chart{border:1px solid #999;border-radius:4px;padding:5px;margin-bottom:8px;page-break-inside:avoid}
+ .chart h4{margin:0 0 4px;font-size:12px}
+ .chart img{width:100%;height:auto;display:block}
+ .caps{display:flex;gap:8px;flex-wrap:wrap}
+ table.mt{border-collapse:collapse;flex:1;min-width:165px}
+ table.mt th{background:#0d3055;color:#fff;font-size:10px;padding:4px 6px;text-align:left}
+ table.mt td{border:1px solid #bbb;padding:3px 6px;font-size:10px} table.mt td.v{text-align:right;font-weight:700}
+ .ft{margin-top:8px;font-size:9px;color:#666;text-align:right}
+</style></head><body>
+ <div class="head">${logoSrc?`<img src="${logoSrc}">`:'<b>SANİFOAM</b>'}<div class="t"><b>İSTATİSTİKSEL PROSES KONTROL RAPORU</b><div>${filtTxt}</div></div></div>
+ <div class="chart"><h4>Kontrol Grafiği (${chartTitle})</h4><img src="${img1}"></div>
+ <div class="chart"><h4>${chartType==='IMR'?'Hareketli Aralık (MR)':(chartType==='XBARR'?'Altgrup Aralığı (R)':'Altgrup Std. Sapma (S)')}</h4><img src="${img2}"></div>
+ <div class="chart"><h4>Süreç Yeterlilik — Histogram (Within &amp; Overall)</h4><img src="${img3}"></div>
+ <div class="caps">${proc}${wcap}${ocap}${pcap}</div>
+ <div class="ft">Sanifoam — Kalite Kontrol · ${esc(STAT_FILT.stock)} · ${n} ölçüm</div>
+ <script>window.onload=function(){setTimeout(function(){window.print();},300);}<\/script>
+</body></html>`);
+    win.document.close();
+  };
 }
 function _setupCanvas(c){ const dpr=window.devicePixelRatio||1, w=c.clientWidth||c.parentElement.clientWidth||600, h=parseFloat(c.style.height)||260;
   c.width=Math.round(w*dpr); c.height=Math.round(h*dpr); const ctx=c.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,w,h); return {ctx,w,h}; }
 function _cv(n){ return getComputedStyle(document.body).getPropertyValue(n).trim()||'#888'; }
+// grafik noktalarına gelince tarih+değer gösteren ipucu
+function _chartTip(){ let t=document.getElementById('_chartTip'); if(!t){ t=document.createElement('div'); t.id='_chartTip'; t.style.cssText='position:fixed;z-index:9999;background:#0b1220;color:#fff;padding:6px 9px;border-radius:7px;font-size:12px;line-height:1.35;pointer-events:none;display:none;box-shadow:0 6px 18px rgba(0,0,0,.45);white-space:nowrap;border:1px solid #334155'; document.body.appendChild(t); } return t; }
+function attachHover(canvas, fmt){
+  const tip=_chartTip(); canvas.style.cursor='crosshair';
+  canvas.onmousemove=e=>{ const r=canvas.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top, pts=canvas._hover||[];
+    let best=null,bd=1e9; for(const p of pts){ const d=(p.x-mx)*(p.x-mx)+(p.y-my)*(p.y-my); if(d<bd){bd=d;best=p;} }
+    if(best&&bd<=625){ tip.innerHTML=fmt(best); tip.style.display='block'; tip.style.left=(e.clientX+14)+'px'; tip.style.top=(e.clientY+14)+'px'; } else tip.style.display='none'; };
+  canvas.onmouseleave=()=>{ tip.style.display='none'; };
+}
 function drawIChart(canvas,xs,times,o){
   const {ctx,w,h}=_setupCanvas(canvas); const muted=_cv('--muted'),line=_cv('--line'),accent=_cv('--accent');
   const padL=54,padR=64,padT=14,padB=30,pw=w-padL-padR,ph=h-padT-padB;
@@ -1792,9 +1853,11 @@ function drawIChart(canvas,xs,times,o){
   const hline=(v,color,dash,label)=>{ if(v==null||!isFinite(v))return; const y=Y(v); ctx.save(); ctx.strokeStyle=color; ctx.setLineDash(dash); ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w-padR,y); ctx.stroke(); ctx.restore(); ctx.fillStyle=color; ctx.textAlign='left'; ctx.fillText(label,w-padR+4,y); };
   hline(o.USL,'#f59e0b',[6,4],'USL'); hline(o.LSL,'#f59e0b',[6,4],'LSL'); hline(o.UCL,'#ef4444',[5,4],'UCL'); hline(o.LCL,'#ef4444',[5,4],'LCL'); hline(o.TGT,'#38bdf8',[2,3],'Hedef'); hline(o.CL,'#22c55e',[],o.clLabel||'X̄');
   ctx.strokeStyle=accent; ctx.lineWidth=1.5; ctx.setLineDash([]); ctx.beginPath(); xs.forEach((v,i)=>{ const x=X(i),y=Y(v); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.stroke();
-  xs.forEach((v,i)=>{ const x=X(i),y=Y(v),bad=o.ooc&&o.ooc[i]; ctx.fillStyle=bad?'#ef4444':accent; ctx.beginPath(); ctx.arc(x,y,bad?4:3,0,7); ctx.fill(); if(bad){ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.stroke();} });
+  const PT=[];
+  xs.forEach((v,i)=>{ const x=X(i),y=Y(v),bad=o.ooc&&o.ooc[i]; ctx.fillStyle=bad?'#ef4444':accent; ctx.beginPath(); ctx.arc(x,y,bad?4:3,0,7); ctx.fill(); if(bad){ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.stroke();} PT.push({x,y,v,t:times[i],bad}); });
   ctx.fillStyle=muted; ctx.textBaseline='top'; const idxs=[0,Math.floor((xs.length-1)/2),xs.length-1];
   idxs.forEach((i,k)=>{ ctx.textAlign=k===0?'left':(k===2?'right':'center'); ctx.fillText(fmtDate(times[i]),Math.min(Math.max(X(i),padL),w-padR),h-padB+8); });
+  canvas._hover=PT; attachHover(canvas, p=>`<b>${esc(fmtDT(p.t)||'')}</b><br>${o.clLabel==='X̿'?'Altgrup ort.':'Ölçüm'}: ${_fmtN(p.v,3)}${o.unit?(' '+esc(o.unit)):''}${p.bad?'<br><span style="color:#fca5a5">⚠ kontrol dışı</span>':''}`);
 }
 // genel dağılım grafiği (MR / R / S) — o={cl,ucl,lcl,label}
 function drawDisp(canvas,vals,times,o){
@@ -1807,9 +1870,11 @@ function drawDisp(canvas,vals,times,o){
   const hline=(v,color,dash,label)=>{ if(v==null||!isFinite(v))return; const y=Y(v); ctx.save(); ctx.strokeStyle=color; ctx.setLineDash(dash); ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w-padR,y); ctx.stroke(); ctx.restore(); ctx.fillStyle=color; ctx.textAlign='left'; ctx.fillText(label,w-padR+4,y); };
   hline(ucl,'#ef4444',[5,4],'UCL'); if(lcl>0)hline(lcl,'#ef4444',[5,4],'LCL'); hline(o.cl,'#22c55e',[],o.label||'CL');
   ctx.strokeStyle=accent; ctx.lineWidth=1.5; ctx.setLineDash([]); ctx.beginPath(); vals.forEach((v,i)=>{ const x=X(i),y=Y(v); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.stroke();
-  vals.forEach((v,i)=>{ const x=X(i),y=Y(v),bad=v>ucl||v<lcl; ctx.fillStyle=bad?'#ef4444':accent; ctx.beginPath(); ctx.arc(x,y,3,0,7); ctx.fill(); if(bad){ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.stroke();} });
+  const PT=[];
+  vals.forEach((v,i)=>{ const x=X(i),y=Y(v),bad=v>ucl||v<lcl; ctx.fillStyle=bad?'#ef4444':accent; ctx.beginPath(); ctx.arc(x,y,3,0,7); ctx.fill(); if(bad){ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.stroke();} PT.push({x,y,v,t:times&&times[i],bad}); });
   if(times&&times.length){ ctx.fillStyle=muted; ctx.textBaseline='top'; const idxs=[0,Math.floor((vals.length-1)/2),vals.length-1];
     idxs.forEach((i,k)=>{ ctx.textAlign=k===0?'left':(k===2?'right':'center'); ctx.fillText(fmtDate(times[i]),Math.min(Math.max(X(i),padL),w-padR),h-padB+6); }); }
+  canvas._hover=PT; attachHover(canvas, p=>`<b>${esc(fmtDT(p.t)||'')}</b><br>${esc(o.label||'')}: ${_fmtN(p.v,4)}${p.bad?'<br><span style="color:#fca5a5">⚠ kontrol dışı</span>':''}`);
 }
 function drawHist(canvas,xs,o){
   const {ctx,w,h}=_setupCanvas(canvas); const muted=_cv('--muted'),accent=_cv('--accent'),txt=_cv('--txt');
