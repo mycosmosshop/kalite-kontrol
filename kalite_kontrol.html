@@ -161,10 +161,42 @@
   .tgl.ok .lbl{left:9px} .tgl.ret .lbl{right:9px}
   .okret button.ok.on{background:var(--ok);color:#fff;border-color:var(--ok)}
   .okret button.ret.on{background:var(--ret);color:#fff;border-color:var(--ret)}
-  @media(max-width:640px){
+  /* ---------- RESPONSIVE (tablet & telefon) ---------- */
+  @media(max-width:900px){
+    body{font-size:13px}
+    main{padding:12px}
+    header.top{gap:8px;padding:10px 12px}
     header.top h2{font-size:15px}
     .who{font-size:11px}
-    main{padding:12px}
+    .brand-logo{height:24px;margin-right:6px}
+    nav.tabs button{padding:10px 11px;font-size:13px}
+    .card{padding:13px}
+    .modal{padding:16px}
+    .modal-bg{padding:8px}
+    .stat b{font-size:18px}
+    th,td{padding:7px 7px}
+    .row>.field,.toolbar>.field{min-width:120px!important}
+    .tbl-wrap{max-height:none}
+  }
+  @media(max-width:600px){
+    header.top{flex-wrap:wrap;row-gap:6px}
+    header.top .sp{display:none}
+    header.top .who{order:6;text-align:left;flex:1 1 100%}
+    nav.tabs{position:static;top:auto}
+    nav.tabs button{padding:9px 9px;font-size:12.5px}
+    .card{padding:11px;border-radius:10px}
+    .modal{padding:13px;border-radius:12px}
+    .modal-bg{padding:5px}
+    .row,.toolbar{gap:8px}
+    .row>*,.toolbar>.field{flex:1 1 100%!important;min-width:0!important}
+    .toolbar>.stat{flex:1 1 auto!important}
+    .field input,.inp,select.inp,textarea.inp{width:100%}
+    table{font-size:12px}
+    th,td{padding:6px 6px}
+    .btn{padding:10px 12px}
+    .btn.sm{padding:8px 11px}
+    h3{font-size:16px}
+    .auth-card{padding:24px 18px}
   }
 </style>
 </head>
@@ -1595,12 +1627,20 @@ async function editRecord(r,prod){
     });
     tb.append(body); m.append(el('div',{class:'tbl-wrap'},tb));
     m.append(el('div',{class:'field',style:'margin-top:8px'},el('label',{class:'lab'},'Genel Not'),el('textarea',{class:'inp',id:'er_note',rows:'2',disabled:canEdit?undefined:true},r.note||'')));
-    const btns=el('div',{style:'display:flex;gap:8px;margin-top:10px'});
+    const btns=el('div',{style:'display:flex;gap:8px;margin-top:10px;flex-wrap:wrap'});
     if(canEdit) btns.append(el('button',{class:'btn',onclick:saveEdit},'💾 Kaydet'));
+    if(PROFILE&&PROFILE.is_admin) btns.append(el('button',{class:'btn sec',style:'flex:0',title:'Ölçümleri sil, kaydı boş (turuncu) duruma getir',onclick:clearContent},'🧹 İçeriği Temizle'));
     if(canDelete) btns.append(el('button',{class:'btn danger',style:'flex:0',onclick:()=>delRecord(r.id)},'🗑 Sil'));
-    if(!canEdit && !canDelete) btns.append(el('button',{class:'btn sec',onclick:()=>root.innerHTML=''},'Kapat'));
+    if(!canEdit && !canDelete && !(PROFILE&&PROFILE.is_admin)) btns.append(el('button',{class:'btn sec',onclick:()=>root.innerHTML=''},'Kapat'));
     m.append(btns);
     bg.append(m); root.append(bg);
+  }
+  async function clearContent(){
+    if(!confirm('Bu kaydın TÜM ölçümleri silinip kayıt BOŞ (turuncu bayrak) duruma getirilecek. Madde listesi kalır, değerler temizlenir. Emin misin?'))return;
+    const cleared=(r.vals||[]).map(v=>({...v, samples:(v.samples||[]).map(s=>({...s, value:null, ok:null}))}));
+    const {error}=await sb.from('control_records').update({vals:cleared,overall_result:null}).eq('id',r.id);
+    if(error){toast(esc(error.message),'err');return;}
+    toast('Kayıt içeriği temizlendi (boş/turuncu).','ok'); root.innerHTML=''; renderKayitlar();
   }
   async function saveEdit(){
     const allS=vals.flatMap(v=>v.samples||[]);
