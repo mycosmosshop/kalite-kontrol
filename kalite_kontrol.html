@@ -1101,6 +1101,26 @@ async function renumberByOp(sc){
   await reorderPlan(sc, items.map(x=>x.id), 'Op No’ya göre sıralandı, Ölçü No (1..'+items.length+') atandı.');
 }
 // ---- KONTROL PLANI VERSİYONLAMA / ARŞİV (canlı plana dokunmaz, JSON snapshot) ----
+// iki plan sürümü arasındaki değişiklikleri (eklenen/çıkarılan/değişen madde) otomatik çıkarır
+function planDiff(oldItems, newItems){
+  const key=it=>(it.measure_name||'')+'|'+(it.op_no??'');
+  const om={},nm={}; (oldItems||[]).forEach(it=>om[key(it)]=it); (newItems||[]).forEach(it=>nm[key(it)]=it);
+  const fields=[['op_no','Op No'],['target','Hedef'],['lower_limit','Alt Limit'],['upper_limit','Üst Limit'],['unit','Birim'],['nitel_hedef','Nitel Hedef'],['method','Yöntem'],['sample_size','Örnekleme'],['sampling_frequency','Sıklık'],['son_kontrol_ornekleme','Son K. Örn.'],['process_control','Proses'],['giris_kalite','Giriş'],['final_control','Son'],['production_equipment','Üretim Ekipmanı'],['fmea_number','FMEA'],['special_characteristic','Özel Kar.'],['is_qualitative','Tip']];
+  const norm=v=>(v==null||v===''||v===false)?'':(v===true?'✓':String(v));   // null/''/false eşdeğer; true=✓
+  const added=[],removed=[],changed=[];
+  Object.keys(nm).forEach(k=>{ const n=nm[k]; if(!om[k]){ added.push(n.measure_name||k); return; }
+    const o=om[k],ch=[]; fields.forEach(([f,lbl])=>{ const ov=norm(o[f]),nv=norm(n[f]); if(ov!==nv) ch.push(lbl+': '+(ov===''?'∅':ov)+'→'+(nv===''?'∅':nv)); });
+    if(ch.length) changed.push((n.measure_name||k)+' ['+ch.join(', ')+']'); });
+  Object.keys(om).forEach(k=>{ if(!nm[k]) removed.push(om[k].measure_name||k); });
+  return {added,removed,changed};
+}
+function planDiffText(d){
+  const p=[];
+  if(d.added.length) p.push('➕ Eklenen ('+d.added.length+'): '+d.added.join(', '));
+  if(d.removed.length) p.push('➖ Çıkarılan ('+d.removed.length+'): '+d.removed.join(', '));
+  if(d.changed.length) p.push('✏️ Değişen ('+d.changed.length+'): '+d.changed.join(' · '));
+  return p.length?p.join('\n'):'Değişiklik tespit edilmedi.';
+}
 async function openPlanArchive(sc, stockName){
   const root=$('#modalRoot');
   root.innerHTML='<div class="modal-bg"><div class="modal"><div class="empty">Yükleniyor…</div></div></div>';
@@ -1117,16 +1137,20 @@ async function openPlanArchive(sc, stockName){
   m.append(el('div',{class:'meta',html:`<b>${esc(sc)}</b> — ${esc(stockName||'')} · Güncel Rev: <b>${esc(curRev)}</b> · ${(items||[]).length} madde`}));
   const nextRev=(/^\d+$/.test(String(curRev))?String(Number(curRev)+1):'');
   const revInp=el('input',{class:'inp',style:'max-width:120px',value:nextRev,placeholder:'örn. 1'});
-  const reasonInp=el('input',{class:'inp',placeholder:'Revizyon nedeni / değişiklik'});
+  // önceki sürüme göre otomatik değişiklik özeti (varsa)
+  const prevArc=(arcs||[])[0];
+  const autoDiff = prevArc ? planDiffText(planDiff(prevArc.items, items)) : ('İlk versiyon ('+(items||[]).length+' madde)');
+  const reasonInp=el('textarea',{class:'inp',rows:'3',style:'font-size:12.5px',placeholder:'Revizyon / değişiklik notu'}); reasonInp.value=autoDiff;
   m.append(el('div',{class:'card',style:'background:var(--panel2)'},
     el('div',{style:'font-weight:700;margin-bottom:4px'},'📦 Mevcut planı arşivle → yeni versiyona geç'),
     el('p',{style:'color:var(--muted);font-size:12px;margin:0 0 10px'},`Güncel plan (Rev ${esc(curRev)}) olduğu gibi arşivlenir; canlı plan yeni revizyon olarak düzenlenmeye devam eder. <b>Mevcut kontrol kayıtları etkilenmez.</b>`),
     el('div',{class:'row'},
-      el('div',{class:'field',style:'flex:0;min-width:120px'},el('label',{class:'lab'},'Yeni Rev No'),revInp),
-      el('div',{class:'field grow'},el('label',{class:'lab'},'Revizyon Nedeni'),reasonInp),
+      el('div',{class:'field',style:'flex:0;min-width:110px'},el('label',{class:'lab'},'Yeni Rev No'),revInp),
+      el('div',{class:'field grow'},el('label',{class:'lab'},'Değişiklik / Revizyon Notu (otomatik — düzenleyebilirsin)'),reasonInp)),
+    el('div',{style:'display:flex;justify-content:flex-end;margin-top:8px'},
       el('button',{class:'btn sm',style:'flex:0',onclick:async()=>{
         if(!confirm(`Güncel plan (Rev ${curRev}) arşivlenip yeni versiyona (Rev ${revInp.value.trim()||'?'}) geçilsin mi?`))return;
-        const {error}=await sb.from('control_plan_archives').insert({stock_code:sc,stock_name:stockName,version_label:String(curRev),reason:hdr.rev_reason||null,items:items||[],header:hdr||{},archived_by:ME&&ME.id});
+        const {error}=await sb.from('control_plan_archives').insert({stock_code:sc,stock_name:stockName,version_label:String(curRev),reason:reasonInp.value.trim()||null,items:items||[],header:Object.assign({},hdr,{rev_reason:reasonInp.value.trim()||null}),archived_by:ME&&ME.id});
         if(error){toast('Arşivlenemedi: '+esc(error.message),'err');return;}
         await sb.from('control_plan_headers').upsert({stock_code:sc,rev_no:revInp.value.trim()||null,rev_date:new Date().toISOString().slice(0,10),rev_reason:reasonInp.value.trim()||null},{onConflict:'stock_code'});
         root.innerHTML=''; toast('Rev '+curRev+' arşivlendi, yeni versiyona geçildi.','ok'); renderPlan();
@@ -2524,9 +2548,11 @@ async function renderDashboard(){
     add(byOperator, (p.operator||r.operator||'—'), isRet);
     add(byDate, String(r.checked_at).slice(0,10), isRet);
     (r.vals||[]).forEach(v=>{ const vr=(v.samples||[]).some(s=>s.ok===false); totalMeas++; if(vr)retMeas++;
-      const mk=(v.measure_name||'?')+'§'+(v.is_qualitative?'N':'O');
-      const g=byMeasure[mk]||(byMeasure[mk]={total:0,ret:0,name:v.measure_name||'?',q:!!v.is_qualitative}); g.total++; if(vr)g.ret++;
-      if(vr&&v.is_qualitative){ const nk=(v.measure_name||'?')+' → '+(v.nitel_hedef||'-'); nitelDetail[nk]=(nitelDetail[nk]||0)+1; }
+      // nitel mi? bayrak true ya da sayısal değeri olmayıp nitel hedefi olan
+      const isQual = v.is_qualitative===true || (v.is_qualitative==null && v.nitel_hedef!=null && (v.samples||[]).every(s=>s.value==null||s.value===''));
+      const mk=(v.measure_name||'?')+'§'+(isQual?'N':'O');
+      const g=byMeasure[mk]||(byMeasure[mk]={total:0,ret:0,name:v.measure_name||'?',q:isQual}); g.total++; if(vr)g.ret++;
+      if(isQual){ const nk=(v.measure_name||'?')+'§'+(v.nitel_hedef||'-'); const ng=nitelDetail[nk]||(nitelDetail[nk]={measure:v.measure_name||'?',nh:v.nitel_hedef||'-',total:0,ret:0}); ng.total++; if(vr)ng.ret++; }
     });
   });
   const totalRec=recs.length, retRate=totalRec?(100*retRec/totalRec):0;
@@ -2552,7 +2578,7 @@ async function renderDashboard(){
   // ---- KIRILIM PANELLERİ ----
   const toRows=map=>Object.entries(map).map(([k,g])=>({label:k,total:g.total,ret:g.ret})).sort((a,b)=>b.ret-a.ret||b.total-a.total);
   const measRows=Object.values(byMeasure).map(g=>({label:g.name,sub:g.q?'Nitel':'Ölçüsel',total:g.total,ret:g.ret})).sort((a,b)=>b.ret-a.ret||b.total-a.total);
-  const nitelRows=Object.entries(nitelDetail).map(([k,c])=>({label:k.split(' → ')[0],sub:k.split(' → ')[1],total:c,ret:c})).sort((a,b)=>b.ret-a.ret);
+  const nitelRows=Object.values(nitelDetail).map(g=>({label:g.measure,sub:g.nh,total:g.total,ret:g.ret})).sort((a,b)=>b.ret-a.ret||b.total-a.total);
   // aşama (giriş/seri başı/proses/son) — mantıksal sırada
   const stageOrder=['Giriş Kalite','Seri Başı','Proses','Son Kontrol'];
   const stageRows=Object.entries(byStage).map(([k,g])=>({label:k,total:g.total,ret:g.ret}))
@@ -2560,7 +2586,7 @@ async function renderDashboard(){
   const grid=el('div',{class:'dash-grid'});
   grid.append(dpanel('🚦 Aşama Bazlı RET (Seri Başı / Proses / Son)',stageRows,{colLabel:'Kontrol Aşaması',limit:10}));
   grid.append(dpanel('🔴 En Çok Retlenen Ölçümler',measRows,{colLabel:'Ölçülecek Değer'}));
-  grid.append(dpanel('📋 Nitel Uygunsuzluk Detayı',nitelRows,{colLabel:'Nitel hata'}));
+  grid.append(dpanel('📋 Nitel Kontroller (RET detayı)',nitelRows,{colLabel:'Nitel hedef'}));
   grid.append(dpanel('📦 Stok Kodu Bazlı',toRows(byStock),{colLabel:'Stok Kodu'}));
   grid.append(dpanel('🔧 Operasyon Bazlı',toRows(byOp),{colLabel:'Operasyon'}));
   grid.append(dpanel('🏭 Makine Bazlı',toRows(byMachine),{colLabel:'Makine'}));
