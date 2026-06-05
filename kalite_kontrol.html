@@ -2032,7 +2032,7 @@ async function renderIstatistik(){
   const hc=el('div',{class:'card chart-card'});
   hc.append(el('h3',{style:'margin:0 0 2px'},'Süreç Yeterlilik — Histogram (Within & Overall)'));
   hc.append(el('p',{style:'margin:0 0 10px;color:var(--muted);font-size:12px'},'Kırmızı düz eğri Within (σ_içsel), kesik eğri Overall (σ_genel) normal dağılımı; dikey çizgiler spec ve hedef. Bir değere tıkla → hesabı açılır.'));
-  const hcan=el('canvas'); hcan.style.height='300px'; hc.append(hcan);
+  const hcan=el('canvas'); hcan.style.cssText='height:330px;max-width:720px;width:100%;display:block;margin:0 auto'; hc.append(hcan);
   const procSec=el('div',{class:'mtab-sec'}, el('div',{class:'mtab-title'},'Süreç Verisi'),
     mrow('Alt Limit (AL)', LSL!=null?F(LSL,3):'—',''),
     mrow('Hedef', TGT!=null?F(TGT,3):'—',''),
