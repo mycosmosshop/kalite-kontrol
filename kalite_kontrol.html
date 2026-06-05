@@ -1380,6 +1380,21 @@ async function runBulkAuto(prods,plan,cyc,regen,status,go){
 let KAYIT_STAGE='seri_basi';
 let KAYIT_FILT={start:'',end:'',stock:''};
 let KAYIT_PROD=null;   // belirli bir üretimin kayıtlarına odaklanma
+// kayıt durumu: ölçüm girilmemişse 'empty', RET ise 'ret', değilse 'ok'
+function recStatus(r){
+  const vals=r.vals||[];
+  const hasAny=vals.some(v=>(v.samples||[]).some(s=> (s.value!=null&&s.value!=='') || s.ok===true || s.ok===false ));
+  if(!vals.length || !hasAny) return 'empty';
+  return r.overall_result==='RET' ? 'ret' : 'ok';
+}
+// kısa saplı üçgen bayrak (yeşil OK / kırmızı RET / turuncu içi boş)
+function flagCell(r){
+  const st=recStatus(r);
+  const c=st==='ret'?'#dc2626':(st==='empty'?'#f59e0b':'#16a34a');
+  const title=st==='ret'?'RET — uygunsuz':(st==='empty'?'İçi boş — ölçüm girilmemiş':'OK — uygun');
+  const svg=`<svg width="16" height="19" viewBox="0 0 16 19" aria-hidden="true"><line x1="3.2" y1="2" x2="3.2" y2="17" stroke="#94a3b8" stroke-width="1.7" stroke-linecap="round"/><path d="M3.2 2.6 L13.6 5.9 L3.2 9.2 Z" fill="${c}"/></svg>`;
+  return el('td',{title,style:'text-align:center;width:34px',html:svg});
+}
 async function renderKayitlar(){
   const root=$('#tab-kayitlar');
   root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
@@ -1428,12 +1443,13 @@ async function renderKayitlar(){
   if(KAYIT_FILT.stock)$('#kf_stock').value=KAYIT_FILT.stock;
   root.append(filt);
   const tb=el('table');
-  tb.append(el('thead',{},el('tr',{},...['Tarih','Kontrol Saati','Vardiya','Cari','Stok Kodu','Stok Adı','İş Emri','Üretim Mik.','Birim','Makine Kodu','Makine Adı','Sonuç','İşlem'].map(h=>el('th',{},h)))));
+  tb.append(el('thead',{},el('tr',{},...['','Tarih','Kontrol Saati','Vardiya','Cari','Stok Kodu','Stok Adı','İş Emri','Üretim Mik.','Birim','Makine Kodu','Makine Adı','Sonuç','İşlem'].map(h=>el('th',{},h)))));
   const body=el('tbody',{id:'recBody'});
-  if(!recs.length)body.append(el('tr',{},el('td',{colspan:13},el('div',{class:'empty'},`Bu aşamada (${STAGES[KAYIT_STAGE]}) kayıt yok.`))));
+  if(!recs.length)body.append(el('tr',{},el('td',{colspan:14},el('div',{class:'empty'},`Bu aşamada (${STAGES[KAYIT_STAGE]}) kayıt yok.`))));
   recs.forEach(r=>{
     const pr=pmap[r.production_id]||{};
     body.append(el('tr',{style:'cursor:pointer','data-s':`${r.stock_code} ${r.stock_name} ${r.machine_code} ${pr.customer||''} ${r.work_order||''}`.toLowerCase(),onclick:()=>editRecord(r,pr)},
+      flagCell(r),
       el('td',{},fmtDate(r.checked_at||pr.prod_date||pr.start_time)),
       el('td',{style:'font-weight:600'},fmtTime(r.checked_at)),
       el('td',{},String((r.checked_at?shiftForTime(r.checked_at):null)??r.shift??pr.shift??'')),
