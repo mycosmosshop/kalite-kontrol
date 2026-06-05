@@ -96,6 +96,13 @@
   .stat{display:inline-flex;flex-direction:column;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 16px;min-width:110px}
   .stat b{font-size:22px}
   .stat span{color:var(--muted);font-size:12px}
+  /* SPC aksiyon/CAPA not kartı */
+  .note-bg{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.25)}
+  .note-card{position:fixed;width:330px;max-width:94vw;background:var(--panel);border:1px solid var(--accent);border-radius:12px;padding:14px 16px;box-shadow:0 12px 34px rgba(0,0,0,.45);z-index:61}
+  .note-card .note-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:2px}
+  .note-card .note-h b{font-size:14px}
+  .note-card .note-x{background:none;border:none;color:var(--muted);font-size:20px;line-height:1;padding:0 2px}
+  .note-card textarea.inp,.note-card input.inp,.note-card select.inp{width:100%}
   /* kayıt modalı üst bilgi (etiketli iki sütun) */
   .kk-meta{display:grid;grid-template-columns:1fr 1fr;gap:7px 28px;margin:4px 0 16px;padding:13px 16px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;font-size:13.5px}
   .kk-meta-item{line-height:1.4}
@@ -998,11 +1005,12 @@ function openApplyHistory(item){
   m.append(el('div',{style:'margin:2px 0 4px 26px'},el('label',{class:'lab'},'Tarih (bu tarih ve sonrası)'),dateInp));
   const status=el('div',{style:'margin-top:8px;color:var(--muted);font-size:13px'});
   const go=el('button',{class:'btn',style:'margin-top:12px',onclick:async()=>{
-    if(mode==='none'){ root.innerHTML=''; return; }
+    if(mode==='none'){ root.innerHTML=''; toast('Bu madde yalnızca bundan sonra yapılacak kontrollerde uygulanacak.','ok'); return; }
     if(mode==='after'&&!dateInp.value){toast('Tarih seç.','err');return;}
     go.disabled=true; status.textContent='Uygulanıyor… (değerler üretiliyor)';
     const cnt=await applyItemToHistory(item,mode,dateInp.value);
-    toast(cnt+' geçmiş kayda eklendi.','ok'); root.innerHTML='';
+    root.innerHTML='';
+    toast(cnt>0 ? (cnt+' geçmiş kayda uygulandı.') : 'Uygun geçmiş kayıt bulunamadı (değişiklik yok) — yeni kontrollerde uygulanacak.','ok');
   }},'Uygula');
   m.append(go,status);
   bg.append(m); root.append(bg);
@@ -1816,6 +1824,72 @@ function spcTests(xs, cl, sigma, en){
 let _statDraw=null;  // son çizim (yeniden boyutlandırma için)
 let _statFilterDeb=null; // tarih yazarken her tuşta render olmasın diye debounce
 let _statPrint=null; // SPC raporu PDF/yazdır (veri geldiğinde atanır)
+let STAT_NOTES={};   // {pointTimeISO: capaNote} — kontrol grafiği noktalarına aksiyon notu
+function noteKey(t){ return new Date(t).toISOString(); }
+async function reloadStatNotes(){
+  STAT_NOTES={};
+  const {data:nd}=await sb.from('spc_notes').select('*').eq('stock_code',STAT_FILT.stock).eq('measure_name',STAT_FILT.measure);
+  (nd||[]).forEach(nt=>STAT_NOTES[noteKey(nt.point_time)]=nt);
+  if(_statDraw)_statDraw();
+}
+// noktaya sağ-tık → küçük CAPA kartı (sebep, faaliyet, sorumlu, termin, durum)
+function openNoteCard(pointTime, px, py){
+  const key=noteKey(pointTime); const ex=STAT_NOTES[key];
+  const root=$('#modalRoot');
+  const bg=el('div',{class:'note-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
+  const card=el('div',{class:'note-card'});
+  card.style.left=Math.max(8,Math.min(px-10, window.innerWidth-348))+'px';
+  card.style.top=Math.max(8,Math.min(py-10, window.innerHeight-430))+'px';
+  card.append(el('div',{class:'note-h'}, el('b',{},'📝 Aksiyon / CAPA Notu'),
+    el('button',{class:'note-x',onclick:()=>root.innerHTML=''},'×')));
+  card.append(el('div',{style:'font-size:11px;color:var(--muted);margin:-2px 0 8px'},'Nokta: '+fmtDT(pointTime)));
+  const lab=t=>el('label',{class:'lab',style:'margin-top:6px'},t);
+  const cause=el('textarea',{class:'inp',rows:'2',placeholder:'Hata / uygunsuzluk sebebi…'}); cause.value=ex&&ex.cause||'';
+  const action=el('textarea',{class:'inp',rows:'2',placeholder:'Yapılacak faaliyet / aksiyon…'}); action.value=ex&&ex.action||'';
+  const resp=el('input',{class:'inp',placeholder:'Sorumlu'}); resp.value=ex&&ex.responsible||'';
+  const due=el('input',{type:'date',class:'inp'}); due.value=ex&&ex.due_date||'';
+  const status=el('select',{class:'inp'}); [['open','🟠 Açık (devam ediyor)'],['done','🟢 Tamamlandı']].forEach(([v,t])=>{const o=el('option',{value:v},t); if((ex&&ex.status||'open')===v)o.selected=true; status.append(o);});
+  card.append(lab('Hata Sebebi'),cause, lab('Faaliyet / Aksiyon'),action,
+    el('div',{class:'row',style:'gap:8px;margin-top:6px'},
+      el('div',{class:'field grow',style:'margin:0'},lab('Sorumlu'),resp),
+      el('div',{class:'field',style:'flex:0;min-width:130px;margin:0'},lab('Termin Tarihi'),due)),
+    lab('Durum'),status);
+  const btns=el('div',{style:'display:flex;gap:8px;margin-top:12px'});
+  btns.append(el('button',{class:'btn sm',onclick:async()=>{
+    const payload={stock_code:STAT_FILT.stock,measure_name:STAT_FILT.measure,point_time:key,
+      cause:cause.value.trim()||null,action:action.value.trim()||null,responsible:resp.value.trim()||null,
+      due_date:due.value||null,status:status.value,updated_at:new Date().toISOString()};
+    let err;
+    if(ex){ ({error:err}=await sb.from('spc_notes').update(payload).eq('id',ex.id)); }
+    else { payload.created_by=ME&&ME.id; ({error:err}=await sb.from('spc_notes').insert(payload)); }
+    if(err){toast(esc(err.message),'err');return;}
+    root.innerHTML=''; toast('Aksiyon notu kaydedildi.','ok'); await reloadStatNotes();
+  }},'💾 Kaydet'));
+  if(ex) btns.append(el('button',{class:'btn sm danger',style:'flex:0',onclick:async()=>{
+    if(!confirm('Bu aksiyon notu silinsin mi?'))return;
+    const {error}=await sb.from('spc_notes').delete().eq('id',ex.id);
+    if(error){toast(esc(error.message),'err');return;}
+    root.innerHTML=''; toast('Not silindi.','ok'); await reloadStatNotes();
+  }},'🗑 Sil'));
+  btns.append(el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>root.innerHTML=''},'Kapat'));
+  card.append(btns);
+  bg.append(card); root.append(bg);
+}
+// kontrol grafiği noktasına küçük not işareti (açık=turuncu, tamamlandı=yeşil ✓)
+function drawNoteMarker(ctx, x, y, done){
+  const mx=x+6, my=y-12, w=9, h=10;
+  ctx.save();
+  ctx.fillStyle=done?'#16a34a':'#f59e0b'; ctx.strokeStyle='#fff'; ctx.lineWidth=1;
+  ctx.beginPath(); if(ctx.roundRect)ctx.roundRect(mx,my,w,h,2); else ctx.rect(mx,my,w,h); ctx.fill(); ctx.stroke();
+  if(done){ ctx.strokeStyle='#fff'; ctx.lineWidth=1.4; ctx.beginPath(); ctx.moveTo(mx+1.8,my+5); ctx.lineTo(mx+3.6,my+7.4); ctx.lineTo(mx+7.2,my+2.8); ctx.stroke(); }
+  else { ctx.strokeStyle='rgba(255,255,255,.9)'; ctx.lineWidth=.8; ctx.beginPath(); ctx.moveTo(mx+2,my+3.2); ctx.lineTo(mx+w-2,my+3.2); ctx.moveTo(mx+2,my+5.4); ctx.lineTo(mx+w-2,my+5.4); ctx.moveTo(mx+2,my+7.6); ctx.lineTo(mx+w-3,my+7.6); ctx.stroke(); }
+  ctx.restore();
+}
+function attachNoteContext(canvas){
+  canvas.oncontextmenu=e=>{ e.preventDefault(); const r=canvas.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top,pts=canvas._hover||[];
+    let best=null,bd=1e9; for(const p of pts){ const d=(p.x-mx)*(p.x-mx)+(p.y-my)*(p.y-my); if(d<bd){bd=d;best=p;} }
+    if(best&&bd<=1000) openNoteCard(best.t, e.clientX, e.clientY); };
+}
 window.addEventListener('resize',()=>{ if(_statDraw && !$('#tab-istatistik').classList.contains('hidden')) _statDraw(); });
 // normal dağılım CDF (Abramowitz–Stegun yaklaşımı)
 function _normCdf(z){ const t=1/(1+0.2316419*Math.abs(z)), d=0.3989423*Math.exp(-z*z/2);
@@ -1998,7 +2072,7 @@ async function renderIstatistik(){
   const showSpec = chartType==='IMR';   // spec limitleri yalnız bireysel grafikte anlamlı
   const cc=el('div',{class:'card chart-card'});
   cc.append(el('h3',{style:'margin:0 0 2px'}, chartType==='IMR'?'Kontrol Grafiği — Bireysel Değerler (I)':'Kontrol Grafiği — Altgrup Ortalamaları (X̄)'));
-  cc.append(el('p',{style:'margin:0 0 10px;color:var(--muted);font-size:12px'},`${esc(STAT_FILT.measure)}${unit?(' ('+esc(unit)+')'):''} · ${chartTitle} · altgrup n=${subN} · ${groups.length} altgrup / ${n} ölçüm · kırmızı + numaralı noktalar test ihlali (${STAT_TESTS.filter(Boolean).length} test aktif).`));
+  cc.append(el('p',{style:'margin:0 0 10px;color:var(--muted);font-size:12px'},`${esc(STAT_FILT.measure)}${unit?(' ('+esc(unit)+')'):''} · ${chartTitle} · ${groups.length} altgrup / ${n} ölçüm · kırmızı+numaralı noktalar test ihlali (${STAT_TESTS.filter(Boolean).length} test aktif). 🖱️ Noktaya sağ tıkla → aksiyon/CAPA notu (sebep, faaliyet, sorumlu, termin, durum).`));
   const ic=el('canvas'); ic.style.height='300px'; cc.append(ic);
   cc.append(el('div',{class:'chart-legend'},
     leg('var(--accent)','solid', chartType==='IMR'?'Ölçüm':'Altgrup ort.'), leg('#22c55e','solid', chartType==='IMR'?'Merkez (X̄)':'Merkez (X̿)'), leg('#ef4444','dashed','UCL/LCL'),
@@ -2075,7 +2149,9 @@ async function renderIstatistik(){
 
   root.append(defsCard());
 
-  _statDraw=()=>{ drawIChart(ic,cData,cTimes,{CL:c1CL,UCL:c1U,LCL:c1L,USL:showSpec?USL:null,LSL:showSpec?LSL:null,TGT:showSpec?TGT:null,ooc,viol,unit,clLabel:chartType==='IMR'?'X̄':'X̿'}); drawDisp(mcan,dData,dTimes,{cl:d2CL,ucl:d2U,lcl:d2L,label:dLab}); drawHist(hcan,xs,{mean,sWithin,sOverall,LSL,USL,TGT}); };
+  // CAPA aksiyon notlarını yükle (noktalara işaret konacak)
+  STAT_NOTES={}; { const {data:nd}=await sb.from('spc_notes').select('*').eq('stock_code',STAT_FILT.stock).eq('measure_name',STAT_FILT.measure); (nd||[]).forEach(nt=>STAT_NOTES[noteKey(nt.point_time)]=nt); }
+  _statDraw=()=>{ drawIChart(ic,cData,cTimes,{CL:c1CL,UCL:c1U,LCL:c1L,USL:showSpec?USL:null,LSL:showSpec?LSL:null,TGT:showSpec?TGT:null,ooc,viol,unit,notes:STAT_NOTES,clLabel:chartType==='IMR'?'X̄':'X̿'}); drawDisp(mcan,dData,dTimes,{cl:d2CL,ucl:d2U,lcl:d2L,label:dLab,notes:STAT_NOTES}); drawHist(hcan,xs,{mean,sWithin,sOverall,LSL,USL,TGT}); };
   setTimeout(_statDraw,30);
   // ---- SPC raporu PDF (yazdır) ----
   _statPrint=()=>{
@@ -2085,7 +2161,8 @@ async function renderIstatistik(){
     const uTxt=unit?(' '+esc(unit)):'';
     const hedefTxt = TGT!=null?(' · <b>Hedef:</b> '+F(TGT,3)+uTxt):'';
     const tolTxt = (LSL!=null||USL!=null)?(' · <b>Tolerans:</b> '+(LSL!=null?F(LSL,2):'…')+' – '+(USL!=null?F(USL,2):'…')+uTxt):'';
-    const filtTxt=`Stok: ${esc(STAT_FILT.stock)} · Ölçüm: <b>${esc(STAT_FILT.measure)}</b>${unit?(' ('+esc(unit)+')'):''}${hedefTxt}${tolTxt} · Aşama: ${STAT_FILT.stage?STAGES[STAT_FILT.stage]:'Tümü'} · Makine: ${esc(STAT_FILT.machine||'Tümü')}${(STAT_FILT.start||STAT_FILT.end)?(' · '+(STAT_FILT.start||'…')+' – '+(STAT_FILT.end||'…')):''}`;
+    const _ts=pts.map(p=>p.t); const dateTxt = _ts.length?(' · <b>Tarih:</b> '+fmtDate(Math.min(..._ts))+' – '+fmtDate(Math.max(..._ts))):'';
+    const filtTxt=`Stok: ${esc(STAT_FILT.stock)} · Ölçüm: <b>${esc(STAT_FILT.measure)}</b>${unit?(' ('+esc(unit)+')'):''}${hedefTxt}${tolTxt}${dateTxt} · Aşama: ${STAT_FILT.stage?STAGES[STAT_FILT.stage]:'Tümü'} · Makine: ${esc(STAT_FILT.machine||'Tümü')}`;
     const mt=(title,rows)=>`<table class="mt"><tr><th colspan="2">${esc(title)}</th></tr>${rows.map(([k,v])=>`<tr><td>${esc(k)}</td><td class="v">${esc(v)}</td></tr>`).join('')}</table>`;
     const proc=mt('Süreç Verisi',[['Alt Limit (LSL)',LSL!=null?F(LSL,3):'—'],['Hedef',TGT!=null?F(TGT,3):'—'],['Üst Limit (USL)',USL!=null?F(USL,3):'—'],['Örnek Ort. (X̄)',F(mean,3)+u],['Örnek N',String(n)],['Altgrup boyu (n)',subN+' ('+chartTitle+')'],['Altgrup sayısı',String(groups.length)],['StdSapma (Within)',F(sWithin,4)],['StdSapma (Overall)',F(sOverall,4)]]);
     const wcap=mt('Potansiyel (Within) Yeterlilik',[['Cp',capTxt(W.cp)],['CPL',capTxt(W.cpl)],['CPU',capTxt(W.cpu)],['Cpk',capTxt(W.cpk)]]);
@@ -2157,10 +2234,11 @@ function drawIChart(canvas,xs,times,o){
   xs.forEach((v,i)=>{ const x=X(i),y=Y(v); const tv=(o.viol&&o.viol[i])||[]; const bad=tv.length>0||(o.ooc&&o.ooc[i]);
     ctx.fillStyle=bad?'#ef4444':accent; ctx.beginPath(); ctx.arc(x,y,bad?4:3,0,7); ctx.fill(); if(bad){ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.stroke();}
     if(tv.length){ ctx.fillStyle='#ef4444'; ctx.font='bold 9px Segoe UI,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='bottom'; ctx.fillText(tv.join(','), x, y-5); }
-    PT.push({x,y,v,t:times[i],bad,tests:tv}); });
+    const note=o.notes&&o.notes[noteKey(times[i])]; if(note) drawNoteMarker(ctx,x,y,note.status==='done');
+    PT.push({x,y,v,t:times[i],bad,tests:tv,note}); });
   ctx.fillStyle=muted; ctx.font='11px Segoe UI,sans-serif'; ctx.textBaseline='top'; const idxs=[0,Math.floor((xs.length-1)/2),xs.length-1];
   idxs.forEach((i,k)=>{ ctx.textAlign=k===0?'left':(k===2?'right':'center'); ctx.fillText(fmtDate(times[i]),Math.min(Math.max(X(i),padL),w-padR),h-padB+8); });
-  canvas._hover=PT; attachHover(canvas, p=>`<b>${esc(fmtDT(p.t)||'')}</b><br>${o.clLabel==='X̿'?'Altgrup ort.':'Ölçüm'}: ${_fmtN(p.v,3)}${o.unit?(' '+esc(o.unit)):''}${p.tests&&p.tests.length?'<br><span style="color:#fca5a5">⚠ İhlal: Test '+p.tests.join(', ')+'</span>':''}`);
+  canvas._hover=PT; attachNoteContext(canvas); attachHover(canvas, p=>`<b>${esc(fmtDT(p.t)||'')}</b><br>${o.clLabel==='X̿'?'Altgrup ort.':'Ölçüm'}: ${_fmtN(p.v,3)}${o.unit?(' '+esc(o.unit)):''}${p.tests&&p.tests.length?'<br><span style="color:#fca5a5">⚠ İhlal: Test '+p.tests.join(', ')+'</span>':''}${p.note?'<br><span style="color:'+(p.note.status==='done'?'#86efac':'#fcd34d')+'">📝 Aksiyon notu var ('+(p.note.status==='done'?'tamamlandı':'açık')+') — sağ tıkla</span>':'<br><span style="color:#64748b;font-size:11px">↳ sağ tıkla → aksiyon notu ekle</span>'}`);
 }
 // genel dağılım grafiği (MR / R / S) — o={cl,ucl,lcl,label}
 function drawDisp(canvas,vals,times,o){
@@ -2174,10 +2252,12 @@ function drawDisp(canvas,vals,times,o){
   hline(ucl,'#ef4444',[5,4],'UCL'); if(lcl>0)hline(lcl,'#ef4444',[5,4],'LCL'); hline(o.cl,'#22c55e',[],o.label||'CL');
   ctx.strokeStyle=accent; ctx.lineWidth=1.5; ctx.setLineDash([]); ctx.beginPath(); vals.forEach((v,i)=>{ const x=X(i),y=Y(v); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.stroke();
   const PT=[];
-  vals.forEach((v,i)=>{ const x=X(i),y=Y(v),bad=v>ucl||v<lcl; ctx.fillStyle=bad?'#ef4444':accent; ctx.beginPath(); ctx.arc(x,y,3,0,7); ctx.fill(); if(bad){ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.stroke();} PT.push({x,y,v,t:times&&times[i],bad}); });
+  vals.forEach((v,i)=>{ const x=X(i),y=Y(v),bad=v>ucl||v<lcl; ctx.fillStyle=bad?'#ef4444':accent; ctx.beginPath(); ctx.arc(x,y,3,0,7); ctx.fill(); if(bad){ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.stroke();}
+    const note=(times&&o.notes)?o.notes[noteKey(times[i])]:null; if(note)drawNoteMarker(ctx,x,y,note.status==='done');
+    PT.push({x,y,v,t:times&&times[i],bad,note}); });
   if(times&&times.length){ ctx.fillStyle=muted; ctx.textBaseline='top'; const idxs=[0,Math.floor((vals.length-1)/2),vals.length-1];
     idxs.forEach((i,k)=>{ ctx.textAlign=k===0?'left':(k===2?'right':'center'); ctx.fillText(fmtDate(times[i]),Math.min(Math.max(X(i),padL),w-padR),h-padB+6); }); }
-  canvas._hover=PT; attachHover(canvas, p=>`<b>${esc(fmtDT(p.t)||'')}</b><br>${esc(o.label||'')}: ${_fmtN(p.v,4)}${p.bad?'<br><span style="color:#fca5a5">⚠ kontrol dışı</span>':''}`);
+  canvas._hover=PT; attachNoteContext(canvas); attachHover(canvas, p=>`<b>${esc(fmtDT(p.t)||'')}</b><br>${esc(o.label||'')}: ${_fmtN(p.v,4)}${p.bad?'<br><span style="color:#fca5a5">⚠ kontrol dışı</span>':''}${p.note?'<br><span style="color:'+(p.note.status==='done'?'#86efac':'#fcd34d')+'">📝 Aksiyon notu — sağ tıkla</span>':''}`);
 }
 function drawHist(canvas,xs,o){
   const {ctx,w,h}=_setupCanvas(canvas); const muted=_cv('--muted'),accent=_cv('--accent'),txt=_cv('--txt');
