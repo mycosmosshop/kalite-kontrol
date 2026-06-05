@@ -2392,7 +2392,7 @@ function dpanel(title,rows,opt){ // rows: [{label,sub,total,ret}]
 }
 function drawDashTrend(canvas,days){
   const {ctx,w,h}=_setupCanvas(canvas); const muted=_cv('--muted'),line=_cv('--line');
-  const padL=34,padR=12,padT=12,padB=24,pw=w-padL-padR,ph=h-padT-padB;
+  const padL=34,padR=12,padT=12,padB=40,pw=w-padL-padR,ph=h-padT-padB;
   const maxT=Math.max(1,...days.map(d=>d.total));
   const n=days.length, bw=Math.max(3,Math.min(34,pw/n-3));
   ctx.font='10px Segoe UI,sans-serif'; ctx.fillStyle=muted; ctx.strokeStyle=line;
@@ -2401,9 +2401,14 @@ function drawDashTrend(canvas,days){
   days.forEach((d,i)=>{ const cx=X(i)-bw/2; const okH=(d.total-d.ret)/maxT*ph, retH=d.ret/maxT*ph;
     ctx.fillStyle='#22c55e'; ctx.fillRect(cx,padT+ph-okH,bw,okH);
     ctx.fillStyle='#ef4444'; ctx.fillRect(cx,padT+ph-okH-retH,bw,retH); });
-  ctx.fillStyle=muted; ctx.textBaseline='top';
-  const idxs=[0,Math.floor((n-1)/2),n-1].filter((v,i,a)=>a.indexOf(v)===i);
-  idxs.forEach((i,k)=>{ if(i<0||i>=n)return; ctx.textAlign=k===0?'left':(k===idxs.length-1?'right':'center'); ctx.fillText(fmtDate(days[i].date),Math.min(Math.max(X(i),padL),w-padR),h-padB+6); });
+  // her çubuğun altına tarih (dd.mm) — kalabalıksa -45° döndür, çok fazlaysa atlamalı
+  ctx.fillStyle=muted; ctx.font='9px Segoe UI,sans-serif';
+  const rotate=(pw/n)<40, step=n>22?Math.ceil(n/22):1;
+  days.forEach((d,i)=>{ if(i%step!==0 && i!==n-1)return; const cx=X(i), lbl=String(fmtDate(d.date)).slice(0,5);
+    ctx.save(); ctx.translate(cx, h-padB+5);
+    if(rotate){ ctx.rotate(-Math.PI/4.2); ctx.textAlign='right'; ctx.textBaseline='middle'; }
+    else { ctx.textAlign='center'; ctx.textBaseline='top'; }
+    ctx.fillText(lbl,0,0); ctx.restore(); });
 }
 async function renderDashboard(){
   const root=$('#tab-dashboard');
@@ -2436,12 +2441,13 @@ async function renderDashboard(){
   // ---- AGREGASYON ----
   const G=()=>({total:0,ret:0});
   const add=(map,key,isRet)=>{ if(key==null||key==='')return; const g=map[key]||(map[key]=G()); g.total++; if(isRet)g.ret++; };
-  const byStock={},byOp={},byMachine={},byShift={},byOperator={},byDate={},byMeasure={},nitelDetail={};
+  const byStock={},byOp={},byMachine={},byShift={},byOperator={},byDate={},byMeasure={},nitelDetail={},byStage={};
   let okRec=0,retRec=0,emptyRec=0,totalMeas=0,retMeas=0; const prodSet=new Set();
   recs.forEach(r=>{
     const p=pmap[r.production_id]||{}; const isRet=r.overall_result==='RET'; const st=recStatus(r);
     if(st==='ret')retRec++; else if(st==='empty')emptyRec++; else okRec++;
     if(r.production_id)prodSet.add(r.production_id);
+    add(byStage, STAGES[r.stage]||r.stage||'—', isRet);
     add(byStock, r.stock_code, isRet);
     add(byOp, p.op_no!=null?('Op '+p.op_no):'—', isRet);
     add(byMachine, (p.machine_name||r.machine_code||'—'), isRet);
@@ -2478,7 +2484,12 @@ async function renderDashboard(){
   const toRows=map=>Object.entries(map).map(([k,g])=>({label:k,total:g.total,ret:g.ret})).sort((a,b)=>b.ret-a.ret||b.total-a.total);
   const measRows=Object.values(byMeasure).map(g=>({label:g.name,sub:g.q?'Nitel':'Ölçüsel',total:g.total,ret:g.ret})).sort((a,b)=>b.ret-a.ret||b.total-a.total);
   const nitelRows=Object.entries(nitelDetail).map(([k,c])=>({label:k.split(' → ')[0],sub:k.split(' → ')[1],total:c,ret:c})).sort((a,b)=>b.ret-a.ret);
+  // aşama (giriş/seri başı/proses/son) — mantıksal sırada
+  const stageOrder=['Giriş Kalite','Seri Başı','Proses','Son Kontrol'];
+  const stageRows=Object.entries(byStage).map(([k,g])=>({label:k,total:g.total,ret:g.ret}))
+    .sort((a,b)=>{ const ia=stageOrder.indexOf(a.label),ib=stageOrder.indexOf(b.label); return (ia<0?99:ia)-(ib<0?99:ib); });
   const grid=el('div',{class:'dash-grid'});
+  grid.append(dpanel('🚦 Aşama Bazlı RET (Seri Başı / Proses / Son)',stageRows,{colLabel:'Kontrol Aşaması',limit:10}));
   grid.append(dpanel('🔴 En Çok Retlenen Ölçümler',measRows,{colLabel:'Ölçülecek Değer'}));
   grid.append(dpanel('📋 Nitel Uygunsuzluk Detayı',nitelRows,{colLabel:'Nitel hata'}));
   grid.append(dpanel('📦 Stok Kodu Bazlı',toRows(byStock),{colLabel:'Stok Kodu'}));
