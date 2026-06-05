@@ -1932,7 +1932,10 @@ async function renderIstatistik(){
     _statDraw();   // grafikleri tazele
     const logoSrc=(document.querySelector('.brand-logo')||{}).src||'';
     const img1=ic.toDataURL('image/png'), img2=mcan.toDataURL('image/png'), img3=hcan.toDataURL('image/png');
-    const filtTxt=`Stok: ${esc(STAT_FILT.stock)} · Ölçüm: ${esc(STAT_FILT.measure)}${unit?(' ('+esc(unit)+')'):''} · Aşama: ${STAT_FILT.stage?STAGES[STAT_FILT.stage]:'Tümü'} · Makine: ${esc(STAT_FILT.machine||'Tümü')}${(STAT_FILT.start||STAT_FILT.end)?(' · '+(STAT_FILT.start||'…')+' – '+(STAT_FILT.end||'…')):''}`;
+    const uTxt=unit?(' '+esc(unit)):'';
+    const hedefTxt = TGT!=null?(' · <b>Hedef:</b> '+F(TGT,3)+uTxt):'';
+    const tolTxt = (LSL!=null||USL!=null)?(' · <b>Tolerans:</b> '+(LSL!=null?F(LSL,2):'…')+' – '+(USL!=null?F(USL,2):'…')+uTxt):'';
+    const filtTxt=`Stok: ${esc(STAT_FILT.stock)} · Ölçüm: <b>${esc(STAT_FILT.measure)}</b>${unit?(' ('+esc(unit)+')'):''}${hedefTxt}${tolTxt} · Aşama: ${STAT_FILT.stage?STAGES[STAT_FILT.stage]:'Tümü'} · Makine: ${esc(STAT_FILT.machine||'Tümü')}${(STAT_FILT.start||STAT_FILT.end)?(' · '+(STAT_FILT.start||'…')+' – '+(STAT_FILT.end||'…')):''}`;
     const mt=(title,rows)=>`<table class="mt"><tr><th colspan="2">${esc(title)}</th></tr>${rows.map(([k,v])=>`<tr><td>${esc(k)}</td><td class="v">${esc(v)}</td></tr>`).join('')}</table>`;
     const proc=mt('Süreç Verisi',[['Alt Limit (AL)',LSL!=null?F(LSL,3):'—'],['Hedef',TGT!=null?F(TGT,3):'—'],['Üst Limit (ÜL)',USL!=null?F(USL,3):'—'],['Örnek Ort. (X̄)',F(mean,3)+u],['Örnek N',String(n)],['Altgrup boyu (n)',subN+' ('+chartTitle+')'],['Altgrup sayısı',String(groups.length)],['StdSapma (Within)',F(sWithin,4)],['StdSapma (Overall)',F(sOverall,4)]]);
     const wcap=mt('Potansiyel (Within) Yeterlilik',[['Cp',capTxt(W.cp)],['CPL',capTxt(W.cpl)],['CPU',capTxt(W.cpu)],['Cpk',capTxt(W.cpk)]]);
@@ -2066,7 +2069,26 @@ function defsCard(){
         <tr><td>&lt; 1.00</td><td style="color:#f87171">Yetersiz — süreç tolerans dışı üretir</td><td>&gt; 2.700 PPM</td></tr>
       </tbody>
     </table>
-    <p style="color:var(--muted)"><b>PPM</b>: Milyonda kusur tahmini (normal dağılım, genel σ). <b>Histogram</b>: ölçümlerin dağılım şekli; çan eğrisine yakınlık normalliği, spec çizgilerine taşma kusur riskini gösterir.</p>
+    <div style="margin-top:14px;padding:11px 13px;background:rgba(37,99,235,.08);border:1px solid var(--line);border-radius:8px">
+      <p style="margin:0 0 8px"><b>🔎 Cp · Cpk · Pp · Ppk birlikte nasıl yorumlanır?</b> İki basit karşılaştırma her şeyi anlatır:</p>
+      <p style="margin:0 0 7px"><b>1) Cp ↔ Cpk → merkezleme (ortalama hedefte mi?):</b> Cp dağılımın yalnız <i>genişliğini</i>, Cpk genişlik + <i>ortalamanın hedeften kaymasını</i> ölçer.
+        <br>• <b>Cp ≈ Cpk</b> → süreç <b>ortalanmış</b> (hedefte, dengeli).
+        <br>• <b>Cp ≫ Cpk</b> → dağılım dar ama <b>ortalama bir limite kaymış</b>; fark büyüdükçe kayma artar. <b>Çözüm:</b> makine ayarıyla ortalamayı hedefe çek → Cpk yükselir (Cp aynı kalır).</p>
+      <p style="margin:0 0 7px"><b>2) Within (Cp/Cpk) ↔ Overall (Pp/Ppk) → kararlılık (zamanla değişiyor mu?):</b> Within yalnız <i>altgrup-içi</i> anlık değişkenliği, Overall <i>tüm</i> değişkenliği (altgruplar arası kaymalar dahil) kullanır.
+        <br>• <b>Cp ≈ Pp</b> ve <b>Cpk ≈ Ppk</b> → süreç <b>zamanla kararlı</b>, özel neden yok; kısa dönem yeteneği = uzun dönem performansı.
+        <br>• <b>Cp ≫ Pp</b> → anlık dağılım dar ama süreç <b>zamanla kayıyor/sürükleniyor</b> (ayar kayması, hammadde/vardiya farkı). <b>Çözüm:</b> önce kontrol grafiğinde sinyalleri bul, süreci kararlı hâle getir.</p>
+      <table style="margin-top:6px">
+        <thead><tr><th>Cp ↔ Cpk</th><th>Within ↔ Overall</th><th>Durum</th><th>Yapılacak</th></tr></thead>
+        <tbody>
+          <tr><td>Cp ≈ Cpk</td><td>≈ eşit</td><td style="color:#22c55e"><b>Ortalanmış + kararlı</b> (ideal)</td><td>Mevcut yeterliliği koru, izlemeye devam et.</td></tr>
+          <tr><td>Cp ≫ Cpk</td><td>≈ eşit</td><td style="color:#f59e0b">Kararlı ama <b>merkezden kaymış</b></td><td>Ortalamayı hedefe getir (tek ayar yeter).</td></tr>
+          <tr><td>Cp ≈ Cpk</td><td>Within ≫ Overall</td><td style="color:#f59e0b">Ortalanmış ama <b>kararsız</b></td><td>Özel nedenleri bul (kontrol grafiği), stabilize et.</td></tr>
+          <tr><td>Cp ≫ Cpk</td><td>Within ≫ Overall</td><td style="color:#f87171">Hem <b>kaymış</b> hem <b>kararsız</b></td><td>Önce kararlılık, sonra merkezleme.</td></tr>
+        </tbody>
+      </table>
+      <p style="margin:8px 0 0;color:var(--muted)">Özetle: <b>Cpk</b> = «bugün müşteriye ne veriyorum» (kısa dönem, merkez dahil). <b>Ppk</b> = «uzun vadede gerçekte ne veriyorum». İkisi de <b>≥ 1.33</b> hedeflenir; <b>Cpk − Ppk</b> farkı büyükse süreç <u>kararsız</u>, <b>Cp − Cpk</b> farkı büyükse süreç <u>merkezden kaymış</u> demektir.</p>
+    </div>
+    <p style="color:var(--muted);margin-top:12px"><b>PPM</b>: Milyonda kusur tahmini (normal dağılım, genel σ). <b>Histogram</b>: ölçümlerin dağılım şekli; çan eğrisine yakınlık normalliği, spec çizgilerine taşma kusur riskini gösterir.</p>
   `}));
   return d;
 }
