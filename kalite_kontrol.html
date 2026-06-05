@@ -715,8 +715,12 @@ function exportPlanExcel(sc,stockName){
   const headerRow=9, dataStart=10, dataEnd=9+rows.length;
   ws['!merges']=[];
   const thin={style:'thin',color:{rgb:'888888'}}, allB={top:thin,bottom:thin,left:thin,right:thin};
-  const xlPut=(r,c,val,style,colspan,rowspan)=>{ const ref=XLSX.utils.encode_cell({r,c}); ws[ref]={t:(typeof val==='number')?'n':'s',v:(val==null?'':val),s:style};
-    if((colspan&&colspan>1)||(rowspan&&rowspan>1)) ws['!merges'].push({s:{r,c},e:{r:r+((rowspan||1)-1),c:c+((colspan||1)-1)}}); };
+  const xlPut=(r,c,val,style,colspan,rowspan)=>{ const cs=colspan||1, rs=rowspan||1;
+    // birleştirmedeki TÜM hücrelere kenarlık/dolgu uygula (yarım çizgi olmasın, kutu sağa kadar dolu görünsün)
+    for(let rr=r;rr<r+rs;rr++){ for(let cc=c;cc<c+cs;cc++){ const ref=XLSX.utils.encode_cell({r:rr,c:cc});
+      if(rr===r&&cc===c) ws[ref]={t:(typeof val==='number')?'n':'s',v:(val==null?'':val),s:style};
+      else ws[ref]={t:'s',v:'',s:{border:(style&&style.border)||allB,fill:style&&style.fill,font:style&&style.font}}; } }
+    if(cs>1||rs>1) ws['!merges'].push({s:{r,c},e:{r:r+rs-1,c:c+cs-1}}); };
   const setS=(r,c,s)=>{ const ref=XLSX.utils.encode_cell({r,c}); if(!ws[ref])ws[ref]={t:'s',v:''}; ws[ref].s=s; };
   const labS={font:{bold:true,sz:9,color:{rgb:'1F2937'}},fill:{fgColor:{rgb:'E8E8E8'}},alignment:{vertical:'center',wrapText:true,horizontal:'left'},border:allB};
   const valS={font:{sz:9},alignment:{vertical:'center',wrapText:true,horizontal:'left'},border:allB};
