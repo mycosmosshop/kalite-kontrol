@@ -150,6 +150,7 @@
     <h2 style="display:inline-block">🔬 Kalite Kontrol</h2>
     <div class="sp"></div>
     <div class="who"><div id="whoEmail"></div><div id="whoRole"></div></div>
+    <button class="theme-btn" id="fsBtn" title="Tam ekran / Normal">⛶</button>
     <button class="theme-btn" id="themeBtnTop" title="Tema değiştir">🌙</button>
     <button class="btn sec sm" id="logoutBtn">Çıkış</button>
   </header>
@@ -229,9 +230,15 @@ let isRegister=false;
 $('#toRegister').onclick=()=>{isRegister=true;$('#loginBtn').textContent='Kayıt Ol';$('#toRegister').classList.add('hidden');$('#toLogin').classList.remove('hidden');authMsg('');};
 $('#toLogin').onclick=()=>{isRegister=false;$('#loginBtn').textContent='Giriş Yap';$('#toLogin').classList.add('hidden');$('#toRegister').classList.remove('hidden');authMsg('');};
 
+function goFullscreen(){ const el=document.documentElement; const fn=el.requestFullscreen||el.webkitRequestFullscreen||el.msRequestFullscreen; if(fn&&!document.fullscreenElement){ try{ fn.call(el); }catch(e){} } }
+function exitFullscreen(){ const fn=document.exitFullscreen||document.webkitExitFullscreen||document.msExitFullscreen; if(fn&&document.fullscreenElement){ try{ fn.call(document); }catch(e){} } }
+function toggleFullscreen(){ (document.fullscreenElement?exitFullscreen:goFullscreen)(); }
+const _fsBtn=$('#fsBtn'); if(_fsBtn) _fsBtn.onclick=toggleFullscreen;
+document.addEventListener('fullscreenchange',()=>{ if(_fsBtn) _fsBtn.textContent=document.fullscreenElement?'🗗':'⛶'; });
 $('#loginBtn').onclick=async()=>{
   const email=$('#email').value.trim().toLowerCase(), password=$('#password').value;
   if(!email||!password){authMsg('E-posta ve şifre gir.');return;}
+  goFullscreen();   // kullanıcı jesti içinde tam ekran iste
   $('#loginBtn').disabled=true;
   try{
     if(isRegister){
