@@ -78,6 +78,9 @@
   th,td{padding:8px 9px;text-align:left;border-bottom:1px solid var(--line);vertical-align:middle}
   .cell-inp{padding:5px 7px;font-size:13px;border-radius:6px;border:1px solid var(--line);background:var(--panel2);color:var(--txt);max-width:230px}
   .cell-inp:focus{outline:none;border-color:var(--accent)}
+  /* Ölçü No kutusu: rakamlar kırpılmasın (spinner okları gizli) */
+  input.olcu-inp{-moz-appearance:textfield;appearance:textfield}
+  input.olcu-inp::-webkit-outer-spin-button,input.olcu-inp::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
   th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.3px;position:sticky;top:0;background:var(--panel)}
   tr:hover td{background:var(--panel2)}
   .tbl-wrap{overflow-x:auto;max-height:65vh;overflow-y:auto;border:1px solid var(--line);border-radius:10px}
@@ -808,7 +811,7 @@ async function renderPlan(){
         canPlan?el('button',{class:'btn sm danger',onclick:()=>delPlanStock(sc)},'Bu planı sil'):el('span',{class:'pill gray'},'salt görünüm')
       )
     ));
-    if(canPlan) card.append(el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:12px',html:'💡 Hücrelere tıklayıp değiştir (otomatik kaydedilir). Sıralama <b>Ölçü No</b>’ya göredir: <b>Ölçü No’yu değiştir</b> → satır o sıraya taşınır, ya da <b>⠿ ile satırı sürükle</b>. «Op No’ya göre sırala» ile otomatik dizilir.'}));
+    if(canPlan) card.append(el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:12px',html:'💡 Hücrelere tıklayıp değiştir (otomatik kaydedilir). Sıralama <b>Ölçü No</b>’ya göredir: <b>Ölçü No’yu değiştir</b> → satır o sıraya taşınır, ya da <b>⠿ ile satırı sürükle</b>. Satır sonundaki <b>＋</b> ile iki ölçünün arasına yeni madde eklersin. «Op No’ya göre sırala» ile otomatik dizilir.'}));
     const sorted=planSorted(items);
     const tb=el('table');
     tb.append(el('thead',{},el('tr',{},...['Ölçü No','Op Kartı','Op No','Proses','Giriş','Son','Ölçülecek Değer','Nicel Hedef','Nitel Hedef / Birim','Alt Limit','Üst Limit','Örn. Büyük.','Örn. Sıklık','Son K. Örn.','Üretim Ekipmanı','FMEA No','Özel Kar.','Kontrol Yöntemi','Alt. Yöntem','Acil Eylem','DÖF','Tip',''].map(h=>el('th',{},h)))));
@@ -817,7 +820,7 @@ async function renderPlan(){
       const olcuCell = canPlan
         ? el('td',{style:'white-space:nowrap;text-align:center'},
             el('span',{class:'drag-h',title:'Sürükleyerek taşı',style:'cursor:grab;color:var(--muted);margin-right:2px;user-select:none'},'⠿'),
-            el('input',{type:'number',min:'1',class:'cell-inp',style:'width:44px;text-align:center;font-weight:800;color:var(--accent)',value:String(oi+1),
+            el('input',{type:'number',min:'1',class:'cell-inp olcu-inp',style:'width:52px;text-align:center;font-weight:800;color:var(--accent)',value:String(oi+1),
               title:'Ölçü No — değiştir, satır o sıraya taşınır',
               onchange:e=>{ let t=parseInt(e.target.value,10); if(isNaN(t)||t<1)t=1; if(t>sorted.length)t=sorted.length;
                 const ids=sorted.map(x=>x.id); const [m]=ids.splice(oi,1); ids.splice(t-1,0,m); reorderPlan(sc,ids,'Ölçü No güncellendi.'); }}))
@@ -852,7 +855,9 @@ async function renderPlan(){
         el('td',{},pin(it,'emergency_action_plan',{w:'70px'})),
         el('td',{},pin(it,'capa_plan',{w:'60px'})),
         el('td',{},pin(it,'is_qualitative',{select:true})),
-        el('td',{}, canPlan?el('button',{class:'btn sm danger',onclick:()=>delPlanItem(it.id)},'Sil'):'')
+        el('td',{style:'white-space:nowrap'},
+          canPlan?el('button',{class:'btn sm',title:'Bu satırın altına yeni ölçü ekle',onclick:()=>insertPlanItemAfter(it)},'＋'):'',
+          canPlan?el('button',{class:'btn sm danger',style:'margin-left:5px',onclick:()=>delPlanItem(it.id)},'Sil'):'')
       );
       body.append(tr);
     });
@@ -916,6 +921,18 @@ async function addPlanItem(){
   const {error}=await sb.from('control_plan_items').insert(rec);
   if(error){toast(esc(error.message),'err');return;}
   toast('Madde eklendi.','ok'); renderPlan();
+}
+// iki Ölçü No arasına (bu satırın hemen altına) yeni boş madde ekle
+async function insertPlanItemAfter(it){
+  const stock=it.stock_code;
+  const ordered=planSorted((PLAN||[]).filter(p=>p.stock_code===stock));
+  const idx=ordered.findIndex(x=>x.id===it.id); if(idx<0)return;
+  const ni={ stock_code:stock, stock_name:it.stock_name, op_no:it.op_no, operasyon_karti:it.operasyon_karti,
+    measure_name:'(yeni ölçü)', is_qualitative:false, sample_size:1, process_control:true, active:true, seq:0 };
+  const {data,error}=await sb.from('control_plan_items').insert(ni).select().single();
+  if(error){toast(esc(error.message),'err');return;}
+  const ids=ordered.map(x=>x.id); ids.splice(idx+1,0,data.id);   // bu satırın hemen altına yerleştir
+  await reorderPlan(stock, ids, 'Ölçü No '+(idx+2)+' eklendi — satırı düzenleyebilirsin.');
 }
 async function delPlanItem(id){
   if(!confirm('Bu kontrol maddesi silinsin mi?'))return;
