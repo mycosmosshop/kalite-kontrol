@@ -1640,7 +1640,9 @@ async function runBulkAuto(prods,plan,cyc,regen,status,go){
       await sb.from('productions').update({end_time:end.toISOString(),duration_min:Math.round(durMin)}).eq('id',p.id);
       p.end_time=end.toISOString(); p.duration_min=Math.round(durMin);
     } else if(p.end_time){ end=new Date(p.end_time); durMin=Math.round((end.getTime()-start.getTime())/60000); if(durMin<0)durMin+=1440; // çevrim yok → mevcut başlama/bitişten süreyi hesapla (proses de üretilsin)
-    } else { end=start; durMin=0; }  // ne çevrim ne bitiş → sadece seri başı + son
+      if(durMin<=0 && Number(p.duration_min)>0){ durMin=Number(p.duration_min); end=new Date(start.getTime()+durMin*60000); }  // bitiş=başlama ama süre bilgisi varsa onu kullan
+    } else if(Number(p.duration_min)>0){ durMin=Number(p.duration_min); end=new Date(start.getTime()+durMin*60000); }  // bitiş yok ama süre var
+    else { end=start; durMin=0; }  // ne çevrim ne bitiş ne süre → kısa üretim sayılır
     if(regen){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); }
     const cur=have[p.id]||new Set();
     const items=opItemsFor(plan.filter(x=>x.stock_code===p.stock_code),p.op_no);
@@ -1652,9 +1654,15 @@ async function runBulkAuto(prods,plan,cyc,regen,status,go){
     const endMs=(end&&end.getTime()>start.getTime())?end.getTime():(start.getTime()+6*60000);
     const offWhen=()=>new Date(Math.min(start.getTime()+Math.round((1+Math.random()*4)*60000), endMs-30000));
     if(!cur.has('seri_basi')){ const r=buildAutoRec(p,'seri_basi',offWhen(),items,priorMap); if(r)recs.push(r); }       // seri üretim başından birkaç dk sonra
-    if(!cur.has('proses')){ for(let t=freq;t<durMin;t+=freq){ const jit=Math.round((Math.random()*10-5)*60000); // ±5 dk sapma — hep tam saat olmasın
-      let tm=start.getTime()+t*60000+jit; tm=Math.min(Math.max(tm,start.getTime()+60000),end.getTime()-60000); // aralıkta kal
-      const r=buildAutoRec(p,'proses',new Date(tm),items,priorMap); if(r)recs.push(r); } } // plana göre saatlik
+    if(!cur.has('proses')){
+      const ptimes=[];
+      for(let t=freq;t<durMin;t+=freq){ const jit=Math.round((Math.random()*10-5)*60000); // ±5 dk sapma — hep tam saat olmasın
+        let tm=start.getTime()+t*60000+jit; tm=Math.min(Math.max(tm,start.getTime()+60000),end.getTime()-60000); // aralıkta kal
+        ptimes.push(tm); } // plana göre saatlik
+      // süre çok kısa/sıfır olsa bile plan proses maddesi içeriyorsa EN AZ BİR proses kontrolü üret
+      if(!ptimes.length && stageItems(items,'proses').length){ let tm=Math.min(start.getTime()+120000, endMs-30000); if(tm<=start.getTime())tm=start.getTime()+60000; ptimes.push(tm); }
+      ptimes.forEach(tm=>{ const r=buildAutoRec(p,'proses',new Date(tm),items,priorMap); if(r)recs.push(r); });
+    }
     if(!cur.has('son')){ const r=buildAutoRec(p,'son',end,items,priorMap); if(r)recs.push(r); }                      // son: bitişte
     if(!cur.has('giris')){ const r=buildAutoRec(p,'giris',offWhen(),items,priorMap); if(r)recs.push(r); }
     if(recs.length){ const {error}=await sb.from('control_records').insert(recs); if(error){console.warn(error.message);} else {made+=recs.length;prodN++;} }
