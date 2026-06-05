@@ -918,6 +918,7 @@ async function renderPlan(){
         el('td',{},pin(it,'is_qualitative',{select:true})),
         el('td',{style:'white-space:nowrap'},
           canPlan?el('button',{class:'btn sm',title:'Bu satırın altına yeni ölçü ekle',onclick:()=>insertPlanItemAfter(it)},'＋'):'',
+          (PROFILE&&PROFILE.is_admin)?el('button',{class:'btn sm sec',style:'margin-left:5px',title:'Bu maddeyi geçmiş kayıtlara uygula',onclick:()=>openApplyHistory(it)},'↩'):'',
           canPlan?el('button',{class:'btn sm danger',style:'margin-left:5px',onclick:()=>delPlanItem(it.id)},'Sil'):'')
       );
       body.append(tr);
@@ -979,9 +980,62 @@ async function addPlanItem(){
     lower_limit:$('#pi_lo').value.trim()||null,
     upper_limit:$('#pi_hi').value.trim()||null,sample_size:Number($('#pi_sample').value)||1,
     is_qualitative:$('#pi_qual').value==='true',seq:PLAN.filter(p=>p.stock_code===stock).length+1};
-  const {error}=await sb.from('control_plan_items').insert(rec);
+  const {data,error}=await sb.from('control_plan_items').insert(rec).select().single();
   if(error){toast(esc(error.message),'err');return;}
   toast('Madde eklendi.','ok'); renderPlan();
+  if(PROFILE&&PROFILE.is_admin&&data) setTimeout(()=>openApplyHistory(data),50);   // geçmişe uygulansın mı?
+}
+// yeni/var olan bir kontrol maddesini geçmiş kayıtlara uygula (admin) — değerler otomatik üretilir
+function openApplyHistory(item){
+  const root=$('#modalRoot');
+  const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
+  const m=el('div',{class:'modal',style:'position:relative;max-width:540px'});
+  m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
+  m.append(el('h3',{},'Geçmiş kayıtlara uygula'));
+  m.append(el('div',{class:'meta',html:`<b>${esc(item.measure_name||'(yeni ölçü)')}</b> maddesi mevcut kontrol kayıtlarına da eklensin mi? Eklenirse her kayıt için değer <b>otomatik (uygun, rastgele)</b> üretilir.`}));
+  let mode='none';
+  const dateInp=el('input',{type:'date',class:'inp',style:'max-width:180px',disabled:true});
+  const opt=(val,label)=>{ const r=el('input',{type:'radio',name:'aph',style:'margin-right:9px'}); if(val==='none')r.checked=true; r.onchange=()=>{mode=val;dateInp.disabled=(val!=='after');};
+    return el('label',{style:'display:flex;align-items:center;cursor:pointer;padding:7px 0'},r,label); };
+  m.append(opt('none','Hayır — yalnız bundan sonra yapılacak kontrollere'));
+  m.append(opt('all','Evet — TÜM geçmiş kayıtlara uygula'));
+  m.append(opt('after','Belirli tarihten sonraki kayıtlara'));
+  m.append(el('div',{style:'margin:2px 0 4px 26px'},el('label',{class:'lab'},'Tarih (bu tarih ve sonrası)'),dateInp));
+  const status=el('div',{style:'margin-top:8px;color:var(--muted);font-size:13px'});
+  const go=el('button',{class:'btn',style:'margin-top:12px',onclick:async()=>{
+    if(mode==='none'){ root.innerHTML=''; return; }
+    if(mode==='after'&&!dateInp.value){toast('Tarih seç.','err');return;}
+    go.disabled=true; status.textContent='Uygulanıyor… (değerler üretiliyor)';
+    const cnt=await applyItemToHistory(item,mode,dateInp.value);
+    toast(cnt+' geçmiş kayda eklendi.','ok'); root.innerHTML='';
+  }},'Uygula');
+  m.append(go,status);
+  bg.append(m); root.append(bg);
+}
+async function applyItemToHistory(item, mode, dateFrom){
+  let q=sb.from('control_records').select('id,stage,production_id,vals,checked_at').eq('stock_code',item.stock_code);
+  if(mode==='after'&&dateFrom) q=q.gte('checked_at',dateFrom);
+  const {data:recs,error}=await q.limit(5000);
+  if(error){toast(esc(error.message),'err');return 0;}
+  // op_no eşleşmesi için üretim op haritası
+  let opMap={};
+  if(item.op_no!=null){ const ids=[...new Set((recs||[]).map(r=>r.production_id).filter(Boolean))];
+    if(ids.length){ const {data:pr}=await sb.from('productions').select('id,op_no').in('id',ids); (pr||[]).forEach(p=>opMap[p.id]=p.op_no); } }
+  let updated=0;
+  for(const r of (recs||[])){
+    if(!stageItems([item], r.stage).length) continue;                                  // bu aşamaya uymuyor
+    if(item.op_no!=null && opMap[r.production_id]!=null && String(opMap[r.production_id])!==String(item.op_no)) continue;  // op uyumsuz
+    const vals=r.vals||[];
+    if(vals.some(v=>v.plan_item_id===item.id)) continue;                                // zaten var
+    const n=sampleCount(item, r.stage);
+    vals.push({plan_item_id:item.id,measure_name:item.measure_name,target:item.target,unit:item.unit,nitel_hedef:item.nitel_hedef,
+      lower_limit:item.lower_limit,upper_limit:item.upper_limit,method:item.method,sampling_frequency:item.sampling_frequency,
+      is_qualitative:item.is_qualitative,sample_size:n,samples:genSamples(item,n)});
+    const overall = vals.flatMap(v=>v.samples||[]).some(s=>s.ok===false)?'RET':'OK';
+    const {error:e2}=await sb.from('control_records').update({vals,overall_result:overall}).eq('id',r.id);
+    if(!e2)updated++;
+  }
+  return updated;
 }
 // iki Ölçü No arasına (bu satırın hemen altına) yeni boş madde ekle
 async function insertPlanItemAfter(it){
@@ -1412,12 +1466,15 @@ async function runBulkAuto(prods,plan,cyc,regen,status,go){
     const freqs=stageItems(items,'proses').map(it=>Number(it.sampling_frequency)).filter(v=>v>0&&v<=1440);
     const freq=freqs.length?Math.min(...freqs):60;
     const recs=[];
-    if(!cur.has('seri_basi')){ const r=buildAutoRec(p,'seri_basi',start,items,priorMap); if(r)recs.push(r); }       // seri üretim başında
+    // seri başı / giriş kontrolü üretim başından 1–5 dk SONRA (başlangıçla aynı olmasın); bitişi geçmesin
+    const endMs=(end&&end.getTime()>start.getTime())?end.getTime():(start.getTime()+6*60000);
+    const offWhen=()=>new Date(Math.min(start.getTime()+Math.round((1+Math.random()*4)*60000), endMs-30000));
+    if(!cur.has('seri_basi')){ const r=buildAutoRec(p,'seri_basi',offWhen(),items,priorMap); if(r)recs.push(r); }       // seri üretim başından birkaç dk sonra
     if(!cur.has('proses')){ for(let t=freq;t<durMin;t+=freq){ const jit=Math.round((Math.random()*10-5)*60000); // ±5 dk sapma — hep tam saat olmasın
       let tm=start.getTime()+t*60000+jit; tm=Math.min(Math.max(tm,start.getTime()+60000),end.getTime()-60000); // aralıkta kal
       const r=buildAutoRec(p,'proses',new Date(tm),items,priorMap); if(r)recs.push(r); } } // plana göre saatlik
     if(!cur.has('son')){ const r=buildAutoRec(p,'son',end,items,priorMap); if(r)recs.push(r); }                      // son: bitişte
-    if(!cur.has('giris')){ const r=buildAutoRec(p,'giris',start,items,priorMap); if(r)recs.push(r); }
+    if(!cur.has('giris')){ const r=buildAutoRec(p,'giris',offWhen(),items,priorMap); if(r)recs.push(r); }
     if(recs.length){ const {error}=await sb.from('control_records').insert(recs); if(error){console.warn(error.message);} else {made+=recs.length;prodN++;} }
     else skipped++;
     status.textContent=`İşleniyor… ${prodN} üretim, ${made} kayıt`;
@@ -1455,7 +1512,7 @@ async function renderKayitlar(){
   if(KAYIT_FILT.stock) q=q.eq('stock_code',KAYIT_FILT.stock);
   if(KAYIT_FILT.start) q=q.gte('checked_at',KAYIT_FILT.start);
   if(KAYIT_FILT.end) q=q.lte('checked_at',KAYIT_FILT.end+'T23:59:59');
-  const [{data:recsD},{data:prodsD}]=await Promise.all([q, sb.from('productions').select('id,customer,start_time,end_time,quantity,unit,machine_name,machine_code,shift,stock_code,stock_name,prod_date,work_order')]);
+  const [{data:recsD},{data:prodsD}]=await Promise.all([q, sb.from('productions').select('id,customer,start_time,end_time,quantity,unit,machine_name,machine_code,shift,stock_code,stock_name,prod_date,work_order,op_no,operator')]);
   const recs=recsD||[]; const pmap={}; (prodsD||[]).forEach(p=>pmap[p.id]=p);
   root.innerHTML='';
   // aşama alt sekmeleri
@@ -2009,8 +2066,9 @@ async function renderIstatistik(){
  .chart h4{margin:0 0 4px;font-size:12px}
  .chart img{width:100%;height:auto;display:block}
  .chart.hist img{max-width:560px;margin:0 auto}
- .caps{display:flex;gap:8px;flex-wrap:wrap}
+ .caps{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start}
  table.mt{border-collapse:collapse;flex:1;min-width:165px}
+ table.mt th,table.mt td{vertical-align:top}
  table.mt th{background:#0d3055;color:#fff;font-size:10px;padding:4px 6px;text-align:left}
  table.mt td{border:1px solid #bbb;padding:3px 6px;font-size:10px} table.mt td.v{text-align:right;font-weight:700}
  .ft{margin-top:8px;font-size:9px;color:#666;text-align:right}
