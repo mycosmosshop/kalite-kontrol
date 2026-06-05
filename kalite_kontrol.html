@@ -1655,14 +1655,16 @@ async function renderKayitlar(){
       el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{KAYIT_PROD=null;renderKayitlar();}},'✕ Tüm kayıtları göster')
     ));
   }
-  // filtreler
-  const stocks=[...new Set((prodsD||[]).map(p=>p.stock_code).filter(Boolean))];
+  // filtreler — stok kodu artık DROPDOWN (anında filtreler, kod bazlı)
+  const stocks=[...new Set((prodsD||[]).map(p=>p.stock_code).filter(Boolean))].sort();
+  const stockSel=el('select',{class:'inp',style:'min-width:170px',onchange:e=>{KAYIT_FILT.stock=e.target.value;renderKayitlar();}});
+  stockSel.append(el('option',{value:''},'Tüm stok kodları'));
+  stocks.forEach(s=>{ const o=el('option',{value:s},s); if(s===KAYIT_FILT.stock)o.selected=true; stockSel.append(o); });
   const filt=el('div',{class:'card'},
     el('div',{class:'toolbar'},
       el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Başlangıç'),el('input',{type:'date',class:'inp',value:KAYIT_FILT.start,onchange:e=>{KAYIT_FILT.start=e.target.value;renderKayitlar();}})),
       el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),el('input',{type:'date',class:'inp',value:KAYIT_FILT.end,onchange:e=>{KAYIT_FILT.end=e.target.value;renderKayitlar();}})),
-      field('Stok Kodu','kf_stock','tümü',stocks),
-      el('button',{class:'btn sm',style:'flex:0',onclick:()=>{KAYIT_FILT.stock=$('#kf_stock').value.trim();renderKayitlar();}},'Filtrele'),
+      el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Stok Kodu'),stockSel),
       el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{KAYIT_FILT={start:'',end:'',stock:''};renderKayitlar();}},'Temizle'),
       el('div',{class:'grow'}),
       el('div',{class:'stat'},el('b',{},String(recs.length)),el('span',{},STAGES[KAYIT_STAGE])),
@@ -1673,7 +1675,6 @@ async function renderKayitlar(){
       }})
     )
   );
-  if(KAYIT_FILT.stock)$('#kf_stock').value=KAYIT_FILT.stock;
   root.append(filt);
   const tb=el('table');
   tb.append(el('thead',{},el('tr',{},...['','Tarih','Kontrol Saati','Vardiya','Cari','Stok Kodu','Stok Adı','İş Emri','Üretim Mik.','Birim','Makine Kodu','Makine Adı','Sonuç','İşlem'].map(h=>el('th',{},h)))));
