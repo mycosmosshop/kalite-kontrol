@@ -6,7 +6,7 @@
 <title>Kalite Kontrol Sistemi</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%94%AC%3C/text%3E%3C/svg%3E">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 <style>
   :root{
     --bg:#0f172a; --panel:#1e293b; --panel2:#243449; --line:#334155;
@@ -681,7 +681,17 @@ function exportPlanExcel(sc,stockName){
   aoa.push(head);
   rows.forEach(r=>aoa.push(r));
   const ws=XLSX.utils.aoa_to_sheet(aoa);
+  const headerRow=6, dataStart=7, dataEnd=6+rows.length;
+  // --- biçimlendirme (xlsx-js-style) ---
+  const thin={style:'thin',color:{rgb:'888888'}}, allB={top:thin,bottom:thin,left:thin,right:thin};
+  const setS=(r,c,s)=>{ const ref=XLSX.utils.encode_cell({r,c}); if(!ws[ref])ws[ref]={t:'s',v:''}; ws[ref].s=s; };
+  for(let c=0;c<W;c++) setS(0,c,{font:{bold:true,sz:14,color:{rgb:'FFFFFF'}},fill:{fgColor:{rgb:'0D3055'}},alignment:{horizontal:'center',vertical:'center'},border:allB});
+  for(let r=1;r<=4;r++){ for(let c=0;c<W;c++){ const ref=XLSX.utils.encode_cell({r,c}); const isLabel=(c%2===0)&&ws[ref]&&ws[ref].v!=='';
+    setS(r,c,{font:{bold:isLabel,sz:10},fill:isLabel?{fgColor:{rgb:'E8E8E8'}}:undefined,alignment:{vertical:'center',wrapText:true},border:allB}); } }
+  for(let c=0;c<W;c++) setS(headerRow,c,{font:{bold:true,sz:9,color:{rgb:'FFFFFF'}},fill:{fgColor:{rgb:'1D4ED8'}},alignment:{horizontal:'center',vertical:'center',wrapText:true},border:allB});
+  for(let r=dataStart;r<=dataEnd;r++){ for(let c=0;c<W;c++) setS(r,c,{font:{sz:9},alignment:{vertical:'top',wrapText:true,horizontal:(c===0||c===2||(c>=3&&c<=5))?'center':'left'},border:allB,fill:(r%2===0)?{fgColor:{rgb:'F4F7FB'}}:undefined}); }
   ws['!cols']=head.map((h,i)=>({wch:i===0?7:(i===6?30:(i===8?24:(i>=14?16:11)))}));
+  ws['!rows']=[{hpt:24},{hpt:16},{hpt:16},{hpt:16},{hpt:16},{hpt:6},{hpt:28}];
   ws['!merges']=[{s:{r:0,c:0},e:{r:0,c:W-1}}];
   const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Kontrol Planı');
   XLSX.writeFile(wb,`kontrol_plani_${sc}.xlsx`);
@@ -1540,7 +1550,7 @@ async function editRecord(r,prod){
         const noteInp=el('input',{class:'cell-inp',style:'width:140px',value:smp.note||'',disabled:canEdit?undefined:true,oninput:e=>smp.note=e.target.value.trim()||null});
         const byInp=el('input',{class:'cell-inp',style:'width:120px',value:smp.by||oper||'',disabled:canEdit?undefined:true,oninput:e=>smp.by=e.target.value.trim()||null});
         const row=el('tr',{},
-          el('td',{style:'font-weight:800;text-align:center;color:var(--accent)'}, s===0?String(OLCU[v.plan_item_id]||''):''),
+          el('td',{style:'font-weight:800;text-align:center;color:var(--accent)'}, String(OLCU[v.plan_item_id]||'')),
           el('td',{style:'min-width:130px;font-weight:600'},v.measure_name),
           el('td',{},((v.target||'')+(v.unit?' '+v.unit:''))||'-'),
           el('td',{style:'max-width:220px;color:var(--muted);font-size:12px'},v.nitel_hedef||'-'),
