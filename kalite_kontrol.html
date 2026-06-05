@@ -1636,7 +1636,7 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
   const priorMap={};
   if(stocks.length){ const {data:hist}=await sb.from('control_records').select('stock_code,checked_at,vals').in('stock_code',stocks).order('checked_at',{ascending:true});
     (hist||[]).forEach(rc=>{ (rc.vals||[]).forEach(v=>{ if(/yanma/.test(deTr(v.measure_name||''))){ const k=rc.stock_code+'|'+v.measure_name; if(!priorMap[k]&&Array.isArray(v.samples)&&v.samples.length) priorMap[k]=v.samples; } }); }); }
-  let made=0,prodN=0,skipped=0;
+  let made=0,prodN=0,skipped=0,cleaned=0;
   for(const p of prods){
     if(!p.start_time||!p.quantity||p.quantity<=0){skipped++;continue;}
     const cs=cyc[p.machine_code], start=new Date(p.start_time);
@@ -1654,6 +1654,11 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
     // proses sıklığı: proses maddelerinin EN KISA pozitif örnekleme sıklığı (aylık vb. uzun değerlere takılmasın); en çok 1 günle sınırla
     const freqs=stageItems(items,'proses').map(it=>Number(it.sampling_frequency)).filter(v=>v>0&&v<=1440);
     const freq=freqs.length?Math.min(...freqs):60;
+    // kısa üretim (seri başından sonra 1 freq geçmemiş) → proses olmamalı; varsa otomatik temizle (kuralı uygula)
+    if(!regen && durMin<freq && recMap[p.id] && (recMap[p.id]['proses']||[]).length){
+      await sb.from('control_records').delete().eq('production_id',p.id).eq('stage','proses');
+      cur.delete('proses'); recMap[p.id]['proses']=[]; cleaned++;
+    }
     const recs=[];
     // seri başı / giriş kontrolü üretim başından 1–5 dk SONRA (başlangıçla aynı olmasın); bitişi geçmesin
     const endMs=(end&&end.getTime()>start.getTime())?end.getTime():(start.getTime()+6*60000);
@@ -1675,8 +1680,8 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
     if(did)prodN++; else skipped++;
     status.textContent=`İşleniyor… ${prodN} üretim, ${made} kayıt`;
   }
-  status.textContent=`Bitti ✓ ${prodN} üretim, ${made} yeni kontrol kaydı. ${skipped} atlandı/zaten tamdı.`;
-  toast(`${made} otomatik kontrol kaydı oluşturuldu (${prodN} üretim).`,'ok');
+  status.textContent=`Bitti ✓ ${prodN} üretim, ${made} yeni kontrol kaydı. ${skipped} atlandı/zaten tamdı.${cleaned?` ${cleaned} kısa üretimde fazla proses temizlendi.`:''}`;
+  toast(`${made} otomatik kontrol kaydı oluşturuldu (${prodN} üretim).${cleaned?` ${cleaned} kısa üretimde gereksiz proses silindi.`:''}`,'ok');
   go.disabled=false; loadControlCounts && loadControlCounts();
 }
 
