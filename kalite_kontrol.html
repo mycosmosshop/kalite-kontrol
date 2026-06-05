@@ -578,7 +578,119 @@ const str=v=>{const s=(v==null?'':String(v)).trim();return s===''?null:s;};
 const num=v=>{if(v==null||v==='')return null;const n=Number(v);return isNaN(n)?null:n;};
 
 // ====================== KONTROL PLANI ======================
-let PLAN=[]; let PLAN_SEL='';
+let PLAN=[]; let PLAN_SEL=''; let PLAN_HDR={};
+// kontrol planı antet (başlık) alanları — kalıcı: control_plan_headers (stok başına)
+const HDR_FIELDS=[
+  ['form_no','Form No','text'],['doc_no','Doküman No','text'],['doc_title','Doküman Başlığı','text'],
+  ['rev_no','Revizyon No','text'],['rev_date','Rev. Tarihi','date'],['plan_no','Kontrol Planı No','text'],
+  ['customer','Cari Kartı','text'],['contact','İlgili Kişi','text'],['control_type','Kontrol Tipi','text'],
+  ['core_team','Çekirdek Takım','text'],['tolerance_table','Tolerans Tablosu','text'],
+  ['eng_approve_date','Mühendislik Onay Tarihi','date'],['quality_approve_date','Kalite Onay Tarihi','date'],
+  ['plan_approve_date','Plan Onay Tarihi','date'],['other_approve_date','Diğer Onay Tarihi','date'],
+  ['tech_rev_no','Teknik Resim Rev No','text'],['tech_rev_date','Teknik Resim Rev Tarihi','date'],
+  ['rev_reason','Revizyon Nedeni','text']
+];
+const HDR_DATE=new Set(HDR_FIELDS.filter(f=>f[2]==='date').map(f=>f[0]));
+function hv(key){ const v=PLAN_HDR[key]; if(v==null||v==='')return ''; return HDR_DATE.has(key)?fmtDate(v):String(v); }
+async function saveHdr(patch){
+  Object.assign(PLAN_HDR,patch);
+  const row=Object.assign({},PLAN_HDR); row.stock_code=PLAN_SEL; if(ME)row.updated_by=ME.id; delete row.updated_at;
+  const {error}=await sb.from('control_plan_headers').upsert(row,{onConflict:'stock_code'});
+  error?toast(esc(error.message),'err'):toast('Antet kaydedildi.','ok');
+}
+function planHeaderCard(sc,stockName){
+  const canPlan=can('plan');
+  const card=el('div',{class:'card'});
+  const logoSrc=(document.querySelector('.brand-logo')||{}).src||'';
+  card.append(el('div',{style:'display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:12px'},
+    logoSrc?el('img',{src:logoSrc,style:'height:36px;border-radius:4px'}):'',
+    el('div',{style:'flex:1;min-width:160px'},
+      el('div',{style:'font-size:15px;font-weight:800'},(PLAN_HDR.doc_title||'KONTROL PLANI')+(PLAN_HDR.form_no?(' · '+PLAN_HDR.form_no):'')),
+      el('div',{style:'font-size:12px;color:var(--muted)'},`${sc} — ${esc(stockName||'')}`)),
+    el('button',{class:'btn sm',onclick:()=>exportPlanExcel(sc,stockName)},'⬇ Excel'),
+    el('button',{class:'btn sm sec',onclick:()=>printPlan(sc,stockName)},'🖨 PDF / Yazdır')
+  ));
+  const grid=el('div',{style:'display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px'});
+  HDR_FIELDS.forEach(([key,label,type])=>{
+    const raw=PLAN_HDR[key]??'';
+    let inp;
+    if(canPlan) inp=el('input',{class:'inp',type:type==='date'?'date':'text',value:raw,style:'padding:6px 8px',
+      onchange:e=>saveHdr({[key]:e.target.value.trim()||null})});
+    else inp=el('div',{style:'padding:6px 9px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;min-height:32px;font-size:13px'},hv(key)||'—');
+    grid.append(el('div',{},el('label',{class:'lab'},label),inp));
+  });
+  card.append(grid);
+  card.append(el('p',{style:'color:var(--muted);font-size:11px;margin:8px 0 0'},
+    canPlan?'💡 Antet alanları otomatik kaydedilir (planla birlikte saklanır) ve Excel/PDF çıktısının üst bilgisinde görünür.':'Antet bilgileri (düzenlemek için «plan» yetkisi gerekir).'));
+  return card;
+}
+// plan tablosunu ortak sütun düzeniyle dışa aktar
+function planColsAOA(items){
+  const head=['Op Kartı','Op No','Proses','Giriş','Son','Ölçülecek Değer','Nicel Hedef','Nitel Hedef / Birim','Alt Limit','Üst Limit','Örn. Büyüklüğü','Örn. Sıklığı','Son K. Örn.','Üretim Ekipmanı','FMEA No','Özel Karakteristik','Kontrol Yöntemi','Alternatif Yöntem','Acil Eylem Planı','DÖF Planı','Tip'];
+  const rows=items.map(it=>[it.operasyon_karti,it.op_no, it.process_control!==false?'✓':'—', it.giris_kalite===true?'✓':'—', it.final_control!==false?'✓':'—',
+    it.measure_name,it.target, it.is_qualitative?it.nitel_hedef:it.unit, it.lower_limit,it.upper_limit,it.sample_size,it.sampling_frequency,it.son_kontrol_ornekleme,
+    it.production_equipment,it.fmea_number,it.special_characteristic,it.method,it.backup_method,it.emergency_action_plan,it.capa_plan, it.is_qualitative?'Nitel':'Ölçüm']);
+  return {head,rows};
+}
+function exportPlanExcel(sc,stockName){
+  const items=(PLAN||[]).filter(p=>p.stock_code===sc).sort((a,b)=>(a.seq||0)-(b.seq||0));
+  const {head,rows}=planColsAOA(items); const H=PLAN_HDR; const W=head.length;
+  const pad=r=>{ while(r.length<W)r.push(''); return r; };
+  const aoa=[];
+  aoa.push(pad(['SANİFOAM — '+(H.doc_title||'KONTROL PLANI')]));
+  aoa.push(pad(['Form No',H.form_no||'PL41','Doküman No',H.doc_no||'','Revizyon No',H.rev_no||'','Rev. Tarihi',hv('rev_date'),'Kontrol Planı No',H.plan_no||'','Revizyon Nedeni',H.rev_reason||'']));
+  aoa.push(pad(['Stok Kodu',sc,'Stok Adı',stockName||'','Cari Kartı',H.customer||'','İlgili Kişi',H.contact||'','Kontrol Tipi',H.control_type||'','Çekirdek Takım',H.core_team||'']));
+  aoa.push(pad(['Müh. Onay',hv('eng_approve_date'),'Kalite Onay',hv('quality_approve_date'),'Plan Onay',hv('plan_approve_date'),'Diğer Onay',hv('other_approve_date'),'Tolerans Tablosu',H.tolerance_table||'']));
+  aoa.push(pad(['Tek. Resim Rev No',H.tech_rev_no||'','Tek. Resim Rev Tarihi',hv('tech_rev_date'),'Madde Sayısı',items.length,'Baskı Tarihi',fmtDate(new Date())]));
+  aoa.push(pad([]));
+  aoa.push(head);
+  rows.forEach(r=>aoa.push(r));
+  const ws=XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols']=head.map((h,i)=>({wch:i===5?30:(i===7?24:(i>=13?16:11))}));
+  ws['!merges']=[{s:{r:0,c:0},e:{r:0,c:W-1}}];
+  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Kontrol Planı');
+  XLSX.writeFile(wb,`kontrol_plani_${sc}.xlsx`);
+}
+function printPlan(sc,stockName){
+  const items=(PLAN||[]).filter(p=>p.stock_code===sc).sort((a,b)=>(a.seq||0)-(b.seq||0));
+  const {head,rows}=planColsAOA(items); const H=PLAN_HDR;
+  const logoSrc=(document.querySelector('.brand-logo')||{}).src||'';
+  const headHtml=head.map(h=>`<th>${esc(h)}</th>`).join('');
+  const bodyHtml=rows.map(r=>`<tr>${r.map(c=>`<td>${esc(c==null?'':c)}</td>`).join('')}</tr>`).join('');
+  const win=window.open('','_blank','width=1200,height=860');
+  win.document.write(`<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><title>Kontrol Planı ${esc(sc)}</title>
+<style>
+ @page{size:A4 landscape;margin:8mm}
+ *{box-sizing:border-box} body{font-family:Arial,Helvetica,sans-serif;color:#000;margin:0;padding:6px}
+ table.antet{width:100%;border-collapse:collapse;margin-bottom:5px}
+ table.antet td,table.antet th{border:1px solid #000;padding:3px 6px;vertical-align:middle}
+ table.antet th{background:#e8e8e8;text-align:left;font-size:8.5px;white-space:nowrap;font-weight:700}
+ .logo-cell{width:160px;text-align:center;padding:4px} .logo-cell img{max-width:150px;max-height:48px}
+ .title-cell{text-align:center;font-size:16px;font-weight:800;letter-spacing:.05em}
+ table.antet td{font-size:9px}
+ table.data{width:100%;border-collapse:collapse;table-layout:fixed}
+ table.data th{background:#dce6f2;border:1px solid #555;padding:3px 4px;font-size:7px;text-transform:uppercase;text-align:left;word-wrap:break-word}
+ table.data td{border:1px solid #999;padding:3px 4px;font-size:8px;vertical-align:top;word-wrap:break-word}
+ .footer{margin-top:6px;font-size:8px;color:#666;display:flex;justify-content:space-between}
+</style></head><body>
+<table class="antet">
+ <tr><td class="logo-cell" rowspan="3">${logoSrc?`<img src="${logoSrc}">`:'SANİFOAM'}</td>
+     <td class="title-cell" colspan="6">${esc(H.doc_title||'KONTROL PLANI')}</td></tr>
+ <tr><th>Form No</th><td>${esc(H.form_no||'PL41')}</td><th>Doküman No</th><td>${esc(H.doc_no||'')}</td><th>Revizyon No</th><td>${esc(H.rev_no||'')}</td></tr>
+ <tr><th>Rev. Tarihi</th><td>${esc(hv('rev_date'))}</td><th>Kontrol Planı No</th><td>${esc(H.plan_no||'')}</td><th>Revizyon Nedeni</th><td>${esc(H.rev_reason||'')}</td></tr>
+</table>
+<table class="antet">
+ <tr><th>Stok Kodu</th><td>${esc(sc)}</td><th>Stok Adı</th><td colspan="3">${esc(stockName||'')}</td><th>Kontrol Tipi</th><td>${esc(H.control_type||'')}</td></tr>
+ <tr><th>Cari Kartı</th><td>${esc(H.customer||'')}</td><th>İlgili Kişi</th><td>${esc(H.contact||'')}</td><th>Çekirdek Takım</th><td>${esc(H.core_team||'')}</td><th>Tolerans Tablosu</th><td>${esc(H.tolerance_table||'')}</td></tr>
+ <tr><th>Müh. Onay</th><td>${esc(hv('eng_approve_date'))}</td><th>Kalite Onay</th><td>${esc(hv('quality_approve_date'))}</td><th>Plan Onay</th><td>${esc(hv('plan_approve_date'))}</td><th>Diğer Onay</th><td>${esc(hv('other_approve_date'))}</td></tr>
+ <tr><th>Tek. Resim Rev No</th><td>${esc(H.tech_rev_no||'')}</td><th>Tek. Resim Rev Tarihi</th><td>${esc(hv('tech_rev_date'))}</td><th>Madde Sayısı</th><td>${items.length}</td><th>Baskı Tarihi</th><td>${esc(fmtDate(new Date()))}</td></tr>
+</table>
+<table class="data"><thead><tr>${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table>
+<div class="footer"><span>Sanifoam — Kalite Kontrol</span><span>${esc(sc)} · ${items.length} madde</span></div>
+<script>window.onload=function(){setTimeout(function(){window.print();},250);}<\/script>
+</body></html>`);
+  win.document.close();
+}
 async function renderPlan(){
   const root=$('#tab-plan');
   root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
@@ -640,8 +752,12 @@ async function renderPlan(){
   root.append(el('div',{class:'card'},el('div',{class:'row'},
     el('div',{class:'field grow'},el('label',{class:'lab'},`Görüntülenecek Kontrol Planı — ${stockKeys.length} plan kayıtlı`),planSel)
   )));
+  // seçili planın antet (başlık) bilgisini yükle
+  const {data:_hdr}=await sb.from('control_plan_headers').select('*').eq('stock_code',PLAN_SEL).maybeSingle();
+  PLAN_HDR=_hdr||{stock_code:PLAN_SEL,form_no:'PL41',doc_title:'KONTROL PLANI'};
   // sadece seçili planı göster
   [[PLAN_SEL, byStock[PLAN_SEL]]].forEach(([sc,items])=>{
+    root.append(planHeaderCard(sc, items[0].stock_name||''));   // antet + Excel/PDF
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px'},
       el('h3',{style:'margin:0'},`${sc} — ${esc(items[0].stock_name||'')} (${items.length} madde)`),
