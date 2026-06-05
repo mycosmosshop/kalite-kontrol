@@ -1592,6 +1592,10 @@ async function openBulkAuto(){
   const aktifFiltre=URETIM_FILT.start||URETIM_FILT.end||URETIM_FILT.stock;
   const secili = selIds.size>0;
   if(secili) prods=prods.filter(p=>selIds.has(p.id));
+  // planı OLMAYAN stok kodlu üretimler kapsam dışı kalır → kullanıcıyı uyar (örn. 700.0.454-T)
+  const scopeBase = secili ? PRODS.filter(p=>selIds.has(p.id)) : PRODS.filter(matchesUF);
+  const noPlan = scopeBase.filter(p=>!planStocks.has(p.stock_code));
+  const noPlanStocks=[...new Set(noPlan.map(p=>p.stock_code).filter(Boolean))];
   root.innerHTML='';
   if(!prods.length){ toast(secili?'Seçili üretimlerin planı yok.':'Bu kapsamda planı tanımlı üretim yok.','err'); return; }
   const machines={}; prods.forEach(p=>{ const k=p.machine_code||'?'; if(!machines[k])machines[k]={code:k,name:p.machine_name,unit:p.unit,count:0}; machines[k].count++; });
@@ -1603,6 +1607,7 @@ async function openBulkAuto(){
   m.append(el('h3',{},'🎲 Otomatik Kontrol Üret'));
   const kapsam = secili ? ('🎯 '+prods.length+' SEÇİLİ üretim') : (aktifFiltre ? ('🔎 Filtreli kapsam — '+prods.length+' üretim'+(URETIM_FILT.stock?' · '+URETIM_FILT.stock:'')+((URETIM_FILT.start||URETIM_FILT.end)?' · '+(URETIM_FILT.start||'…')+'–'+(URETIM_FILT.end||'…'):'')) : (prods.length+' üretim (planı olan tümü)'));
   m.append(el('p',{class:'meta'},`${kapsam}. Çevrim süresi (saniye/birim) girersen bitiş = başlangıç + adet × çevrim olarak yeniden hesaplanıp üretime yazılır. ÇEVRİM GİRMEZSEN üretimin MEVCUT başlama–bitiş süresi kullanılır. Sonra plandaki örnekleme sıklığına göre Seri Başı + saatlik Proses + Son üretilir (hepsi uygun, rastgele). Satır seçersen sadece seçilenlere; filtre uygularsan filtre kapsamına uygulanır.`));
+  if(noPlan.length){ m.append(el('div',{class:'msg err',style:'margin:0 0 12px',html:`⚠ <b>${noPlan.length} üretim</b> kapsam DIŞI: stok kodunun kontrol planı yok → <b>${noPlanStocks.map(esc).join(', ')}</b>. Bu makineler/çevrimler aşağıda görünmez ve bitişleri hesaplanmaz. Çözüm: Kontrol Planı’nda «📋 Başka Koda Kopyala» ile bu kod(lar)a plan oluştur, sonra tekrar dene.`}));}
   Object.values(machines).forEach(mc=>{
     m.append(el('div',{class:'row',style:'margin-bottom:8px'},
       el('div',{class:'field grow'},el('label',{class:'lab'},`${mc.code} — ${esc(mc.name||'')} · ${mc.count} üretim · birim: ${esc(mc.unit||'-')}`),
