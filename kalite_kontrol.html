@@ -1611,21 +1611,26 @@ async function openBulkAuto(){
             try{ const s=JSON.parse(localStorage.getItem('kk_cyc')||'{}'); if(v>0)s[mc.code]=v; else delete s[mc.code]; localStorage.setItem('kk_cyc',JSON.stringify(s)); }catch(_){} }}))));
   });
   const regenCb=el('input',{type:'checkbox'});
-  m.append(el('label',{style:'display:inline-flex;align-items:center;gap:6px;margin:6px 0 12px;cursor:pointer'},regenCb,'Var olan kayıtları silip yeniden üret (kapalıysa sadece eksik aşamalar tamamlanır)'));
+  m.append(el('label',{style:'display:flex;align-items:center;gap:6px;margin:6px 0 6px;cursor:pointer'},regenCb,'Var olan kayıtları silip yeniden üret (kapalıysa sadece eksik aşamalar tamamlanır)'));
+  const fillEmptyCb=el('input',{type:'checkbox'}); fillEmptyCb.checked=true;
+  m.append(el('label',{style:'display:flex;align-items:center;gap:6px;margin:0 0 12px;cursor:pointer'},fillEmptyCb,'Boş (ölçüm girilmemiş) mevcut kayıtları da otomatik doldur'));
   const status=el('div',{style:'margin-top:6px;color:var(--muted);font-size:13px'});
-  const go=el('button',{class:'btn',onclick:()=>runBulkAuto(prods,plan,cyc,regenCb.checked,status,go)},'🎲 Üret');
+  const go=el('button',{class:'btn',onclick:()=>runBulkAuto(prods,plan,cyc,regenCb.checked,fillEmptyCb.checked,status,go)},'🎲 Üret');
   m.append(el('div',{},go),status);
   bg.append(m); root.innerHTML=''; root.append(bg);   // yükleniyor placeholder'ını temizle
 }
-async function runBulkAuto(prods,plan,cyc,regen,status,go){
+async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
   // çevrim girilmediyse: mevcut başlama–bitiş sürelerine göre üret (proses dahil)
   if(!Object.values(cyc).some(v=>v>0)){
     if(!confirm('Hiç çevrim süresi girmedin.\n\nMevcut başlama–bitiş sürelerine göre eksik kontroller (Seri Başı / Proses / Son) üretilsin mi?\n(Bitişi olmayan üretimlerde sadece Seri Başı + Son üretilir.)')) { return; }
   }
   go.disabled=true;
-  // mevcut kayıtlar: üretim başına hangi aşamalar var
-  const {data:exr}=await sb.from('control_records').select('production_id,stage');
-  const have={}; (exr||[]).forEach(r=>{(have[r.production_id]=have[r.production_id]||new Set()).add(r.stage);});
+  // mevcut kayıtlar: üretim başına hangi aşamalar var + kayıtların kendisi (boş olanları doldurmak için)
+  const {data:exr}=await sb.from('control_records').select('id,production_id,stage,vals,checked_at');
+  const have={}, recMap={};
+  (exr||[]).forEach(r=>{ (have[r.production_id]=have[r.production_id]||new Set()).add(r.stage);
+    ((recMap[r.production_id]=recMap[r.production_id]||{})[r.stage]=recMap[r.production_id][r.stage]||[]).push(r); });
+  const recEmpty=r=>{ const vals=r.vals||[]; return !vals.length || !vals.some(v=>(v.samples||[]).some(s=>(s.value!=null&&s.value!=='')||s.ok===true||s.ok===false)); };
   // yanma vb. ilk yapılan değerleri (stok|ölçüm → ilk örnekler) — regen silmeden ÖNCE topla
   const stocks=[...new Set(prods.map(p=>p.stock_code).filter(Boolean))];
   const priorMap={};
@@ -1643,7 +1648,7 @@ async function runBulkAuto(prods,plan,cyc,regen,status,go){
       if(durMin<=0 && Number(p.duration_min)>0){ durMin=Number(p.duration_min); end=new Date(start.getTime()+durMin*60000); }  // bitiş=başlama ama süre bilgisi varsa onu kullan
     } else if(Number(p.duration_min)>0){ durMin=Number(p.duration_min); end=new Date(start.getTime()+durMin*60000); }  // bitiş yok ama süre var
     else { end=start; durMin=0; }  // ne çevrim ne bitiş ne süre → kısa üretim sayılır
-    if(regen){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); }
+    if(regen){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); recMap[p.id]={}; }
     const cur=have[p.id]||new Set();
     const items=opItemsFor(plan.filter(x=>x.stock_code===p.stock_code),p.op_no);
     // proses sıklığı: proses maddelerinin EN KISA pozitif örnekleme sıklığı (aylık vb. uzun değerlere takılmasın); en çok 1 günle sınırla
@@ -1665,8 +1670,14 @@ async function runBulkAuto(prods,plan,cyc,regen,status,go){
     }
     if(!cur.has('son')){ const r=buildAutoRec(p,'son',end,items,priorMap); if(r)recs.push(r); }                      // son: bitişte
     if(!cur.has('giris')){ const r=buildAutoRec(p,'giris',offWhen(),items,priorMap); if(r)recs.push(r); }
-    if(recs.length){ const {error}=await sb.from('control_records').insert(recs); if(error){console.warn(error.message);} else {made+=recs.length;prodN++;} }
-    else skipped++;
+    // boş (ölçüm girilmemiş) mevcut kayıtları otomatik doldur
+    const updates=[];
+    if(fillEmpty && recMap[p.id]){ Object.values(recMap[p.id]).forEach(arr=>arr.forEach(ex=>{
+      if(recEmpty(ex)){ const r=buildAutoRec(p,ex.stage,new Date(ex.checked_at||end),items,priorMap); if(r&&(r.vals||[]).length) updates.push({id:ex.id,vals:r.vals,overall_result:r.overall_result}); } })); }
+    let did=false;
+    if(recs.length){ const {error}=await sb.from('control_records').insert(recs); if(error){console.warn(error.message);} else {made+=recs.length;did=true;} }
+    for(const u of updates){ const {error}=await sb.from('control_records').update({vals:u.vals,overall_result:u.overall_result}).eq('id',u.id); if(!error){made++;did=true;} }
+    if(did)prodN++; else skipped++;
     status.textContent=`İşleniyor… ${prodN} üretim, ${made} kayıt`;
   }
   status.textContent=`Bitti ✓ ${prodN} üretim, ${made} yeni kontrol kaydı. ${skipped} atlandı/zaten tamdı.`;
@@ -2442,27 +2453,29 @@ function drawDisp(canvas,vals,times,o){
 function drawHist(canvas,xs,o){
   const {ctx,w,h}=_setupCanvas(canvas); const muted=_cv('--muted'),accent=_cv('--accent'),txt=_cv('--txt');
   const padL=44,padR=20,padT=16,padB=28,pw=w-padL-padR,ph=h-padT-padB;
-  let lo=Math.min(...xs),hi=Math.max(...xs);
-  if(o.LSL!=null)lo=Math.min(lo,o.LSL); if(o.USL!=null)hi=Math.max(hi,o.USL); if(o.TGT!=null){lo=Math.min(lo,o.TGT);hi=Math.max(hi,o.TGT);}
-  if(lo===hi){lo-=1;hi+=1;} const span=hi-lo; lo-=span*0.03; hi+=span*0.03;
-  // daha çok bin → daha derli toplu, klasik Minitab histogramı
-  const nb=Math.min(22,Math.max(9,Math.round(Math.sqrt(xs.length)*1.5))), bw=(hi-lo)/nb, bins=new Array(nb).fill(0);
-  xs.forEach(x=>{ let b=Math.floor((x-lo)/bw); if(b<0)b=0; if(b>=nb)b=nb-1; bins[b]++; });
+  // EKSEN görüntü aralığı: spec/hedef dahil + %3 padding (sadece görüntü için)
+  let axLo=Math.min(...xs),axHi=Math.max(...xs);
+  if(o.LSL!=null)axLo=Math.min(axLo,o.LSL); if(o.USL!=null)axHi=Math.max(axHi,o.USL); if(o.TGT!=null){axLo=Math.min(axLo,o.TGT);axHi=Math.max(axHi,o.TGT);}
+  if(axLo===axHi){axLo-=1;axHi+=1;} { const sp=axHi-axLo; axLo-=sp*0.03; axHi+=sp*0.03; }
+  // BARLAR yalnız VERİ aralığında binlenir (padding'e taşmaz → spec dışı görünen sahte kırmızı bar oluşmaz)
+  let dLo=Math.min(...xs), dHi=Math.max(...xs); if(dHi<=dLo){ dHi=dLo+(Math.abs(dLo)*0.01||1e-3); }
+  const nb=Math.min(22,Math.max(9,Math.round(Math.sqrt(xs.length)*1.5))), bw=(dHi-dLo)/nb, bins=new Array(nb).fill(0);
+  xs.forEach(x=>{ let b=Math.floor((x-dLo)/bw); if(b<0)b=0; if(b>=nb)b=nb-1; bins[b]++; });
   const maxC=Math.max(...bins,1);
   // eğri tepe değerlerini de hesaba kat → kırpılma olmaz
   const peak=sig=> (sig>0)? (1/(sig*Math.sqrt(2*Math.PI)))*xs.length*bw : 0;
   const yTop=Math.max(maxC, peak(o.sWithin)||0, peak(o.sOverall)||0)*1.1;
-  const X=v=>padL+((v-lo)/(hi-lo))*pw, Yb=c=>padT+(1-c/yTop)*ph;
+  const X=v=>padL+((v-axLo)/(axHi-axLo))*pw, Yb=c=>padT+(1-c/yTop)*ph;
   // plot zemini (Minitab tarzı hafif gri)
   ctx.fillStyle='rgba(148,163,184,.13)'; ctx.fillRect(padL,padT,pw,ph);
-  // barlar — bitişik (toplu); spec dışındaki barlar kırmızı
-  bins.forEach((c,i)=>{ if(!c)return; const x0=X(lo+i*bw),x1=X(lo+(i+1)*bw),y=Yb(c),bwpx=Math.max(1,x1-x0); const center=lo+(i+0.5)*bw;
+  // barlar — bitişik (toplu); gerçekten spec dışı (merkezi LSL altı / USL üstü) barlar kırmızı
+  bins.forEach((c,i)=>{ if(!c)return; const x0=X(dLo+i*bw),x1=X(dLo+(i+1)*bw),y=Yb(c),bwpx=Math.max(1,x1-x0); const center=dLo+(i+0.5)*bw;
     const oos=(o.LSL!=null&&center<o.LSL)||(o.USL!=null&&center>o.USL);
     ctx.fillStyle=oos?'rgba(239,68,68,.72)':'rgba(37,99,235,.58)'; ctx.fillRect(x0,y,bwpx,padT+ph-y);
     ctx.strokeStyle=oos?'#b91c1c':'#1e40af'; ctx.lineWidth=.7; ctx.strokeRect(x0+.35,y+.35,bwpx-.7,padT+ph-y-.35); });
   // normal eğriler: Overall (kesik, metin rengi) + Within (düz kırmızı) — Minitab tarzı
   const curve=(sig,color,dash)=>{ if(!(sig>0))return; ctx.strokeStyle=color; ctx.lineWidth=2; ctx.setLineDash(dash); ctx.beginPath();
-    for(let px=0;px<=pw;px+=2){ const xv=lo+(px/pw)*(hi-lo), dens=Math.exp(-((xv-o.mean)**2)/(2*sig*sig))/(sig*Math.sqrt(2*Math.PI)), y=Yb(dens*xs.length*bw); px?ctx.lineTo(padL+px,y):ctx.moveTo(padL+px,y); } ctx.stroke(); ctx.setLineDash([]); };
+    for(let px=0;px<=pw;px+=2){ const xv=axLo+(px/pw)*(axHi-axLo), dens=Math.exp(-((xv-o.mean)**2)/(2*sig*sig))/(sig*Math.sqrt(2*Math.PI)), y=Yb(dens*xs.length*bw); px?ctx.lineTo(padL+px,y):ctx.moveTo(padL+px,y); } ctx.stroke(); ctx.setLineDash([]); };
   curve(o.sOverall, txt, [6,4]);   // Overall: kesik
   curve(o.sWithin, '#ef4444', []); // Within: düz kırmızı
   const vline=(v,color,dash,label)=>{ if(v==null||!isFinite(v))return; const x=X(v); ctx.save(); ctx.strokeStyle=color; ctx.setLineDash(dash); ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(x,padT); ctx.lineTo(x,padT+ph); ctx.stroke(); ctx.restore(); ctx.fillStyle=color; ctx.font='11px Segoe UI'; ctx.textAlign='center'; ctx.textBaseline='bottom'; ctx.fillText(label,x,padT-2); };
@@ -2470,7 +2483,7 @@ function drawHist(canvas,xs,o){
   // (Within/Overall efsanesi grafiğin ALTINDA HTML olarak gösterilir)
   // x ekseni
   ctx.fillStyle=muted; ctx.textBaseline='top';
-  for(let k=0;k<=4;k++){ const v=lo+(hi-lo)*k/4,x=X(v); ctx.textAlign=k===0?'left':(k===4?'right':'center'); ctx.fillText(v.toFixed(2),x,h-padB+8); }
+  for(let k=0;k<=4;k++){ const v=axLo+(axHi-axLo)*k/4,x=X(v); ctx.textAlign=k===0?'left':(k===4?'right':'center'); ctx.fillText(v.toFixed(2),x,h-padB+8); }
 }
 function defsCard(){
   const d=el('details',{class:'defs'});
