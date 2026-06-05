@@ -676,7 +676,8 @@ const num=v=>{if(v==null||v==='')return null;const n=Number(v);return isNaN(n)?n
 let PLAN=[]; let PLAN_SEL=''; let PLAN_HDR={};
 let PLAN_PENDING={};  // {id:{field:val,...}} kaydedilmemiş hücre değişiklikleri (manuel kaydet)
 let PLAN_DIRTY=false;
-function updateSaveBtn(){ const b=$('#planSaveBtn'); if(b){ const nm=Object.keys(PLAN_PENDING).length; b.disabled=!nm; b.textContent=nm?('💾 Değişiklikleri Kaydet ('+nm+')'):'💾 Kaydedildi'; b.style.background=nm?'var(--warn)':''; } }
+function updateSaveBtn(){ const b=$('#planSaveBtn'); if(b){ const nm=Object.keys(PLAN_PENDING).length; b.disabled=!nm;
+  b.textContent=nm?('💾 Kaydet ('+nm+')'):'💾 Kaydedildi'; b.style.background=nm?'var(--ret)':'var(--ok)'; b.style.opacity='1'; b.style.cursor=nm?'pointer':'default'; } }
 async function savePlanChanges(){
   const ids=Object.keys(PLAN_PENDING); if(!ids.length){ toast('Kaydedilecek değişiklik yok.','ok'); return; }
   const res=await Promise.all(ids.map(id=> sb.from('control_plan_items').update(PLAN_PENDING[id]).eq('id',Number(id))));
@@ -887,7 +888,7 @@ async function renderPlan(){
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px'},
       el('h3',{style:'margin:0'},`${sc} — ${esc(items[0].stock_name||'')} (${items.length} madde)`),
       el('div',{style:'display:flex;gap:8px;flex-wrap:wrap'},
-        canPlan?el('button',{class:'btn sm',id:'planSaveBtn',disabled:!Object.keys(PLAN_PENDING).length,style:Object.keys(PLAN_PENDING).length?'background:var(--warn)':'',title:'Yaptığın hücre değişikliklerini kaydet',onclick:savePlanChanges},Object.keys(PLAN_PENDING).length?('💾 Değişiklikleri Kaydet ('+Object.keys(PLAN_PENDING).length+')'):'💾 Kaydedildi'):'',
+        canPlan?el('button',{class:'btn sm',id:'planSaveBtn',disabled:!Object.keys(PLAN_PENDING).length,style:'background:'+(Object.keys(PLAN_PENDING).length?'var(--ret)':'var(--ok)')+';cursor:'+(Object.keys(PLAN_PENDING).length?'pointer':'default'),title:'Yaptığın hücre değişikliklerini kaydet',onclick:savePlanChanges},Object.keys(PLAN_PENDING).length?('💾 Kaydet ('+Object.keys(PLAN_PENDING).length+')'):'💾 Kaydedildi'):'',
         canPlan?el('button',{class:'btn sm sec',title:'Maddeleri Op No’ya göre sıralayıp Ölçü No (1..N) yeniden atar',onclick:()=>renumberByOp(sc)},'🔢 Op No’ya göre sırala'):'',
         canPlan?el('button',{class:'btn sm danger',onclick:()=>delPlanStock(sc)},'Bu planı sil'):el('span',{class:'pill gray'},'salt görünüm')
       )
