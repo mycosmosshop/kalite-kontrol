@@ -400,9 +400,12 @@ function openInstallHelp(){
   } else if(isAndroid){ title='📱 Android — Ana Ekrana Ekle';
     steps=['Sağ üst <b>⋮</b> (üç nokta) menüsünü aç.','<b>«Uygulamayı yükle»</b> ya da <b>«Ana ekrana ekle»</b> seçeneğine dokun.','<b>Ekle / Yükle</b> de → simge ana ekrana gelir.'];
     note='Çıkmıyorsa sayfayı yenile (kapatıp tekrar gir) ve birkaç saniye bekle.';
-  } else { title='💻 PC — Masaüstüne Yükle';
-    steps=['<b>Adres çubuğunun en sağındaki</b> yükle simgesine (⊕ veya küçük monitör) tıkla. <b>Görmüyorsan:</b> '+(isEdge?'<b>⋮ → Uygulamalar → "Bu siteyi uygulama olarak yükle"</b>':'<b>⋮ → Yayınla, kaydet ve paylaş → "Sayfayı uygulama olarak yükle"</b>')+'.','Açılan kutuda <b>«Yükle»</b> de.','<b>Masaüstü kısayolu için:</b> '+(isEdge?'Edge yüklerken "Masaüstünde göster"i işaretle.':'Kurduktan sonra <b>chrome://apps</b> aç → uygulamaya <b>sağ tık → "Kısayol oluştur" → "Masaüstü"</b>nü işaretle.')];
-    note='Yükledikten sonra Başlat menüsünde ve (işaretlersen) masaüstünde simge olur; kendi penceresinde tam ekran açılır.';
+  } else if(isEdge){ title='💻 PC (Edge) — Masaüstüne Yükle';
+    steps=['Adres çubuğunun <b>SAĞ UCUNDA</b> (web adresinin bittiği yerde), favoriler yıldızının yakınında küçük bir <b>🖥️ ekran/monitör simgesi</b> vardır — üzerine gelince <i>«Bu uygulamayı yükle»</i> yazar. <b>Ona tıkla.</b>','Simgeyi bulamazsan: sağ üst <b>⋯ (üç nokta) → Uygulamalar → «Bu siteyi uygulama olarak yükle»</b>.','Açılan kutuda <b>«Yükle»</b> de. Aynı kutuda <b>«Masaüstünde göster»</b> ve <b>«Görev çubuğuna sabitle»</b> seçeneklerini işaretle → masaüstüne simge gelir.'];
+    note='Daha önce kendiliğinden çıkan kurulum penceresini kapattığın için o pencere bir daha çıkmaz — kurulum artık yukarıdaki adres çubuğu simgesiyle ya da menüden yapılır.';
+  } else { title='💻 PC (Chrome) — Masaüstüne Yükle';
+    steps=['Adres çubuğunun <b>SAĞ UCUNDAKİ</b> yükle simgesine (<b>⊕ / küçük monitör</b>) tıkla. Yoksa: sağ üst <b>⋮ → Yayınla, kaydet ve paylaş → «Sayfayı uygulama olarak yükle»</b>.','Açılan kutuda <b>«Yükle»</b> de.','<b>Masaüstü simgesi için:</b> yeni sekmede <b>chrome://apps</b> aç → uygulamaya <b>sağ tık → «Kısayol oluştur» → «Masaüstü»</b> kutusunu işaretle → Oluştur.'];
+    note='Daha önce çıkan otomatik kurulum penceresini kapattıysan tekrar çıkmaz; kurulum adres çubuğu simgesiyle yapılır.';
   }
   const root=$('#modalRoot');
   const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
