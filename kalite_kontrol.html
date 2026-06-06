@@ -97,13 +97,16 @@
   .stat b{font-size:22px}
   .stat span{color:var(--muted);font-size:12px}
   /* çoklu-seçim (cari vb.) */
-  .msel-wrap{position:relative;display:inline-block}
-  .msel-btn{cursor:pointer;text-align:left;min-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .msel-panel{position:absolute;z-index:40;top:100%;left:0;margin-top:3px;background:var(--panel);border:1px solid var(--accent);border-radius:8px;max-height:260px;overflow-y:auto;min-width:210px;box-shadow:0 10px 28px rgba(0,0,0,.4);padding:4px}
-  .msel-opt{display:flex;align-items:center;gap:7px;padding:5px 9px;font-size:13px;cursor:pointer;white-space:nowrap;border-radius:5px}
+  .msel-wrap{position:relative;display:block}
+  .msel-btn{cursor:pointer;text-align:left;width:100%;display:flex;justify-content:space-between;align-items:center;gap:6px}
+  .msel-lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto}
+  .msel-panel{position:absolute;z-index:40;top:100%;left:0;margin-top:3px;background:var(--panel);border:1px solid var(--accent);border-radius:8px;max-height:280px;overflow-y:auto;overflow-x:hidden;width:300px;max-width:88vw;box-shadow:0 10px 28px rgba(0,0,0,.4);padding:5px}
+  .msel-opt{display:flex;align-items:flex-start;gap:9px;padding:6px 9px;font-size:13px;cursor:pointer;white-space:normal;line-height:1.35;border-radius:6px}
   .msel-opt:hover{background:var(--panel2)}
-  .msel-head{display:flex;justify-content:space-between;gap:8px;padding:4px 9px 6px;border-bottom:1px solid var(--line);margin-bottom:3px;font-size:11px}
-  .msel-head a{color:var(--accent);cursor:pointer}
+  .msel-opt input{flex:0 0 auto;margin:2px 0 0;width:15px;height:15px;cursor:pointer}
+  .msel-opt span{flex:1 1 auto;word-break:break-word}
+  .msel-head{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:3px 9px 7px;border-bottom:1px solid var(--line);margin-bottom:4px;font-size:11px}
+  .msel-head a{color:var(--accent);cursor:pointer;font-weight:600}
   /* DASHBOARD */
   .dash-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px}
   .dpanel{border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden}
@@ -2580,10 +2583,12 @@ function defsCard(){
 // çoklu seçim (tikli) dropdown — opts: string[]; selected: dizi (mutasyona uğrar); onChange: callback
 function multiCheck(opts, selected, onChange, labelAll){
   const btn=el('button',{class:'inp msel-btn',type:'button'});
+  const lbl=el('span',{class:'msel-lbl'}), arr=el('span',{style:'flex:0 0 auto;color:var(--muted)'},'▾'); btn.append(lbl,arr);
   const panel=el('div',{class:'msel-panel hidden'});
-  const sync=()=>{ btn.textContent=(selected.length?(selected.length+' seçili'):(labelAll||'Tümü'))+'  ▾'; };
-  const head=el('div',{class:'msel-head'}, el('a',{onclick:()=>{selected.length=0;[...panel.querySelectorAll('input')].forEach(c=>c.checked=false);sync();onChange();}},'Temizle'),
+  const sync=()=>{ lbl.textContent=(selected.length?(selected.length+' seçili'):(labelAll||'Tümü')); };
+  const head=el('div',{class:'msel-head'}, el('a',{onclick:()=>{selected.length=0;[...panel.querySelectorAll('input')].forEach(c=>c.checked=false);sync();onChange();}},'✕ Temizle'),
     el('span',{style:'color:var(--muted)'},opts.length+' seçenek'));
+  if(!opts.length) panel.append(el('div',{style:'padding:10px;color:var(--muted);font-size:12px;text-align:center'},'Cari bulunamadı'));
   panel.append(head);
   opts.forEach(o=>{ const cb=el('input',{type:'checkbox'}); cb.checked=selected.includes(o);
     cb.onchange=()=>{ if(cb.checked){ if(!selected.includes(o))selected.push(o); } else { const i=selected.indexOf(o); if(i>=0)selected.splice(i,1); } sync(); onChange(); };
