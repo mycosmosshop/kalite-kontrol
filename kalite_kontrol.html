@@ -707,7 +707,7 @@ async function savePlanChanges(){
 window.addEventListener('beforeunload', e=>{ if(PLAN_DIRTY){ e.preventDefault(); e.returnValue=''; } });
 // kontrol planı antet (başlık) alanları — kalıcı: control_plan_headers (stok başına)
 const HDR_FIELDS=[
-  ['doc_no','Doküman No (Dok.No)','text'],['doc_title','Doküman Başlığı','text'],['pub_date','Yayın Tarihi','date'],
+  ['doc_no','Doküman No','text'],['doc_title','Doküman Başlığı','text'],['pub_date','Yayın Tarihi','date'],
   ['rev_no','Revizyon No','text'],['rev_date','Rev. Tarihi','date'],['plan_no','Kontrol Planı No','text'],
   ['customer','Cari Kartı','text'],['contact','İlgili Kişi','text'],['control_type','Kontrol Tipi','text'],
   ['core_team','Çekirdek Takım','text'],['tolerance_table','Tolerans Tablosu','text'],
