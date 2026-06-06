@@ -1800,10 +1800,10 @@ function normalizeVals(raw){
 // periyodik maddelerin (yılda 1, 3 yılda 1, vb.) gün cinsinden periyodu
 function parsePeriodDays(text){
   const t=deTr(text||''); if(!t)return 0; let d=0,m;
-  if(m=t.match(/(\d+)?\s*yil/)) d+=(Number(m[1])||1)*365;        // yıl / yılda / N yılda
-  if(m=t.match(/(\d+)?\s*ayda/)) d+=(Number(m[1])||1)*30;        // ayda / N ayda (AYRILMA gibi kelimelere takılmaz)
-  if(m=t.match(/(\d+)?\s*haftada/)) d+=(Number(m[1])||1)*7;      // haftada
-  if(m=t.match(/(\d+)?\s*gunde/)) d+=(Number(m[1])||1);          // günde
+  if(m=t.match(/(\d+)?\s*(yil|sene)/)) d+=(Number(m[1])||1)*365;     // yıl/yıllık/yılda/sene/senelik/N yılda
+  if(m=t.match(/(\d+)?\s*ay(da|lik)/)) d+=(Number(m[1])||1)*30;      // ayda/aylık/N ayda ("ayda/aylık" şart → AYRILMA gibi kelimelere takılmaz)
+  if(m=t.match(/(\d+)?\s*hafta(da|lik)?/)) d+=(Number(m[1])||1)*7;   // haftada/haftalık/hafta
+  if(m=t.match(/(\d+)?\s*gun(de|luk)/)) d+=(Number(m[1])||1);        // günde/günlük
   return d;
 }
 function kalanGunCell(v,startMap,autoFirst,refMs){
