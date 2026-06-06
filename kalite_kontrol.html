@@ -96,6 +96,14 @@
   .stat{display:inline-flex;flex-direction:column;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 16px;min-width:110px}
   .stat b{font-size:22px}
   .stat span{color:var(--muted);font-size:12px}
+  /* çoklu-seçim (cari vb.) */
+  .msel-wrap{position:relative;display:inline-block}
+  .msel-btn{cursor:pointer;text-align:left;min-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .msel-panel{position:absolute;z-index:40;top:100%;left:0;margin-top:3px;background:var(--panel);border:1px solid var(--accent);border-radius:8px;max-height:260px;overflow-y:auto;min-width:210px;box-shadow:0 10px 28px rgba(0,0,0,.4);padding:4px}
+  .msel-opt{display:flex;align-items:center;gap:7px;padding:5px 9px;font-size:13px;cursor:pointer;white-space:nowrap;border-radius:5px}
+  .msel-opt:hover{background:var(--panel2)}
+  .msel-head{display:flex;justify-content:space-between;gap:8px;padding:4px 9px 6px;border-bottom:1px solid var(--line);margin-bottom:3px;font-size:11px}
+  .msel-head a{color:var(--accent);cursor:pointer}
   /* DASHBOARD */
   .dash-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px}
   .dpanel{border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden}
@@ -1978,7 +1986,7 @@ function exportRecords(recs){
 }
 
 // ====================== İSTATİSTİK (SPC) ======================
-let STAT_FILT={stock:'',measure:'',start:'',end:'',stage:'',machine:''};
+let STAT_FILT={stock:'',measure:'',start:'',end:'',stage:'',machine:'',customers:[]};
 // Kontrol Grafiği Özel Neden Testleri — Nelson / Western Electric Kuralları (çoktan seçmeli)
 const SPC_TESTS=[
   {n:1,name:'1 nokta merkeze 3σ’dan uzak (kontrol limiti dışı)',mean:'Ani büyük kayma / hata'},
@@ -2129,11 +2137,13 @@ function mrow(lab,val,calc,cls){
 async function renderIstatistik(){
   const root=$('#tab-istatistik'); _statPrint=null;
   root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
-  const [{data:planD},{data:recD}]=await Promise.all([
+  const [{data:planD},{data:recD},{data:prodD}]=await Promise.all([
     sb.from('control_plan_items').select('*'),
-    sb.from('control_records').select('stock_code,machine_code,stage,checked_at,vals').order('checked_at',{ascending:true}).limit(8000)
+    sb.from('control_records').select('stock_code,machine_code,stage,checked_at,vals,production_id').order('checked_at',{ascending:true}).limit(8000),
+    sb.from('productions').select('id,customer')
   ]);
   const plan=planD||[], recs=recD||[];
+  const prodCari={}; (prodD||[]).forEach(p=>prodCari[p.id]=p.customer||''); recs.forEach(r=>{ r._cari=prodCari[r.production_id]||''; });
   root.innerHTML='';
 
   // stok seçenekleri
@@ -2152,6 +2162,8 @@ async function renderIstatistik(){
   if(!STAT_FILT.measure || !measures.includes(STAT_FILT.measure)) STAT_FILT.measure=measures[0]||'';
   const machSet=new Set(); recs.filter(r=>r.stock_code===STAT_FILT.stock).forEach(r=>r.machine_code&&machSet.add(r.machine_code));
   const machines=[...machSet].sort();
+  const cariSet=[...new Set(recs.filter(r=>r.stock_code===STAT_FILT.stock).map(r=>r._cari).filter(Boolean))].sort();
+  const cariSel=Array.isArray(STAT_FILT.customers)?STAT_FILT.customers:[];
 
   // ---- FİLTRE KARTI ----
   const reload=()=>renderIstatistik();
@@ -2169,9 +2181,10 @@ async function renderIstatistik(){
     mkSel('Ölçülecek Değer',STAT_FILT.measure,measures.length?measures.map(m=>[m,measLabel(m)]):[['','— sayısal ölçüm yok —']],v=>{STAT_FILT.measure=v;reload();},true),
     mkSel('Aşama',STAT_FILT.stage,[['','Tümü'],['seri_basi','Seri Başı'],['proses','Proses'],['son','Son Kontrol'],['giris','Giriş Kalite']],v=>{STAT_FILT.stage=v;reload();}),
     mkSel('Makine',STAT_FILT.machine,[['','Tümü'],...machines.map(m=>[m,m])],v=>{STAT_FILT.machine=v;reload();}),
+    el('div',{class:'field',style:'flex:0;min-width:170px'},el('label',{class:'lab'},'Cari (müşteri)'),multiCheck(cariSet,cariSel,()=>{STAT_FILT.customers=cariSel;reload();},'Tüm cariler')),
     el('div',{class:'field',style:'flex:0;min-width:140px'},el('label',{class:'lab'},'Başlangıç'),el('input',{type:'date',class:'inp',value:STAT_FILT.start,onchange:e=>{STAT_FILT.start=e.target.value;clearTimeout(_statFilterDeb);_statFilterDeb=setTimeout(reload,800);}})),
     el('div',{class:'field',style:'flex:0;min-width:140px'},el('label',{class:'lab'},'Bitiş'),el('input',{type:'date',class:'inp',value:STAT_FILT.end,onchange:e=>{STAT_FILT.end=e.target.value;clearTimeout(_statFilterDeb);_statFilterDeb=setTimeout(reload,800);}})),
-    (STAT_FILT.stage||STAT_FILT.machine||STAT_FILT.start||STAT_FILT.end)?el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{STAT_FILT.stage='';STAT_FILT.machine='';STAT_FILT.start='';STAT_FILT.end='';reload();}},'Filtreyi Temizle'):''
+    (STAT_FILT.stage||STAT_FILT.machine||STAT_FILT.start||STAT_FILT.end||cariSel.length)?el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{STAT_FILT.stage='';STAT_FILT.machine='';STAT_FILT.start='';STAT_FILT.end='';STAT_FILT.customers=[];reload();}},'Filtreyi Temizle'):''
   ));
   // --- kontrol grafiği testleri (gizli dropdown, çoktan seçmeli) ---
   const selCount=STAT_TESTS.filter(Boolean).length;
@@ -2203,6 +2216,7 @@ async function renderIstatistik(){
   // her kayıt (checked_at) seçili ölçüm için bir ALTGRUP oluşturur
   const groups=[];
   recs.forEach(r=>{ if(r.stock_code!==STAT_FILT.stock)return; if(STAT_FILT.stage&&r.stage!==STAT_FILT.stage)return; if(STAT_FILT.machine&&r.machine_code!==STAT_FILT.machine)return;
+    if(cariSel.length && !cariSel.includes(r._cari||''))return;   // cari (müşteri) filtresi
     const tm=new Date(r.checked_at).getTime(); if(sd&&tm<sd)return; if(ed&&tm>ed)return;
     (r.vals||[]).forEach(v=>{ if(v.measure_name!==STAT_FILT.measure)return;
       const gv=(v.samples||[]).map(s=>Number(s.value)).filter(x=>isFinite(x)); if(gv.length)groups.push({t:tm,v:gv}); });
@@ -2372,7 +2386,8 @@ async function renderIstatistik(){
     const hedefTxt = TGT!=null?(' · <b>Hedef:</b> '+F(TGT,3)+uTxt):'';
     const tolTxt = (LSL!=null||USL!=null)?(' · <b>Tolerans:</b> '+(LSL!=null?F(LSL,2):'…')+' – '+(USL!=null?F(USL,2):'…')+uTxt):'';
     const _ts=pts.map(p=>p.t); const dateTxt = _ts.length?(' · <b>Tarih:</b> '+fmtDate(Math.min(..._ts))+' – '+fmtDate(Math.max(..._ts))):'';
-    const filtTxt=`Stok: ${esc(STAT_FILT.stock)} · Ölçüm: <b>${esc(STAT_FILT.measure)}</b>${unit?(' ('+esc(unit)+')'):''}${hedefTxt}${tolTxt}${dateTxt} · Aşama: ${STAT_FILT.stage?STAGES[STAT_FILT.stage]:'Tümü'} · Makine: ${esc(STAT_FILT.machine||'Tümü')}`;
+    const cariTxt=(Array.isArray(STAT_FILT.customers)&&STAT_FILT.customers.length)?(' · Cari: '+esc(STAT_FILT.customers.join(', '))):'';
+    const filtTxt=`Stok: ${esc(STAT_FILT.stock)} · Ölçüm: <b>${esc(STAT_FILT.measure)}</b>${unit?(' ('+esc(unit)+')'):''}${hedefTxt}${tolTxt}${dateTxt} · Aşama: ${STAT_FILT.stage?STAGES[STAT_FILT.stage]:'Tümü'} · Makine: ${esc(STAT_FILT.machine||'Tümü')}${cariTxt}`;
     const mt=(title,rows)=>`<table class="mt"><tr><th colspan="2">${esc(title)}</th></tr>${rows.map(([k,v])=>`<tr><td>${esc(k)}</td><td class="v">${esc(v)}</td></tr>`).join('')}</table>`;
     const proc=mt('Süreç Verisi',[['Alt Limit (LSL)',LSL!=null?F(LSL,3):'—'],['Hedef',TGT!=null?F(TGT,3):'—'],['Üst Limit (USL)',USL!=null?F(USL,3):'—'],['Örnek Ort. (X̄)',F(mean,3)+u],['Örnek N',String(n)],['Altgrup boyu (n)',subN+' ('+chartTitle+')'],['Altgrup sayısı',String(groups.length)],['StdSapma (Within)',F(sWithin,4)],['StdSapma (Overall)',F(sOverall,4)]]);
     const wcap=mt('Potansiyel (Within) Yeterlilik',[['Cp',capTxt(W.cp)],['CPL',capTxt(W.cpl)],['CPU',capTxt(W.cpu)],['Cpk',capTxt(W.cpk)]]);
@@ -2562,7 +2577,25 @@ function defsCard(){
 }
 
 // ====================== DASHBOARD ======================
-let DASH_FILT={stock:'',start:'',end:''};
+// çoklu seçim (tikli) dropdown — opts: string[]; selected: dizi (mutasyona uğrar); onChange: callback
+function multiCheck(opts, selected, onChange, labelAll){
+  const btn=el('button',{class:'inp msel-btn',type:'button'});
+  const panel=el('div',{class:'msel-panel hidden'});
+  const sync=()=>{ btn.textContent=(selected.length?(selected.length+' seçili'):(labelAll||'Tümü'))+'  ▾'; };
+  const head=el('div',{class:'msel-head'}, el('a',{onclick:()=>{selected.length=0;[...panel.querySelectorAll('input')].forEach(c=>c.checked=false);sync();onChange();}},'Temizle'),
+    el('span',{style:'color:var(--muted)'},opts.length+' seçenek'));
+  panel.append(head);
+  opts.forEach(o=>{ const cb=el('input',{type:'checkbox'}); cb.checked=selected.includes(o);
+    cb.onchange=()=>{ if(cb.checked){ if(!selected.includes(o))selected.push(o); } else { const i=selected.indexOf(o); if(i>=0)selected.splice(i,1); } sync(); onChange(); };
+    panel.append(el('label',{class:'msel-opt'},cb,el('span',{},o||'(boş)'))); });
+  btn.onclick=e=>{ e.stopPropagation(); panel.classList.toggle('hidden'); };
+  sync();
+  const wrap=el('div',{class:'msel-wrap'},btn,panel);
+  wrap._closeOutside=e=>{ if(!wrap.contains(e.target)) panel.classList.add('hidden'); };
+  document.addEventListener('click',wrap._closeOutside);
+  return wrap;
+}
+let DASH_FILT={stock:'',start:'',end:'',customers:[]};
 let _dashDeb=null; // tarih yazarken her tuşta yeniden çizmesin (odak kaybı/yarım tarih olmasın)
 function _pctBar(ret,total){ const p=total?Math.round(1000*ret/total)/10:0; return `<span class="rettrack"><i style="width:${total?Math.min(100,100*ret/total):0}%"></i></span><span class="dpct" style="color:${p>=20?'#f87171':(p>=5?'#f59e0b':'#22c55e')}">${p}%</span>`; }
 function dpanel(title,rows,opt){ // rows: [{label,sub,total,ret}]
@@ -2609,10 +2642,13 @@ async function renderDashboard(){
   const sd=DASH_FILT.start?new Date(DASH_FILT.start+'T00:00:00').getTime():null, ed=DASH_FILT.end?new Date(DASH_FILT.end+'T23:59:59').getTime():null;
   let q=sb.from('control_records').select('stock_code,stock_name,machine_code,stage,checked_at,operator,shift,overall_result,vals,production_id').order('checked_at',{ascending:false}).limit(20000);
   if(DASH_FILT.stock)q=q.eq('stock_code',DASH_FILT.stock);
-  const [{data:recsAll},{data:prods}]=await Promise.all([q, sb.from('productions').select('id,op_no,machine_name,machine_code,shift,operator')]);
+  const [{data:recsAll},{data:prods}]=await Promise.all([q, sb.from('productions').select('id,op_no,machine_name,machine_code,shift,operator,customer')]);
   const pmap={}; (prods||[]).forEach(p=>pmap[p.id]=p);
   const stockSet=[...new Set((recsAll||[]).map(r=>r.stock_code).filter(Boolean))].sort();
-  const recs=(recsAll||[]).filter(r=>{ const t=new Date(r.checked_at).getTime(); if(sd&&t<sd)return false; if(ed&&t>ed)return false; return true; });
+  const cariSet=[...new Set((prods||[]).map(p=>p.customer).filter(Boolean))].sort();
+  const cariSel=Array.isArray(DASH_FILT.customers)?DASH_FILT.customers:[];
+  const recs=(recsAll||[]).filter(r=>{ const t=new Date(r.checked_at).getTime(); if(sd&&t<sd)return false; if(ed&&t>ed)return false;
+    if(cariSel.length){ const c=(pmap[r.production_id]||{}).customer||''; if(!cariSel.includes(c))return false; } return true; });
   root.innerHTML='';
   // ---- FİLTRE ----
   const reload=()=>renderDashboard();
@@ -2622,24 +2658,27 @@ async function renderDashboard(){
   fcard.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'},
     el('h3',{style:'margin:0'},'📈 Kalite Dashboard'),
     el('div',{style:'color:var(--muted);font-size:12px'}, recs.length+' kontrol kaydı analiz edildi')));
+  const cariMs=multiCheck(cariSet, cariSel, ()=>{DASH_FILT.customers=cariSel;reload();}, 'Tüm cariler');
   fcard.append(el('div',{class:'row',style:'margin-top:10px;align-items:flex-end'},
     el('div',{class:'field',style:'flex:0;min-width:170px'},el('label',{class:'lab'},'Stok Kodu'),stockSel),
+    el('div',{class:'field',style:'flex:0;min-width:180px'},el('label',{class:'lab'},'Cari (müşteri)'),cariMs),
     el('div',{class:'field',style:'flex:0;min-width:150px'},el('label',{class:'lab'},'Başlangıç'),el('input',{type:'date',class:'inp',value:DASH_FILT.start,onchange:e=>{DASH_FILT.start=e.target.value;clearTimeout(_dashDeb);_dashDeb=setTimeout(reload,800);}})),
     el('div',{class:'field',style:'flex:0;min-width:150px'},el('label',{class:'lab'},'Bitiş'),el('input',{type:'date',class:'inp',value:DASH_FILT.end,onchange:e=>{DASH_FILT.end=e.target.value;clearTimeout(_dashDeb);_dashDeb=setTimeout(reload,800);}})),
-    (DASH_FILT.stock||DASH_FILT.start||DASH_FILT.end)?el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{DASH_FILT={stock:'',start:'',end:''};reload();}},'Temizle'):''
+    (DASH_FILT.stock||DASH_FILT.start||DASH_FILT.end||cariSel.length)?el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{DASH_FILT={stock:'',start:'',end:'',customers:[]};reload();}},'Temizle'):''
   ));
   root.append(fcard);
   if(!recs.length){ root.append(el('div',{class:'card'},el('div',{class:'empty'},'Seçili filtrede kontrol kaydı yok.'))); return; }
   // ---- AGREGASYON ----
   const G=()=>({total:0,ret:0});
   const add=(map,key,isRet)=>{ if(key==null||key==='')return; const g=map[key]||(map[key]=G()); g.total++; if(isRet)g.ret++; };
-  const byStock={},byOp={},byMachine={},byShift={},byOperator={},byDate={},byMeasure={},nitelDetail={},byStage={};
+  const byStock={},byOp={},byMachine={},byShift={},byOperator={},byDate={},byMeasure={},nitelDetail={},byStage={},byCustomer={};
   let okRec=0,retRec=0,emptyRec=0,totalMeas=0,retMeas=0; const prodSet=new Set();
   recs.forEach(r=>{
     const p=pmap[r.production_id]||{}; const isRet=r.overall_result==='RET'; const st=recStatus(r);
     if(st==='ret')retRec++; else if(st==='empty')emptyRec++; else okRec++;
     if(r.production_id)prodSet.add(r.production_id);
     add(byStage, STAGES[r.stage]||r.stage||'—', isRet);
+    add(byCustomer, p.customer||'—', isRet);
     add(byStock, r.stock_code, isRet);
     add(byOp, p.op_no!=null?('Op '+p.op_no):'—', isRet);
     add(byMachine, (p.machine_name||r.machine_code||'—'), isRet);
@@ -2666,6 +2705,7 @@ async function renderDashboard(){
   sg.append(sc('Ölçüm (madde)',String(totalMeas),retMeas+' RET ('+(totalMeas?(100*retMeas/totalMeas).toFixed(1):0)+'%)'));
   sg.append(sc('Kontrol Edilen Üretim',String(prodSet.size),'iş'));
   sg.append(sc('Farklı Ürün',String(stockSet.length),'stok kodu'));
+  sg.append(sc('Farklı Cari',String(Object.keys(byCustomer).filter(k=>k!=='—').length),'müşteri'));
   root.append(el('div',{class:'card'},sg));
   // ---- GÜNLÜK TREND ----
   const days=Object.entries(byDate).map(([d,g])=>({date:new Date(d+'T00:00:00').getTime(),total:g.total,ret:g.ret})).sort((a,b)=>a.date-b.date);
@@ -2686,6 +2726,7 @@ async function renderDashboard(){
   grid.append(dpanel('🚦 Aşama Bazlı RET (Seri Başı / Proses / Son)',stageRows,{colLabel:'Kontrol Aşaması',limit:10}));
   grid.append(dpanel('🔴 En Çok Retlenen Ölçümler',measRows,{colLabel:'Ölçülecek Değer'}));
   grid.append(dpanel('📋 Nitel Kontroller (RET detayı)',nitelRows,{colLabel:'Nitel hedef'}));
+  grid.append(dpanel('🏢 Cari (Müşteri) Bazlı',toRows(byCustomer),{colLabel:'Cari'}));
   grid.append(dpanel('📦 Stok Kodu Bazlı',toRows(byStock),{colLabel:'Stok Kodu'}));
   grid.append(dpanel('🔧 Operasyon Bazlı',toRows(byOp),{colLabel:'Operasyon'}));
   grid.append(dpanel('🏭 Makine Bazlı',toRows(byMachine),{colLabel:'Makine'}));
