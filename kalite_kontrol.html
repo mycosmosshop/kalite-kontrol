@@ -274,7 +274,7 @@
     <h2 style="display:inline-block">🔬 Kalite Kontrol</h2>
     <div class="sp"></div>
     <div class="who"><div id="whoEmail"></div><div id="whoRole"></div></div>
-    <button class="btn sm" id="installBtn" title="Uygulamayı cihaza yükle" style="display:none">📲 Uygulamayı Yükle</button>
+    <button class="btn sm" id="installBtn" title="Uygulamayı cihaza/masaüstüne yükle">📲 Uygulamayı Yükle</button>
     <button class="theme-btn" id="fsBtn" title="Tam ekran / Normal">⛶</button>
     <button class="theme-btn" id="themeBtnTop" title="Tema değiştir">🌙</button>
     <button class="btn sec sm" id="logoutBtn">Çıkış</button>
@@ -373,15 +373,49 @@ document.addEventListener('fullscreenchange',()=>{ if(_fsBtn) _fsBtn.textContent
 if('serviceWorker' in navigator){ window.addEventListener('load',()=>{ navigator.serviceWorker.register('sw.js').catch(()=>{}); }); }
 let _deferredInstall=null;
 const _installBtn=$('#installBtn');
-window.addEventListener('beforeinstallprompt',e=>{ e.preventDefault(); _deferredInstall=e; if(_installBtn) _installBtn.style.display=''; });
+const _isStandalone=(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches)||window.navigator.standalone===true;
+if(_installBtn && _isStandalone) _installBtn.style.display='none';   // zaten uygulama olarak açık → gizle
+window.addEventListener('beforeinstallprompt',e=>{ e.preventDefault(); _deferredInstall=e; if(_installBtn&&!_isStandalone) _installBtn.style.display=''; });
+window.addEventListener('appinstalled',()=>{ _deferredInstall=null; if(_installBtn)_installBtn.style.display='none'; toast('✓ Uygulama yüklendi — artık simgesinden açabilirsin.','ok'); });
 if(_installBtn) _installBtn.onclick=async()=>{
-  if(!_deferredInstall){ toast('Tarayıcı adres çubuğundaki ⊕ / «Uygulamayı yükle» seçeneğini kullan (iPhone: Paylaş → Ana Ekrana Ekle).','ok'); return; }
-  _deferredInstall.prompt(); try{ await _deferredInstall.userChoice; }catch(_){}
-  _deferredInstall=null; _installBtn.style.display='none';
+  if(_deferredInstall){
+    _deferredInstall.prompt();
+    let choice; try{ choice=await _deferredInstall.userChoice; }catch(_){}
+    _deferredInstall=null;
+    if(choice&&choice.outcome==='accepted'){ _installBtn.style.display='none'; }
+    else { openInstallHelp(); }   // reddetti → buton görünür kalsın + elle adımlar
+    return;
+  }
+  openInstallHelp();   // hazır prompt yok (reddedildi / iOS / destek yok) → adımları göster
 };
-window.addEventListener('appinstalled',()=>{ if(_installBtn)_installBtn.style.display='none'; toast('Uygulama cihaza yüklendi ✓','ok'); });
-// zaten standalone (yüklü) açıldıysa butonu gizle
-if(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches){ if(_installBtn)_installBtn.style.display='none'; }
+function openInstallHelp(){
+  const ua=navigator.userAgent;
+  const isIOS=/iphone|ipad|ipod/i.test(ua)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  const isAndroid=/android/i.test(ua);
+  const isEdge=/edg/i.test(ua);
+  let title, steps, note;
+  if(isIOS){ title='🍎 iPhone / iPad — Ana Ekrana Ekle';
+    steps=['Bu sayfayı <b>Safari</b> ile aç (Chrome/diğer tarayıcı değil).','Alttaki <b>Paylaş</b> düğmesi (□ içinden ↑ çıkan ok).','Listeyi kaydır → <b>«Ana Ekrana Ekle»</b>.','Sağ üstte <b>Ekle</b> → ana ekrana simge gelir.'];
+    note='iOS\'ta otomatik "yükle" penceresi yoktur; kurulum bu adımlarla yapılır.';
+  } else if(isAndroid){ title='📱 Android — Ana Ekrana Ekle';
+    steps=['Sağ üst <b>⋮</b> (üç nokta) menüsünü aç.','<b>«Uygulamayı yükle»</b> ya da <b>«Ana ekrana ekle»</b> seçeneğine dokun.','<b>Ekle / Yükle</b> de → simge ana ekrana gelir.'];
+    note='Çıkmıyorsa sayfayı yenile (kapatıp tekrar gir) ve birkaç saniye bekle.';
+  } else { title='💻 PC — Masaüstüne Yükle';
+    steps=['<b>Adres çubuğunun en sağındaki</b> yükle simgesine (⊕ veya küçük monitör) tıkla. <b>Görmüyorsan:</b> '+(isEdge?'<b>⋮ → Uygulamalar → "Bu siteyi uygulama olarak yükle"</b>':'<b>⋮ → Yayınla, kaydet ve paylaş → "Sayfayı uygulama olarak yükle"</b>')+'.','Açılan kutuda <b>«Yükle»</b> de.','<b>Masaüstü kısayolu için:</b> '+(isEdge?'Edge yüklerken "Masaüstünde göster"i işaretle.':'Kurduktan sonra <b>chrome://apps</b> aç → uygulamaya <b>sağ tık → "Kısayol oluştur" → "Masaüstü"</b>nü işaretle.')];
+    note='Yükledikten sonra Başlat menüsünde ve (işaretlersen) masaüstünde simge olur; kendi penceresinde tam ekran açılır.';
+  }
+  const root=$('#modalRoot');
+  const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
+  const m=el('div',{class:'modal',style:'position:relative;max-width:520px'});
+  m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
+  m.append(el('h3',{},title));
+  const ol=el('ol',{style:'margin:10px 0 0;padding-left:22px;line-height:1.7;font-size:14px'});
+  steps.forEach(s=>ol.append(el('li',{html:s})));
+  m.append(ol);
+  if(note) m.append(el('p',{style:'color:var(--muted);font-size:12.5px;margin-top:12px'},'💡 '+note));
+  m.append(el('div',{style:'display:flex;justify-content:flex-end;margin-top:14px'},el('button',{class:'btn sm',onclick:()=>root.innerHTML=''},'Anladım')));
+  bg.append(m); root.append(bg);
+}
 $('#loginBtn').onclick=async()=>{
   const email=$('#email').value.trim().toLowerCase(), password=$('#password').value;
   if(!email||!password){authMsg('E-posta ve şifre gir.');return;}
