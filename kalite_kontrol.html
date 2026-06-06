@@ -2,8 +2,19 @@
 <html lang="tr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Kalite Kontrol Sistemi</title>
+<!-- PWA -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#15294d">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Kalite Kontrol">
+<meta name="application-name" content="Kalite Kontrol">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%94%AC%3C/text%3E%3C/svg%3E">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
@@ -263,6 +274,7 @@
     <h2 style="display:inline-block">🔬 Kalite Kontrol</h2>
     <div class="sp"></div>
     <div class="who"><div id="whoEmail"></div><div id="whoRole"></div></div>
+    <button class="btn sm" id="installBtn" title="Uygulamayı cihaza yükle" style="display:none">📲 Uygulamayı Yükle</button>
     <button class="theme-btn" id="fsBtn" title="Tam ekran / Normal">⛶</button>
     <button class="theme-btn" id="themeBtnTop" title="Tema değiştir">🌙</button>
     <button class="btn sec sm" id="logoutBtn">Çıkış</button>
@@ -356,6 +368,20 @@ function exitFullscreen(){ const fn=document.exitFullscreen||document.webkitExit
 function toggleFullscreen(){ (document.fullscreenElement?exitFullscreen:goFullscreen)(); }
 const _fsBtn=$('#fsBtn'); if(_fsBtn) _fsBtn.onclick=toggleFullscreen;
 document.addEventListener('fullscreenchange',()=>{ if(_fsBtn) _fsBtn.textContent=document.fullscreenElement?'🗗':'⛶'; });
+
+// ---- PWA: service worker + "Uygulamayı Yükle" ----
+if('serviceWorker' in navigator){ window.addEventListener('load',()=>{ navigator.serviceWorker.register('sw.js').catch(()=>{}); }); }
+let _deferredInstall=null;
+const _installBtn=$('#installBtn');
+window.addEventListener('beforeinstallprompt',e=>{ e.preventDefault(); _deferredInstall=e; if(_installBtn) _installBtn.style.display=''; });
+if(_installBtn) _installBtn.onclick=async()=>{
+  if(!_deferredInstall){ toast('Tarayıcı adres çubuğundaki ⊕ / «Uygulamayı yükle» seçeneğini kullan (iPhone: Paylaş → Ana Ekrana Ekle).','ok'); return; }
+  _deferredInstall.prompt(); try{ await _deferredInstall.userChoice; }catch(_){}
+  _deferredInstall=null; _installBtn.style.display='none';
+};
+window.addEventListener('appinstalled',()=>{ if(_installBtn)_installBtn.style.display='none'; toast('Uygulama cihaza yüklendi ✓','ok'); });
+// zaten standalone (yüklü) açıldıysa butonu gizle
+if(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches){ if(_installBtn)_installBtn.style.display='none'; }
 $('#loginBtn').onclick=async()=>{
   const email=$('#email').value.trim().toLowerCase(), password=$('#password').value;
   if(!email||!password){authMsg('E-posta ve şifre gir.');return;}
