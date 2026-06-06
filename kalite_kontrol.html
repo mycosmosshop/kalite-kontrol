@@ -286,6 +286,7 @@
     <button data-tab="istatistik">📊 İstatistik</button>
     <button data-tab="dashboard" id="dashTab">📈 Dashboard</button>
     <button data-tab="ncr" id="ncrTab">🚫 Uygunsuzluk</button>
+    <button data-tab="eightd" id="eightdTab">🔧 8D</button>
     <button data-tab="cert" id="certTab">📄 Sertifika</button>
     <button data-tab="admin" id="adminTab">👤 Kullanıcılar</button>
   </nav>
@@ -301,6 +302,7 @@
     <div id="tab-istatistik" class="hidden"></div>
     <div id="tab-dashboard" class="hidden"></div>
     <div id="tab-ncr" class="hidden"></div>
+    <div id="tab-eightd" class="hidden"></div>
     <div id="tab-cert" class="hidden"></div>
     <div id="tab-admin" class="hidden"></div>
   </main>
@@ -490,6 +492,7 @@ async function afterLogin(){
   $('#adminTab').classList.toggle('hidden', !PROFILE.is_admin);
   $('#dashTab').classList.toggle('hidden', !can('dashboard'));   // admin + yetkili görür
   $('#ncrTab').classList.toggle('hidden', !can('ncr'));
+  $('#eightdTab').classList.toggle('hidden', !can('ncr'));
   $('#certTab').classList.toggle('hidden', !can('cert'));
   document.querySelector('nav.tabs').classList.toggle('hidden', !(PROFILE.approved||PROFILE.is_admin));
   if(!PROFILE.approved && !PROFILE.is_admin){
@@ -507,13 +510,14 @@ async function afterLogin(){
 // ====================== TABS ======================
 function switchTab(name){
   document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
-  ['uretimler','kayitlar','plan','istatistik','dashboard','ncr','cert','admin'].forEach(t=>$('#tab-'+t).classList.toggle('hidden',t!==name));
+  ['uretimler','kayitlar','plan','istatistik','dashboard','ncr','eightd','cert','admin'].forEach(t=>$('#tab-'+t).classList.toggle('hidden',t!==name));
   if(name==='uretimler')renderUretimler();
   if(name==='kayitlar')renderKayitlar();
   if(name==='plan')renderPlan();
   if(name==='istatistik')renderIstatistik();
   if(name==='dashboard')renderDashboard();
   if(name==='ncr')renderNCR();
+  if(name==='eightd')renderEightD();
   if(name==='cert')renderCert();
   if(name==='admin')renderAdmin();
 }
@@ -2858,13 +2862,15 @@ async function renderNCR(){
   const root=$('#tab-ncr');
   if(!can('ncr')){ root.innerHTML='<div class="card"><div class="empty">Bu bölüm için yetkin yok (admin veya «Uygunsuzluk» yetkisi gerekir).</div></div>'; return; }
   root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
-  const [{data:ncrs},{data:retRecs},{data:prods},{data:planItems}]=await Promise.all([
+  const [{data:ncrs},{data:retRecs},{data:prods},{data:planItems},{data:e8list}]=await Promise.all([
     sb.from('ncrs').select('*').order('detected_at',{ascending:false}).limit(500),
     sb.from('control_records').select('id,stock_code,stock_name,checked_at,production_id,vals,overall_result,machine_code,stage').eq('overall_result','RET').order('checked_at',{ascending:false}).limit(500),
     sb.from('productions').select('id,customer,work_order,quantity,unit,op_no,stock_code,stock_name'),
-    sb.from('control_plan_items').select('stock_code,stock_name')
+    sb.from('control_plan_items').select('stock_code,stock_name'),
+    sb.from('eightd').select('ncr_id')
   ]);
   const pmap={}; (prods||[]).forEach(p=>pmap[p.id]=p);
+  const e8set=new Set((e8list||[]).map(e=>e.ncr_id).filter(Boolean));   // 8D'si olan NCR'lar
   const linked=new Set((ncrs||[]).map(n=>n.record_id).filter(Boolean));
   const candidateRet=(retRecs||[]).filter(r=>!linked.has(r.id));
   // stok kataloğu (kod→ad) + cari listesi — manuel NCR'da datalist için
@@ -2932,7 +2938,7 @@ async function renderNCR(){
     el('td',{},el('span',{class:'pill '+(n.status==='closed'?'ok':n.status==='in_progress'?'proses':'ret')},NCR_STATUS[n.status]||n.status)),
     el('td',{style:'white-space:nowrap;font-size:12px;color:'+(n.due_date&&new Date(n.due_date)<new Date()&&n.status!=='closed'?'#f87171':'var(--muted)')},n.due_date?fmtDate(n.due_date):'—'),
     el('td',{onclick:e=>e.stopPropagation()},
-      el('button',{class:'btn sm sec',onclick:()=>printNCR8D(n,pmap[n.production_id]||{})},'🖨 8D PDF'),
+      el('button',{class:'btn sm',style:'background:'+(e8set.has(n.id)?'#16a34a':'#7c3aed'),title:e8set.has(n.id)?'8D raporu mevcut — düzenle':'8D raporu başlat',onclick:()=>openEightD({id:n.id,ncr_no:n.ncr_no,stock_code:n.stock_code,stock_name:n.stock_name,customer:n.customer,defect_desc:n.defect_desc,responsible:n.responsible,due_date:n.due_date},null)},e8set.has(n.id)?'🔧 8D ✓':'🔧 8D'),
       can('delete')?el('button',{class:'btn sm danger',style:'margin-left:5px',onclick:async()=>{ if(!confirm('Bu NCR silinsin mi?'))return; const {error}=await sb.from('ncrs').delete().eq('id',n.id); if(error){toast(esc(error.message),'err');return;} toast('NCR silindi.','ok'); renderNCR(); }},'Sil'):''
     )
   )));
@@ -2983,35 +2989,20 @@ function openNCREdit(existing, fromRet, allNcrs, stockCat, cariList){
     el('div',{class:'field grow'},el('label',{class:'lab'},'Termin'),(()=>{const i=el('input',{type:'date',class:'inp'}); i.value=n.due_date||''; F.due_date=i; return i;})())
   ));
   m.append(fld('defect_desc','Hata / Uygunsuzluk Tanımı','Hatanın net tanımı, nerede tespit edildi…',3, fr.record?(fr.record.vals||[]).filter(v=>(v.samples||[]).some(s=>s.ok===false)).map(v=>v.measure_name+(v.nitel_hedef?' ('+v.nitel_hedef+')':'')).join(', '):''));
-  // 8D — her adımda Sorumlu + Tarih (steps jsonb'da saklanır)
-  const dHdr=el('div',{style:'font-weight:700;margin:14px 0 6px;color:var(--accent)'},'8D ADIMLARI');
-  m.append(dHdr);
-  const STEPS=JSON.parse(JSON.stringify(n.steps||{}));
-  const dfld=(key,lbl,ph,rows)=>{ const sk=key.split('_')[0]; const st=STEPS[sk]||(STEPS[sk]={});
-    const ta=el('textarea',{class:'inp',rows:String(rows||2),placeholder:ph||''}); ta.value=n[key]||''; F[key]=ta;
-    const rInp=el('input',{class:'inp',placeholder:'Sorumlu'}); rInp.value=st.resp||''; rInp.oninput=()=>{ st.resp=rInp.value.trim()||undefined; };
-    const dtInp=el('input',{type:'date',class:'inp'}); dtInp.value=st.date||''; dtInp.onchange=()=>{ st.date=dtInp.value||undefined; };
-    return el('div',{class:'field',style:'margin-bottom:10px'}, el('label',{class:'lab'},lbl), ta,
-      el('div',{class:'row',style:'margin-top:5px;gap:8px'},
-        el('div',{class:'field grow',style:'margin:0'},el('label',{class:'lab',style:'font-size:11px;margin-bottom:3px'},'Sorumlu'),rInp),
-        el('div',{class:'field',style:'flex:0;min-width:150px;margin:0'},el('label',{class:'lab',style:'font-size:11px;margin-bottom:3px'},'Tarih'),dtInp))); };
-  m.append(dfld('d1_team','D1 — Takım','Sorunu çözecek takım üyeleri',2));
-  m.append(dfld('d2_problem','D2 — Problemin Tanımı','5N1K: ne, nerede, ne zaman, kim, neden, nasıl',3));
-  m.append(dfld('d3_containment','D3 — Acil/Ani Önlem (Containment)','Müşteriyi korumak için anında alınan tedbirler',2));
-  m.append(dfld('d4_root_cause','D4 — Kök Neden Analizi','5 Neden / Ishikawa: gerçek kök sebep',3));
-  m.append(dfld('d5_corrective','D5 — Düzeltici Faaliyet','Kök nedeni ortadan kaldıracak kalıcı çözüm',3));
-  m.append(dfld('d6_verification','D6 — Doğrulama','Çözümün etkin olduğunun kanıtı (ölçüm/test/SPC)',2));
-  m.append(dfld('d7_preventive','D7 — Önleyici Faaliyet','Benzer sorunun başka yerde tekrar etmemesi için',2));
-  m.append(dfld('d8_recognition','D8 — Takım Takdiri / Kapanış','Takdir + kapanış notu',1));
   m.append(fld('notes','Ek Notlar','',2));
+  // 8D ayrı modülde (eightd) — kaydedilmiş NCR'dan başlatılır/düzenlenir
+  if(existing){
+    const e8note=el('div',{style:'margin-top:12px;padding:10px;border:1px dashed var(--border);border-radius:8px;background:var(--panel2);font-size:12.5px;color:var(--muted)'},
+      el('b',{style:'color:var(--text)'},'8D Raporu: '),'Bu uygunsuzluk için detaylı 8D (kök-neden + düzeltici/önleyici) raporu opsiyoneldir. «8D Başlat / Düzenle» ile senin FR13 formatında açılır, ayrı «8D» sekmesinde listelenir.');
+    m.append(e8note);
+  }
   // butonlar
-  const btns=el('div',{style:'display:flex;gap:8px;margin-top:14px;justify-content:flex-end'});
-  if(existing) btns.append(el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{n.steps=STEPS;printNCR8D(n,fr.prod||{});}},'🖨 8D PDF'));
+  const btns=el('div',{style:'display:flex;gap:8px;margin-top:14px;justify-content:flex-end;flex-wrap:wrap'});
+  if(existing) btns.append(el('button',{class:'btn sm',style:'flex:0;background:#7c3aed',onclick:()=>{ root.innerHTML=''; openEightD(n, null); }},'🔧 8D Başlat / Düzenle'));
   btns.append(el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>root.innerHTML=''},'İptal'));
   btns.append(el('button',{class:'btn sm',style:'flex:0',onclick:async()=>{
     const payload={ncr_no:ncrNo};
     Object.keys(F).forEach(k=>{ let v=F[k].value; if(v==='')v=null; if((k==='qty_total'||k==='qty_def')&&v!=null)v=Number(v); payload[k]=v; });
-    payload.steps=STEPS;   // her D'nin sorumlu/tarih bilgisi
     if(fr.record){ payload.record_id=fr.record.id; payload.production_id=fr.record.production_id; payload.source='record'; payload.detected_at=fr.record.checked_at; }
     payload.updated_at=new Date().toISOString();
     if(payload.status==='closed' && !n.closed_at) payload.closed_at=new Date().toISOString();
@@ -3100,6 +3091,211 @@ ${'<scr'+'ipt>'}window.onload=()=>setTimeout(()=>window.print(),300);${'</scr'+'
   w.document.write(html); w.document.close();
 }
 
+// ====================== 8D RAPORU (NCR'a bağlı, ayrı) ======================
+const PROBLEM_CATS=['Bakım Kaynaklı Problem','Diğer','Dokümantasyon Hatası','Etiket','Görsel Kusur','Hammadde Hatası','KPI / Hedef Sapması','Kalınlık / Yoğunluk Problemi','Kalıp / Ekipman Problemi','Kesim Hatası','Laminasyon / Yapışma Hatası','Makine Arızası','Makine Ayar Hatası','Müşteri Şikayeti','Paketleme Hatası','Personel Hatası','Revizyon / Değişiklik Kaynaklı Hata','Sevkiyat / Lojistik Hatası','Sistem / Dış Denetim Uygunsuzluğu','Sistem / İç Denetim Uygunsuzluğu','Yedek Parça Problemi','Çevresel Uygunsuzluk','Ölçüsel Hata','İç Proses Uygunsuzluğu','İş Kazası (İSG)'];
+const EIGHTD_TIP=['Müşteri Şikayeti','İç Uygunsuzluk','Tedarikçi Uygunsuzluğu','Denetim Bulgusu','Diğer'];
+// dinamik faaliyet listesi (3D/5D/6D/7D) — {action,date,responsible} satırları
+function mkActionList(initial, dateLab){
+  const rows=[]; const box=el('div',{});
+  function addRow(d){ d=d||{}; const o={};
+    o.action=el('textarea',{class:'inp',rows:'2',placeholder:'Faaliyet / aksiyon…'}); o.action.value=d.action||'';
+    o.date=el('input',{type:'date',class:'inp'}); o.date.value=d.date||'';
+    o.resp=el('input',{class:'inp',placeholder:'Sorumlu'}); o.resp.value=d.responsible||'';
+    const row=el('div',{style:'display:flex;gap:6px;margin-bottom:7px;align-items:flex-start'},
+      el('div',{style:'flex:1'},o.action),
+      el('div',{style:'flex:0 0 138px'},el('label',{class:'lab',style:'font-size:10px;margin-bottom:2px'},dateLab||'Termin'),o.date),
+      el('div',{style:'flex:0 0 128px'},el('label',{class:'lab',style:'font-size:10px;margin-bottom:2px'},'Sorumlu'),o.resp),
+      el('button',{class:'btn sm danger',style:'flex:0 0 auto;align-self:center',onclick:()=>{const i=rows.indexOf(o);if(i>=0)rows.splice(i,1);row.remove();}},'✕'));
+    rows.push(o); box.append(row);
+  }
+  (initial||[]).forEach(addRow); if(!(initial||[]).length) addRow();
+  const wrap=el('div',{}, box, el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>addRow()},'+ Satır ekle'));
+  return { el:wrap, get:()=>rows.map(o=>({action:o.action.value.trim(),date:o.date.value||null,responsible:o.resp.value.trim()||null})).filter(x=>x.action||x.responsible) };
+}
+async function openEightD(ncr, existing){
+  if(!can('ncr')) return toast('8D için yetkin yok.','err');
+  ncr=ncr||{};
+  if(!existing && ncr.id){ const {data}=await sb.from('eightd').select('*').eq('ncr_id',ncr.id).limit(1); if(data&&data[0])existing=data[0]; }
+  const D=(existing&&existing.data)||{};
+  const d1=D.d1||{}, d2=D.d2||{}, d4=D.d4||{}, d8=D.d8||{};
+  const {data:allE}=await sb.from('eightd').select('report_no');
+  const repNo=existing?existing.report_no:nextNo('8D', allE||[], 'report_no');
+  const today=isoDateLocal(new Date());
+  const root=$('#modalRoot');
+  const bg=el('div',{class:'modal-bg'});
+  const m=el('div',{class:'modal',style:'position:relative;max-width:920px;max-height:92vh;overflow:auto'});
+  m.append(el('button',{class:'close-x',onclick:()=>{ if(confirm('Kapatılsın mı? Kaydetmediysen değişiklikler kaybolur.')) root.innerHTML=''; }},'×'));
+  m.append(el('h3',{},'🔧 8D Raporu — '+repNo+(ncr.ncr_no?(' · NCR: '+ncr.ncr_no):'')));
+  const sec=t=>m.append(el('div',{style:'font-weight:800;margin:16px 0 7px;color:var(--accent);border-bottom:1px solid var(--border);padding-bottom:4px'},t));
+  const R=(...k)=>el('div',{style:'display:flex;gap:12px;margin-bottom:8px;flex-wrap:wrap'},...k);
+  const FF=(lbl,ref)=>el('div',{style:'flex:1;min-width:180px'},el('label',{class:'lab'},lbl),ref);
+  const inp=(v,type)=>{ const i=el('input',type==='date'?{type:'date',class:'inp'}:{class:'inp'}); i.value=v||''; return i; };
+  const ta=(v,rows,ph)=>{ const t=el('textarea',{class:'inp',rows:String(rows||2),placeholder:ph||''}); t.value=v||''; return t; };
+  const sel=(opts,v,withEmpty)=>{ const s=el('select',{class:'inp'}); if(withEmpty)s.append(el('option',{value:''},'— seç —')); opts.forEach(o=>s.append(el('option',{value:o},o))); s.value=v||''; return s; };
+  // 1D
+  sec('1D — Takım Oluşumu (Team Formation)');
+  const i_resp=inp(d1.responsible||ncr.responsible), i_close=inp(d1.estimated_closing||ncr.due_date,'date'), i_complaint=inp(d1.complaint_date,'date'), i_team=inp(d1.team_members), i_start=inp(d1.start_date||today,'date'), i_cat=sel(PROBLEM_CATS,d1.problem_category,true), i_tip=sel(EIGHTD_TIP,d1.tip||'Müşteri Şikayeti');
+  m.append(R(FF('Sorumlu',i_resp),FF('Tahmini Kapanış Tarihi',i_close)));
+  m.append(R(FF('Şikayet Tarihi',i_complaint),FF('Takım Üyeleri',i_team)));
+  m.append(R(FF('Başlangıç Tarihi',i_start),FF('Problem Kategorisi',i_cat)));
+  m.append(R(FF('Tip',i_tip)));
+  // 2D
+  sec('2D — Problemin Tarifi (Problem Description)');
+  const i_sc=inp(d2.stock_code||ncr.stock_code), i_sn=inp(d2.stock_name||ncr.stock_name), i_cust=inp(d2.customer||ncr.customer), i_way=inp(d2.waybill_no), i_rep=inp(d2.report_date||today,'date');
+  const i_prob=ta(d2.problem_description||ncr.defect_desc,3,'Problemin net tanımı; nerede, nasıl tespit edildi…');
+  m.append(R(FF('Stok Kodu',i_sc),FF('Stok Adı',i_sn)));
+  m.append(R(FF('Cari / Müşteri',i_cust),FF('İrsaliye No',i_way),FF('Rapor Tarihi',i_rep)));
+  m.append(el('div',{style:'margin-bottom:8px'},el('label',{class:'lab'},'Problem Tanımı'),i_prob));
+  // 3D
+  sec('3D — Acil/Geçici Önlem (Containment Action — ICA)');
+  const L3=mkActionList(D.d3,'Termin'); m.append(L3.el);
+  // 4D
+  sec('4D — Ana Sebep / Kök Neden (Root Cause — 6M / Ishikawa)');
+  const c_man=ta(d4.management,3,'• neden (%)…'), c_method=ta(d4.method,3,'• neden (%)…'), c_machine=ta(d4.machine,3,'• neden (%)…'), c_human=ta(d4.man,3,'• neden (%)…'), c_material=ta(d4.material,3,'• neden (%)…'), c_meas=ta(d4.measurement,3,'• neden (%)…');
+  m.append(R(FF('Yönetim (Management)',c_man),FF('Metot (Method)',c_method)));
+  m.append(R(FF('Makine (Machine)',c_machine),FF('İnsan (Man)',c_human)));
+  m.append(R(FF('Malzeme (Material)',c_material),FF('Ölçüm (Measurement)',c_meas)));
+  // 5D-7D
+  sec('5D — Düzeltici Faaliyet (Corrective Action)');
+  const L5=mkActionList(D.d5,'Termin'); m.append(L5.el);
+  sec('6D — Doğrulama / Geçerli Kılma (Validate Corrective Actions)');
+  const L6=mkActionList(D.d6,'Tamamlanma'); m.append(L6.el);
+  sec('7D — Önleyici Faaliyet (Preventive Action)');
+  const L7=mkActionList(D.d7,'Termin'); m.append(L7.el);
+  // 8D
+  sec('8D — Takım Takdiri / Kapanış (Closure)');
+  const i_d8=ta(d8.text,2,'Takdir + kapanış notu'), i_d8r=inp(d8.responsible||ncr.responsible), i_d8d=inp(d8.date,'date');
+  m.append(el('div',{style:'margin-bottom:8px'},el('label',{class:'lab'},'Kapanış Notu'),i_d8));
+  m.append(R(FF('Sorumlu',i_d8r),FF('Kapanış Tarihi',i_d8d)));
+  const i_status=el('select',{class:'inp'}); Object.entries(NCR_STATUS).forEach(([k,v])=>i_status.append(el('option',{value:k},v))); i_status.value=(existing&&existing.status)||'open';
+  const collect=()=>({ d1:{responsible:i_resp.value.trim()||null,estimated_closing:i_close.value||null,complaint_date:i_complaint.value||null,team_members:i_team.value.trim()||null,start_date:i_start.value||null,problem_category:i_cat.value||null,tip:i_tip.value||null},
+    d2:{stock_code:i_sc.value.trim()||null,stock_name:i_sn.value.trim()||null,customer:i_cust.value.trim()||null,waybill_no:i_way.value.trim()||null,report_date:i_rep.value||null,problem_description:i_prob.value.trim()||null},
+    d3:L3.get(), d4:{management:c_man.value.trim()||null,method:c_method.value.trim()||null,machine:c_machine.value.trim()||null,man:c_human.value.trim()||null,material:c_material.value.trim()||null,measurement:c_meas.value.trim()||null},
+    d5:L5.get(), d6:L6.get(), d7:L7.get(), d8:{text:i_d8.value.trim()||null,responsible:i_d8r.value.trim()||null,date:i_d8d.value||null} });
+  const btns=el('div',{style:'display:flex;gap:8px;margin-top:16px;justify-content:flex-end;flex-wrap:wrap'});
+  btns.append(el('div',{style:'flex:1;min-width:160px'},el('label',{class:'lab'},'Durum'),i_status));
+  btns.append(el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>print8D({report_no:repNo,status:i_status.value,stock_code:i_sc.value,customer:i_cust.value,data:collect(),_ncr_no:ncr.ncr_no})},'🖨 PDF'));
+  btns.append(el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{ if(confirm('Kapatılsın mı?'))root.innerHTML=''; }},'İptal'));
+  btns.append(el('button',{class:'btn sm',style:'flex:0',onclick:async()=>{
+    const data=collect();
+    const payload={ report_no:repNo, ncr_id:ncr.id||null, stock_code:i_sc.value.trim()||ncr.stock_code||null, stock_name:i_sn.value.trim()||ncr.stock_name||null, customer:i_cust.value.trim()||ncr.customer||null, status:i_status.value, data, updated_at:new Date().toISOString() };
+    let err;
+    if(existing){ ({error:err}=await sb.from('eightd').update(payload).eq('id',existing.id)); }
+    else { payload.created_by=ME&&ME.id; ({error:err}=await sb.from('eightd').insert(payload)); }
+    if(err){toast(esc(err.message),'err');return;}
+    root.innerHTML=''; toast('8D '+repNo+' kaydedildi.','ok');
+    if($('#tab-eightd')&&!$('#tab-eightd').classList.contains('hidden')) renderEightD();
+    if($('#tab-ncr')&&!$('#tab-ncr').classList.contains('hidden')) renderNCR();
+  }},'💾 Kaydet'));
+  m.append(btns);
+  bg.append(m); root.innerHTML=''; root.append(bg);
+}
+function print8D(e8){
+  const w=window.open('','_blank','width=950,height=1200'); if(!w)return toast('Pop-up engellenmiş.','err');
+  const D=e8.data||{}; const d1=D.d1||{}, d2=D.d2||{}, d4=D.d4||{}, d8=D.d8||{};
+  const logoUrl=location.href.replace(/[#?].*$/,'').replace(/[^/]*$/,'')+'SanifoamLogo-Transparent.png';
+  const actTable=(arr,dateLab)=>{ arr=arr||[]; if(!arr.length)return '<div class="empty8">—</div>';
+    return '<table class="al"><thead><tr><th>Faaliyet</th><th>'+dateLab+'</th><th>Sorumlu</th></tr></thead><tbody>'+arr.map(a=>'<tr><td>'+esc(a.action||'').replace(/\n/g,'<br>')+'</td><td>'+(a.date?fmtDate(a.date):'-')+'</td><td>'+esc(a.responsible||'-')+'</td></tr>').join('')+'</tbody></table>'; };
+  const fc=(t,v)=>'<div class="fc"><b>'+t+'</b><div>'+(v?esc(v).replace(/\n/g,'<br>'):'-')+'</div></div>';
+  const html=`<!doctype html><html><head><meta charset="utf-8"><title>${esc(e8.report_no)} — 8D</title>
+<style>
+@page{size:A4;margin:12mm}
+body{font-family:Segoe UI,Arial,sans-serif;color:#111;font-size:11px;margin:0}
+.head{display:flex;justify-content:space-between;align-items:center;gap:12px;border-bottom:2px solid #1e40af;padding-bottom:8px;margin-bottom:6px}
+.head .l img{height:50px}
+.head .c{flex:1;text-align:center}
+.head .c b{font-size:18px;color:#1e40af;letter-spacing:.5px}
+.head .r table{border-collapse:collapse;font-size:10px}
+.head .r td{border:1px solid #999;padding:2px 6px}
+.repno{font-weight:700;margin:6px 0 10px;font-size:12px}
+h2{font-size:12px;margin:12px 0 5px;background:#1e40af;color:#fff;padding:4px 8px;border-radius:3px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:3px 18px;font-size:11px;margin-bottom:4px}
+.grid2 b{color:#444}
+.pd{border:1px solid #ccc;border-radius:4px;padding:7px;background:#fafafa;white-space:pre-wrap;margin:4px 0}
+table.al{width:100%;border-collapse:collapse;font-size:10.5px;margin-top:3px}
+table.al th{background:#eef2fb;border:1px solid #bbb;padding:4px 6px;text-align:left}
+table.al td{border:1px solid #ccc;padding:4px 6px;vertical-align:top}
+table.al th:nth-child(2),table.al td:nth-child(2){width:92px;text-align:center}
+table.al th:nth-child(3),table.al td:nth-child(3){width:120px}
+.fish{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:4px}
+.fc{border:1px solid #bbb;border-radius:4px;padding:6px;background:#fbfcff;min-height:46px}
+.fc b{display:block;color:#1e40af;border-bottom:1px solid #dde;margin-bottom:3px;padding-bottom:2px;font-size:11px}
+.fc div{white-space:pre-wrap;font-size:10px}
+.empty8{color:#999;padding:4px}
+</style></head><body>
+<div class="head">
+  <div class="l"><img src="${logoUrl}" alt="Sanifoam" onerror="this.style.display='none'"></div>
+  <div class="c"><b>8D RAPORU</b><br><small>8D PROBLEM SOLVING REPORT</small></div>
+  <div class="r"><table>
+    <tr><td>Dok No</td><td>FR13</td></tr>
+    <tr><td>Yayın T.</td><td>24.01.2016</td></tr>
+    <tr><td>Rev No</td><td>04</td></tr>
+  </table></div>
+</div>
+<div class="repno">Rapor No: ${esc(e8.report_no)}${e8._ncr_no?(' &nbsp;·&nbsp; NCR: '+esc(e8._ncr_no)):''}</div>
+<h2>1D — Takım Oluşumu</h2>
+<div class="grid2">
+  <div><b>Sorumlu:</b> ${esc(d1.responsible||'-')}</div><div><b>Tahmini Kapanış:</b> ${d1.estimated_closing?fmtDate(d1.estimated_closing):'-'}</div>
+  <div><b>Şikayet Tarihi:</b> ${d1.complaint_date?fmtDate(d1.complaint_date):'-'}</div><div><b>Takım Üyeleri:</b> ${esc(d1.team_members||'-')}</div>
+  <div><b>Başlangıç:</b> ${d1.start_date?fmtDate(d1.start_date):'-'}</div><div><b>Problem Kategorisi:</b> ${esc(d1.problem_category||'-')}</div>
+  <div><b>Tip:</b> ${esc(d1.tip||'-')}</div>
+</div>
+<h2>2D — Problemin Tarifi</h2>
+<div class="grid2">
+  <div><b>Stok Kodu:</b> ${esc(d2.stock_code||'-')}</div><div><b>Rapor Tarihi:</b> ${d2.report_date?fmtDate(d2.report_date):'-'}</div>
+  <div><b>Stok Adı:</b> ${esc(d2.stock_name||'-')}</div><div><b>İrsaliye No:</b> ${esc(d2.waybill_no||'-')}</div>
+  <div><b>Cari:</b> ${esc(d2.customer||'-')}</div>
+</div>
+<div class="pd">${esc(d2.problem_description||'-')}</div>
+<h2>3D — Acil/Geçici Önlem (ICA)</h2>
+${actTable(D.d3,'Termin')}
+<h2>4D — Ana Sebep (6M / Ishikawa)</h2>
+<div class="fish">${fc('Yönetim (Management)',d4.management)}${fc('Metot (Method)',d4.method)}${fc('Makine (Machine)',d4.machine)}${fc('İnsan (Man)',d4.man)}${fc('Malzeme (Material)',d4.material)}${fc('Ölçüm (Measurement)',d4.measurement)}</div>
+<h2>5D — Düzeltici Faaliyet</h2>
+${actTable(D.d5,'Termin')}
+<h2>6D — Doğrulama</h2>
+${actTable(D.d6,'Tamamlanma')}
+<h2>7D — Önleyici Faaliyet</h2>
+${actTable(D.d7,'Termin')}
+<h2>8D — Takım Takdiri / Kapanış</h2>
+<div class="pd">${esc(d8.text||'-')}</div>
+<div class="grid2"><div><b>Sorumlu:</b> ${esc(d8.responsible||'-')}</div><div><b>Kapanış Tarihi:</b> ${d8.date?fmtDate(d8.date):'-'}</div></div>
+${'<scr'+'ipt>'}window.onload=()=>setTimeout(()=>window.print(),300);${'</scr'+'ipt>'}
+</body></html>`;
+  w.document.write(html); w.document.close();
+}
+let EIGHTD_FILT={q:''};
+async function renderEightD(){
+  const root=$('#tab-eightd');
+  if(!can('ncr')){ root.innerHTML='<div class="card"><div class="empty">Bu bölüm için yetkin yok («Uygunsuzluk» yetkisi gerekir).</div></div>'; return; }
+  root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
+  const {data:list}=await sb.from('eightd').select('*').order('created_at',{ascending:false});
+  const {data:ncrs}=await sb.from('ncrs').select('id,ncr_no');
+  const nmap={}; (ncrs||[]).forEach(n=>nmap[n.id]=n.ncr_no);
+  root.innerHTML='';
+  const hc=el('div',{class:'card'});
+  hc.append(el('h3',{style:'margin:0 0 6px'},'🔧 8D Raporları'));
+  hc.append(el('p',{style:'color:var(--muted);font-size:13px;margin:0'},'8D, uygunsuzluklara (NCR) bağlı detaylı kök-neden ve düzeltici/önleyici faaliyet raporudur. «Uygunsuzluk» sekmesinde bir NCR açıp «🔧 8D Başlat» ile oluşturulur; buradan düzenleyip PDF alabilirsin.'));
+  root.append(hc);
+  const tb=el('table'); tb.append(el('thead',{},el('tr',{},...['Rapor No','NCR','Tarih','Stok','Cari','Durum','İşlem'].map(h=>el('th',{},h)))));
+  const body=el('tbody');
+  if(!(list||[]).length) body.append(el('tr',{},el('td',{colspan:7},el('div',{class:'empty'},'Henüz 8D raporu yok.'))));
+  (list||[]).forEach(e8=>{ const d1=(e8.data&&e8.data.d1)||{};
+    body.append(el('tr',{style:'cursor:pointer',onclick:()=>openEightD({id:e8.ncr_id,ncr_no:nmap[e8.ncr_id]},e8)},
+      el('td',{style:'font-weight:700;font-family:monospace'},e8.report_no),
+      el('td',{},nmap[e8.ncr_id]||'—'),
+      el('td',{style:'white-space:nowrap'},fmtDate(d1.start_date||e8.created_at)),
+      el('td',{},e8.stock_code||''),
+      el('td',{style:'font-size:12px'},e8.customer||'—'),
+      el('td',{},el('span',{class:'pill '+(e8.status==='closed'?'ok':e8.status==='in_progress'?'proses':'ret')},NCR_STATUS[e8.status]||e8.status||'—')),
+      el('td',{onclick:e=>e.stopPropagation()},
+        el('button',{class:'btn sm sec',onclick:()=>print8D({...e8,_ncr_no:nmap[e8.ncr_id]})},'🖨 PDF'),
+        can('delete')?el('button',{class:'btn sm danger',style:'margin-left:5px',onclick:async()=>{ if(!confirm('Bu 8D raporu silinsin mi?'))return; const {error}=await sb.from('eightd').delete().eq('id',e8.id); if(error){toast(esc(error.message),'err');return;} toast('8D silindi.','ok'); renderEightD(); }},'Sil'):''
+      )));
+  });
+  tb.append(body);
+  const c=el('div',{class:'card'}); c.append(tb); root.append(c);
+}
 // ====================== SERTİFİKA (CoC / CoA) ======================
 let CERT_FILT={q:''};
 async function renderCert(){
