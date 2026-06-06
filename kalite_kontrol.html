@@ -1806,22 +1806,23 @@ function parsePeriodDays(text){
   if(m=t.match(/(\d+)?\s*gunde/)) d+=(Number(m[1])||1);          // günde
   return d;
 }
-function kalanGunCell(v,startMap,autoFirst){
+function kalanGunCell(v,startMap,autoFirst,refMs){
   // periyot: nitel hedef ya da madde adı metninden; yoksa örnekleme sıklığından (dakika→gün)
   let per=parsePeriodDays(v.nitel_hedef)||parsePeriodDays(v.measure_name);
   if(per<=1){ const fmin=Number(v.sampling_frequency); if(fmin>=1440) per=Math.round(fmin/1440); }
   if(per<=1) return el('td',{style:'color:var(--muted);text-align:center'},'—');  // 24 saatten uzun periyotları göster
+  const ref=(refMs&&isFinite(refMs))?refMs:Date.now();   // referans = bu kontrolün/üretimin tarihi (yoksa bugün)
   const editable=can('plan');
   const pill=el('span',{class:'pill',style:editable?'cursor:pointer':''});
   function recompute(dStr){
     if(!dStr){ pill.className='pill gray'; pill.textContent='⏳ ilk tarih?'; pill.title=editable?'İlk tarih girmek için tıkla':''; return; }
-    const fd=new Date(dStr+'T00:00:00').getTime(), perMs=per*86400000, now=Date.now();
+    const fd=new Date(dStr+'T00:00:00').getTime(), perMs=per*86400000, now=ref;
     let due=fd+perMs;
     if(due<=now){ const k=Math.ceil((now-fd)/perMs); due=fd+k*perMs; }   // vade geçtiyse sonraki periyoda yuvarla → hep kalan gün
     const left=Math.max(0,Math.ceil((due-now)/86400000));
     pill.className='pill '+(left<=30?'proses':'ok');
     pill.textContent='⏳ '+left+' gün';
-    pill.title=`İlk: ${fmtDate(dStr)} · Sonraki: ${fmtDate(new Date(due))} (${per} gün periyot)`+(editable?' — düzenlemek için tıkla':'');
+    pill.title=`İlk: ${fmtDate(dStr)} · Sonraki: ${fmtDate(new Date(due))} (${per} gün periyot) · ${fmtDate(new Date(ref))} tarihine göre`+(editable?' — düzenlemek için tıkla':'');
   }
   const start=(startMap[v.plan_item_id]?String(startMap[v.plan_item_id]).slice(0,10):(autoFirst?String(autoFirst).slice(0,10):''));
   const dateInp=el('input',{type:'date',class:'cell-inp',style:'width:135px',value:start,
@@ -1914,7 +1915,7 @@ async function editRecord(r,prod){
           el('td',{},tgl),
           el('td',{},noteInp),
           el('td',{},byInp),
-          kalanGunCell(v,startMap,firstDone[v.measure_name]||r.checked_at)
+          kalanGunCell(v,startMap,firstDone[v.measure_name]||r.checked_at, new Date(r.checked_at||(prod&&(prod.start_time||prod.prod_date))||Date.now()).getTime())
         );
         paint();
         body.append(row);
