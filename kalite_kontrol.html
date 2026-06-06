@@ -273,6 +273,8 @@
     <button data-tab="plan">📐 Kontrol Planı</button>
     <button data-tab="istatistik">📊 İstatistik</button>
     <button data-tab="dashboard" id="dashTab">📈 Dashboard</button>
+    <button data-tab="ncr" id="ncrTab">🚫 Uygunsuzluk</button>
+    <button data-tab="cert" id="certTab">📄 Sertifika</button>
     <button data-tab="admin" id="adminTab">👤 Kullanıcılar</button>
   </nav>
   <main>
@@ -286,6 +288,8 @@
     <div id="tab-plan" class="hidden"></div>
     <div id="tab-istatistik" class="hidden"></div>
     <div id="tab-dashboard" class="hidden"></div>
+    <div id="tab-ncr" class="hidden"></div>
+    <div id="tab-cert" class="hidden"></div>
     <div id="tab-admin" class="hidden"></div>
   </main>
 </div>
@@ -410,6 +414,8 @@ async function afterLogin(){
   $('#whoRole').textContent=PROFILE.is_admin?'Yönetici':(PROFILE.approved?'Onaylı':'Onay bekliyor');
   $('#adminTab').classList.toggle('hidden', !PROFILE.is_admin);
   $('#dashTab').classList.toggle('hidden', !can('dashboard'));   // admin + yetkili görür
+  $('#ncrTab').classList.toggle('hidden', !can('ncr'));
+  $('#certTab').classList.toggle('hidden', !can('cert'));
   document.querySelector('nav.tabs').classList.toggle('hidden', !(PROFILE.approved||PROFILE.is_admin));
   if(!PROFILE.approved && !PROFILE.is_admin){
     $('#pending').classList.remove('hidden');
@@ -426,12 +432,14 @@ async function afterLogin(){
 // ====================== TABS ======================
 function switchTab(name){
   document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
-  ['uretimler','kayitlar','plan','istatistik','dashboard','admin'].forEach(t=>$('#tab-'+t).classList.toggle('hidden',t!==name));
+  ['uretimler','kayitlar','plan','istatistik','dashboard','ncr','cert','admin'].forEach(t=>$('#tab-'+t).classList.toggle('hidden',t!==name));
   if(name==='uretimler')renderUretimler();
   if(name==='kayitlar')renderKayitlar();
   if(name==='plan')renderPlan();
   if(name==='istatistik')renderIstatistik();
   if(name==='dashboard')renderDashboard();
+  if(name==='ncr')renderNCR();
+  if(name==='cert')renderCert();
   if(name==='admin')renderAdmin();
 }
 document.querySelectorAll('nav.tabs button').forEach(b=>b.onclick=async()=>{
@@ -2740,6 +2748,426 @@ async function renderDashboard(){
   root.append(grid);
   setTimeout(()=>drawDashTrend(tcan,days),30);
 }
+// ====================== UYGUNSUZLUK (NCR / 8D) ======================
+let NCR_FILT={status:'',q:''};
+function nextNo(prefix, list, field){ const ys=String(new Date().getFullYear()).slice(-2);
+  const re=new RegExp('^'+prefix+'-?'+ys+'-?(\\d{3,})$','i');
+  let maxN=0; (list||[]).forEach(x=>{ const m=(x[field]||'').match(re); if(m){ const n=Number(m[1]); if(n>maxN)maxN=n; } });
+  return prefix+'-'+ys+'-'+String(maxN+1).padStart(3,'0');
+}
+const NCR_DECISION={rework:'🔄 Yeniden işle', scrap:'🗑 Hurda', concession:'⚠ Şartlı kabul', return:'↩ İade'};
+const NCR_STATUS={open:'🟠 Açık', in_progress:'🔵 Devam', closed:'🟢 Kapalı'};
+async function renderNCR(){
+  const root=$('#tab-ncr');
+  if(!can('ncr')){ root.innerHTML='<div class="card"><div class="empty">Bu bölüm için yetkin yok (admin veya «Uygunsuzluk» yetkisi gerekir).</div></div>'; return; }
+  root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
+  const [{data:ncrs},{data:retRecs},{data:prods}]=await Promise.all([
+    sb.from('ncrs').select('*').order('detected_at',{ascending:false}).limit(500),
+    sb.from('control_records').select('id,stock_code,stock_name,checked_at,production_id,vals,overall_result,machine_code,stage').eq('overall_result','RET').order('checked_at',{ascending:false}).limit(500),
+    sb.from('productions').select('id,customer,work_order,quantity,unit,op_no')
+  ]);
+  const pmap={}; (prods||[]).forEach(p=>pmap[p.id]=p);
+  const linked=new Set((ncrs||[]).map(n=>n.record_id).filter(Boolean));
+  const candidateRet=(retRecs||[]).filter(r=>!linked.has(r.id));
+  root.innerHTML='';
+  // ÜST
+  const hdr=el('div',{class:'card'},
+    el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'},
+      el('h3',{style:'margin:0'},'🚫 Uygunsuzluk Yönetimi (NCR / 8D)'),
+      el('div',{style:'display:flex;gap:8px;flex-wrap:wrap'},
+        el('button',{class:'btn sm',onclick:()=>openNCREdit(null,null,ncrs)},'＋ Manuel NCR')
+      )
+    ),
+    el('p',{style:'color:var(--muted);font-size:13px;margin:8px 0 0'},'Uygunsuzluk kayıtlarını izle ve 8D adımlarıyla kapat. RET çıkan kontrol kayıtları için tek tıkla NCR aç; manuel uygunsuzluk da eklenebilir.')
+  );
+  root.append(hdr);
+  // RET → NCR önerileri
+  if(candidateRet.length){
+    const sug=el('div',{class:'card'});
+    sug.append(el('h3',{style:'margin:0 0 6px'},'⚠ NCR Açılmamış RET Kayıtları ('+candidateRet.length+')'));
+    sug.append(el('p',{style:'color:var(--muted);font-size:12px;margin:0 0 10px'},'RET sonuçlu kontrol kayıtlarına henüz uygunsuzluk açılmamış. Tek tıkla NCR oluşturabilirsin.'));
+    const wrap=el('div',{class:'tbl-wrap',style:'max-height:240px;overflow:auto'});
+    const tb=el('table'); tb.append(el('thead',{},el('tr',{},...['Tarih','Stok','Cari','Aşama','İş Emri','Hatalar','İşlem'].map(h=>el('th',{},h)))));
+    const body=el('tbody');
+    candidateRet.slice(0,30).forEach(r=>{ const p=pmap[r.production_id]||{};
+      const failVals=(r.vals||[]).filter(v=>(v.samples||[]).some(s=>s.ok===false)).map(v=>v.measure_name).slice(0,3).join(', ');
+      body.append(el('tr',{},
+        el('td',{style:'white-space:nowrap'},fmtDate(r.checked_at)),
+        el('td',{},r.stock_code||''),
+        el('td',{style:'font-size:12px'},p.customer||'—'),
+        el('td',{},STAGES[r.stage]||r.stage||''),
+        el('td',{},p.work_order||'—'),
+        el('td',{style:'font-size:12px;color:#f87171'},failVals||'—'),
+        el('td',{},el('button',{class:'btn sm',onclick:()=>openNCREdit(null,{record:r,prod:p},ncrs)},'NCR Aç'))
+      )); });
+    tb.append(body); wrap.append(tb); sug.append(wrap); root.append(sug);
+  }
+  // Filtreler + Liste
+  const fcard=el('div',{class:'card'});
+  const stSel=el('select',{class:'inp',onchange:e=>{NCR_FILT.status=e.target.value;renderNCR();}});
+  [['','Tümü'],['open','🟠 Açık'],['in_progress','🔵 Devam'],['closed','🟢 Kapalı']].forEach(([v,t])=>{const o=el('option',{value:v},t);if(v===NCR_FILT.status)o.selected=true;stSel.append(o);});
+  fcard.append(el('div',{class:'toolbar'},
+    el('div',{class:'field',style:'flex:0;min-width:140px'},el('label',{class:'lab'},'Durum'),stSel),
+    el('input',{class:'inp',placeholder:'🔍 NCR no/stok/cari ara…',style:'max-width:280px',value:NCR_FILT.q,oninput:e=>{NCR_FILT.q=e.target.value;
+      document.querySelectorAll('#ncrBody tr').forEach(tr=>{const s=e.target.value.toLowerCase();tr.style.display=(!s||(tr.dataset.s||'').includes(s))?'':'none';});}}),
+    el('div',{class:'grow'}),
+    el('div',{class:'stat'},el('b',{},String((ncrs||[]).length)),el('span',{},'NCR kayıtlı'))
+  ));
+  root.append(fcard);
+  const tb=el('table');
+  tb.append(el('thead',{},el('tr',{},...['NCR No','Tarih','Stok','Cari','Hata','Adet','Karar','Durum','Termin','İşlem'].map(h=>el('th',{},h)))));
+  const body=el('tbody',{id:'ncrBody'});
+  const list=(ncrs||[]).filter(n=>!NCR_FILT.status||n.status===NCR_FILT.status);
+  if(!list.length) body.append(el('tr',{},el('td',{colspan:10},el('div',{class:'empty'},'NCR kaydı yok.'))));
+  list.forEach(n=>body.append(el('tr',{style:'cursor:pointer','data-s':`${n.ncr_no} ${n.stock_code} ${n.customer||''} ${n.defect_desc||''}`.toLowerCase(),onclick:()=>openNCREdit(n,null,ncrs)},
+    el('td',{style:'font-weight:700;font-family:monospace'},n.ncr_no),
+    el('td',{style:'white-space:nowrap'},fmtDate(n.detected_at)),
+    el('td',{},n.stock_code||''),
+    el('td',{style:'font-size:12px'},n.customer||'—'),
+    el('td',{style:'font-size:12px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:n.defect_desc||''},n.defect_desc||'—'),
+    el('td',{style:'text-align:center'},(n.qty_def||'-')+'/'+(n.qty_total||'-')),
+    el('td',{style:'font-size:12px'},NCR_DECISION[n.decision]||'—'),
+    el('td',{},el('span',{class:'pill '+(n.status==='closed'?'ok':n.status==='in_progress'?'proses':'ret')},NCR_STATUS[n.status]||n.status)),
+    el('td',{style:'white-space:nowrap;font-size:12px;color:'+(n.due_date&&new Date(n.due_date)<new Date()&&n.status!=='closed'?'#f87171':'var(--muted)')},n.due_date?fmtDate(n.due_date):'—'),
+    el('td',{onclick:e=>e.stopPropagation()},
+      el('button',{class:'btn sm sec',onclick:()=>printNCR8D(n,pmap[n.production_id]||{})},'🖨 8D PDF'),
+      can('delete')?el('button',{class:'btn sm danger',style:'margin-left:5px',onclick:async()=>{ if(!confirm('Bu NCR silinsin mi?'))return; const {error}=await sb.from('ncrs').delete().eq('id',n.id); if(error){toast(esc(error.message),'err');return;} toast('NCR silindi.','ok'); renderNCR(); }},'Sil'):''
+    )
+  )));
+  tb.append(body);
+  root.append(el('div',{class:'card'},el('div',{class:'tbl-wrap'},tb)));
+}
+function openNCREdit(existing, fromRet, allNcrs){
+  const root=$('#modalRoot');
+  const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
+  const m=el('div',{class:'modal',style:'position:relative;max-width:820px'});
+  m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
+  const n=existing||{};
+  const fr=fromRet||{};
+  const ncrNo=n.ncr_no||nextNo('NCR',allNcrs||[],'ncr_no');
+  m.append(el('h3',{},(existing?'✏ NCR Düzenle':'＋ Uygunsuzluk Aç')+' — '+ncrNo));
+  if(fr.record){ m.append(el('div',{class:'meta',html:`📌 Kontrol kaydı: <b>${esc(fr.record.stock_code)}</b> · ${fmtDate(fr.record.checked_at)} · ${esc((fr.prod||{}).customer||'')}`})); }
+  const F={};
+  const fld=(key,lbl,placeholder,ml,defaultVal)=>{
+    const inp=ml?el('textarea',{class:'inp',rows:String(ml),placeholder:placeholder||''}):el('input',{class:'inp',placeholder:placeholder||''});
+    inp.value=n[key]??defaultVal??''; F[key]=inp;
+    return el('div',{class:'field grow',style:'margin-bottom:8px'},el('label',{class:'lab'},lbl),inp);
+  };
+  // Genel
+  const genHdr=el('div',{style:'font-weight:700;margin:10px 0 6px;color:var(--accent)'},'GENEL BİLGİ');
+  m.append(genHdr);
+  m.append(el('div',{class:'row'},
+    fld('stock_code','Stok Kodu','',null, fr.record?fr.record.stock_code:''),
+    fld('stock_name','Stok Adı','',null, fr.record?fr.record.stock_name:''),
+    fld('customer','Cari (Müşteri)','',null, (fr.prod||{}).customer)
+  ));
+  m.append(el('div',{class:'row'},
+    el('div',{class:'field grow'},el('label',{class:'lab'},'Karar'), (()=>{const s=el('select',{class:'inp'}); [['','—'],...Object.entries(NCR_DECISION)].forEach(([v,t])=>{const o=el('option',{value:v},t);if(v===(n.decision||''))o.selected=true;s.append(o);}); F.decision=s; return s;})()),
+    el('div',{class:'field grow'},el('label',{class:'lab'},'Durum'), (()=>{const s=el('select',{class:'inp'}); Object.entries(NCR_STATUS).forEach(([v,t])=>{const o=el('option',{value:v},t);if(v===(n.status||'open'))o.selected=true;s.append(o);}); F.status=s; return s;})()),
+    el('div',{class:'field grow'},el('label',{class:'lab'},'Önem'), (()=>{const s=el('select',{class:'inp'}); [['low','🟢 Düşük'],['medium','🟡 Orta'],['high','🔴 Yüksek']].forEach(([v,t])=>{const o=el('option',{value:v},t);if(v===(n.severity||'medium'))o.selected=true;s.append(o);}); F.severity=s; return s;})())
+  ));
+  m.append(el('div',{class:'row'},
+    fld('qty_total','Toplam Adet','adet'),
+    fld('qty_def','Uygunsuz Adet','adet'),
+    fld('responsible','Sorumlu','İsim/Departman'),
+    el('div',{class:'field grow'},el('label',{class:'lab'},'Termin'),(()=>{const i=el('input',{type:'date',class:'inp'}); i.value=n.due_date||''; F.due_date=i; return i;})())
+  ));
+  m.append(fld('defect_desc','Hata / Uygunsuzluk Tanımı','Hatanın net tanımı, nerede tespit edildi…',3, fr.record?(fr.record.vals||[]).filter(v=>(v.samples||[]).some(s=>s.ok===false)).map(v=>v.measure_name+(v.nitel_hedef?' ('+v.nitel_hedef+')':'')).join(', '):''));
+  // 8D
+  const dHdr=el('div',{style:'font-weight:700;margin:14px 0 6px;color:var(--accent)'},'8D ADIMLARI');
+  m.append(dHdr);
+  m.append(fld('d1_team','D1 — Takım','Sorunu çözecek takım üyeleri',2));
+  m.append(fld('d2_problem','D2 — Problemin Tanımı','5N1K: ne, nerede, ne zaman, kim, neden, nasıl',3));
+  m.append(fld('d3_containment','D3 — Acil/Ani Önlem (Containment)','Müşteriyi korumak için anında alınan tedbirler',2));
+  m.append(fld('d4_root_cause','D4 — Kök Neden Analizi','5 Neden / Ishikawa: gerçek kök sebep',3));
+  m.append(fld('d5_corrective','D5 — Düzeltici Faaliyet','Kök nedeni ortadan kaldıracak kalıcı çözüm',3));
+  m.append(fld('d6_verification','D6 — Doğrulama','Çözümün etkin olduğunun kanıtı (ölçüm/test/SPC)',2));
+  m.append(fld('d7_preventive','D7 — Önleyici Faaliyet','Benzer sorunun başka yerde tekrar etmemesi için',2));
+  m.append(fld('d8_recognition','D8 — Takım Takdiri / Kapanış','Takdir + kapanış notu',1));
+  m.append(fld('notes','Ek Notlar','',2));
+  // butonlar
+  const btns=el('div',{style:'display:flex;gap:8px;margin-top:14px;justify-content:flex-end'});
+  if(existing) btns.append(el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>printNCR8D(n,{})},'🖨 8D PDF'));
+  btns.append(el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>root.innerHTML=''},'İptal'));
+  btns.append(el('button',{class:'btn sm',style:'flex:0',onclick:async()=>{
+    const payload={ncr_no:ncrNo};
+    Object.keys(F).forEach(k=>{ let v=F[k].value; if(v==='')v=null; if((k==='qty_total'||k==='qty_def')&&v!=null)v=Number(v); payload[k]=v; });
+    if(fr.record){ payload.record_id=fr.record.id; payload.production_id=fr.record.production_id; payload.source='record'; payload.detected_at=fr.record.checked_at; }
+    payload.updated_at=new Date().toISOString();
+    if(payload.status==='closed' && !n.closed_at) payload.closed_at=new Date().toISOString();
+    let err;
+    if(existing){ ({error:err}=await sb.from('ncrs').update(payload).eq('id',existing.id)); }
+    else { payload.created_by=ME&&ME.id; ({error:err}=await sb.from('ncrs').insert(payload)); }
+    if(err){toast(esc(err.message),'err');return;}
+    root.innerHTML=''; toast('NCR '+ncrNo+' kaydedildi.','ok'); renderNCR();
+  }},'💾 Kaydet'));
+  m.append(btns);
+  bg.append(m); root.append(bg);
+}
+function printNCR8D(n, prod){
+  const w=window.open('','_blank','width=900,height=1100'); if(!w)return toast('Pop-up engellenmiş.','err');
+  const dec=NCR_DECISION[n.decision]||'-', st=NCR_STATUS[n.status]||'-';
+  const row=(num,title,content)=>`<tr><td class="dn">${num}</td><td class="dt"><b>${title}</b><br><div class="dc">${esc(content||'(boş)').replace(/\n/g,'<br>')}</div></td></tr>`;
+  const html=`<!doctype html><html><head><meta charset="utf-8"><title>${esc(n.ncr_no)} — 8D Raporu</title>
+<style>
+@page{size:A4;margin:14mm}
+body{font-family:Segoe UI,Arial,sans-serif;color:#111;font-size:12px;margin:0}
+.head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #222;padding-bottom:10px;margin-bottom:14px}
+.head .l{display:flex;gap:14px;align-items:center}
+.head .l img{height:46px}
+.head .t b{font-size:16px}
+.head .r{font-size:11px;text-align:right}
+.head .r table{border-collapse:collapse} .head .r td{border:1px solid #999;padding:3px 7px}
+.meta{margin:0 0 12px 0;padding:8px 10px;background:#f5f7fb;border:1px solid #ddd;border-radius:4px;font-size:11.5px}
+.meta b{color:#444}
+.meta-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px 18px;margin-top:4px}
+h2{font-size:14px;margin:14px 0 8px;border-bottom:1px solid #aaa;padding-bottom:3px;color:#1e40af}
+table.dt8{width:100%;border-collapse:collapse}
+table.dt8 td{border:1px solid #aaa;padding:7px 10px;vertical-align:top}
+table.dt8 .dn{width:46px;text-align:center;font-size:18px;font-weight:800;background:#f0f2f6;color:#1e40af}
+table.dt8 .dt b{font-size:12.5px;color:#222}
+.dc{margin-top:5px;color:#333;white-space:pre-wrap;min-height:24px}
+.pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700}
+.pill.ret{background:#fee2e2;color:#991b1b}
+.pill.ok{background:#dcfce7;color:#166534}
+.pill.proses{background:#ffedd5;color:#9a3412}
+.sig{margin-top:30px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:30px;font-size:11px}
+.sig div{border-top:1px solid #555;padding-top:5px;text-align:center}
+</style></head><body>
+<div class="head">
+  <div class="l">
+    <img src="https://www.sanifoam.com/Content/Images/Slider/logo.png" alt="" onerror="this.style.display='none'">
+    <div class="t"><b>UYGUNSUZLUK / 8D RAPORU</b><br><small>${esc(n.ncr_no)}</small></div>
+  </div>
+  <div class="r"><table>
+    <tr><td>Doküman No</td><td>${esc(n.ncr_no)}</td></tr>
+    <tr><td>Düzenleme Tarihi</td><td>${fmtDate(n.detected_at)}</td></tr>
+    <tr><td>Durum</td><td><span class="pill ${n.status==='closed'?'ok':n.status==='in_progress'?'proses':'ret'}">${esc(st)}</span></td></tr>
+  </table></div>
+</div>
+<div class="meta">
+  <div class="meta-grid">
+    <div><b>Stok:</b> ${esc(n.stock_code||'')} ${esc(n.stock_name||'')}</div>
+    <div><b>Cari:</b> ${esc(n.customer||'-')}</div>
+    <div><b>İş Emri:</b> ${esc(prod.work_order||'-')}</div>
+    <div><b>Toplam / Uygunsuz:</b> ${esc(String(n.qty_total??'-'))}  /  <span style="color:#b91c1c"><b>${esc(String(n.qty_def??'-'))}</b></span></div>
+    <div><b>Karar:</b> ${esc(dec)}</div>
+    <div><b>Önem:</b> ${esc(n.severity||'-')}</div>
+    <div><b>Sorumlu:</b> ${esc(n.responsible||'-')}</div>
+    <div><b>Termin:</b> ${n.due_date?fmtDate(n.due_date):'-'}</div>
+    <div><b>Kapanış:</b> ${n.closed_at?fmtDate(n.closed_at):'-'}</div>
+  </div>
+  <div style="margin-top:6px"><b>Uygunsuzluk Tanımı:</b><br>${esc(n.defect_desc||'-').replace(/\n/g,'<br>')}</div>
+</div>
+<h2>8D Adımları</h2>
+<table class="dt8">
+${row('D1','TAKIM',n.d1_team)}
+${row('D2','PROBLEMİN TANIMI',n.d2_problem)}
+${row('D3','ACİL/ANİ ÖNLEM (Containment)',n.d3_containment)}
+${row('D4','KÖK NEDEN ANALİZİ',n.d4_root_cause)}
+${row('D5','DÜZELTİCİ FAALİYET',n.d5_corrective)}
+${row('D6','DOĞRULAMA',n.d6_verification)}
+${row('D7','ÖNLEYİCİ FAALİYET',n.d7_preventive)}
+${row('D8','TAKIM TAKDİRİ / KAPANIŞ',n.d8_recognition)}
+</table>
+${n.notes?'<h2>Notlar</h2><div class="meta">'+esc(n.notes).replace(/\n/g,'<br>')+'</div>':''}
+<div class="sig">
+  <div>Hazırlayan<br><small>(Kalite)</small></div>
+  <div>Kontrol<br><small>(Üretim)</small></div>
+  <div>Onay<br><small>(Yönetim)</small></div>
+</div>
+${'<scr'+'ipt>'}window.onload=()=>setTimeout(()=>window.print(),300);${'</scr'+'ipt>'}
+</body></html>`;
+  w.document.write(html); w.document.close();
+}
+
+// ====================== SERTİFİKA (CoC / CoA) ======================
+let CERT_FILT={q:''};
+async function renderCert(){
+  const root=$('#tab-cert');
+  if(!can('cert')){ root.innerHTML='<div class="card"><div class="empty">Bu bölüm için yetkin yok (admin veya «Sertifika» yetkisi gerekir).</div></div>'; return; }
+  root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
+  const {data:certs}=await sb.from('certificates').select('*').order('issue_date',{ascending:false}).limit(500);
+  root.innerHTML='';
+  const hdr=el('div',{class:'card'},
+    el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'},
+      el('h3',{style:'margin:0'},'📄 Uygunluk / Analiz Sertifikası (CoC / CoA)'),
+      el('button',{class:'btn sm',onclick:()=>openCertCreate(certs||[])},'＋ Yeni Sertifika')
+    ),
+    el('p',{style:'color:var(--muted);font-size:13px;margin:8px 0 0'},'Sevkiyat/parti bazında müşteriye gönderilecek Uygunluk Sertifikası (CoC) veya Analiz Sertifikası (CoA) oluştur. Üretim/iş emrini seç → ölçüm sonuçları otomatik gelir → antetli PDF.')
+  );
+  root.append(hdr);
+  // Liste
+  const fc=el('div',{class:'card'});
+  fc.append(el('div',{class:'toolbar'},
+    el('input',{class:'inp',placeholder:'🔍 Sertifika no/stok/cari ara…',style:'max-width:300px',value:CERT_FILT.q,oninput:e=>{CERT_FILT.q=e.target.value;
+      document.querySelectorAll('#certBody tr').forEach(tr=>{const s=e.target.value.toLowerCase();tr.style.display=(!s||(tr.dataset.s||'').includes(s))?'':'none';});}}),
+    el('div',{class:'grow'}),
+    el('div',{class:'stat'},el('b',{},String((certs||[]).length)),el('span',{},'sertifika'))
+  ));
+  root.append(fc);
+  const tb=el('table');
+  tb.append(el('thead',{},el('tr',{},...['Sertifika No','Tip','Tarih','Stok','Cari','İş Emri','Lot','Miktar','İşlem'].map(h=>el('th',{},h)))));
+  const body=el('tbody',{id:'certBody'});
+  if(!(certs||[]).length) body.append(el('tr',{},el('td',{colspan:9},el('div',{class:'empty'},'Sertifika kaydı yok.'))));
+  (certs||[]).forEach(c=>body.append(el('tr',{style:'cursor:pointer','data-s':`${c.cert_no} ${c.stock_code} ${c.customer||''} ${c.lot_no||''}`.toLowerCase(),onclick:()=>printCert(c)},
+    el('td',{style:'font-weight:700;font-family:monospace'},c.cert_no),
+    el('td',{},c.cert_type||'CoC'),
+    el('td',{style:'white-space:nowrap'},fmtDate(c.issue_date)),
+    el('td',{},c.stock_code||''),
+    el('td',{style:'font-size:12px'},c.customer||'—'),
+    el('td',{style:'font-size:12px'},(c.data&&c.data.work_order)||'—'),
+    el('td',{},c.lot_no||'—'),
+    el('td',{style:'white-space:nowrap'},(c.quantity!=null?c.quantity:'-')+' '+(c.unit||'')),
+    el('td',{onclick:e=>e.stopPropagation()},
+      el('button',{class:'btn sm sec',onclick:()=>printCert(c)},'🖨 PDF'),
+      can('delete')?el('button',{class:'btn sm danger',style:'margin-left:5px',onclick:async()=>{ if(!confirm('Bu sertifika silinsin mi?'))return; const {error}=await sb.from('certificates').delete().eq('id',c.id); if(error){toast(esc(error.message),'err');return;} toast('Sertifika silindi.','ok'); renderCert(); }},'Sil'):''
+    )
+  )));
+  tb.append(body);
+  root.append(el('div',{class:'card'},el('div',{class:'tbl-wrap'},tb)));
+}
+async function openCertCreate(allCerts){
+  const root=$('#modalRoot');
+  root.innerHTML='<div class="modal-bg"><div class="modal"><div class="empty">Yükleniyor…</div></div></div>';
+  const {data:prods}=await sb.from('productions').select('id,stock_code,stock_name,customer,work_order,prod_date,start_time,quantity,unit,op_no,machine_name').order('start_time',{ascending:false}).limit(500);
+  const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
+  const m=el('div',{class:'modal',style:'position:relative;max-width:760px'});
+  m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
+  m.append(el('h3',{},'＋ Yeni Sertifika Oluştur'));
+  const certNo=nextNo('CERT',allCerts||[],'cert_no');
+  m.append(el('div',{class:'meta'},`Sertifika No: <b>${esc(certNo)}</b>`));
+  // tip + üretim seçimi
+  const typeSel=el('select',{class:'inp'}); [['CoC','📄 CoC — Uygunluk Sertifikası'],['CoA','🧪 CoA — Analiz Sertifikası']].forEach(([v,t])=>{const o=el('option',{value:v},t);typeSel.append(o);});
+  // üretim açılır listesi (cari + stok + iş emri + tarih)
+  const prodSel=el('select',{class:'inp'}); prodSel.append(el('option',{value:''},'— üretim seç —'));
+  (prods||[]).forEach(p=>{ const lab=`${fmtDate(p.prod_date||p.start_time)} · ${p.stock_code||''} · ${p.customer||''} · İŞ:${p.work_order||'-'} · ${p.quantity||''} ${p.unit||''}`;
+    prodSel.append(el('option',{value:p.id},lab)); });
+  const lotInp=el('input',{class:'inp',placeholder:'örn. LOT-2026-001'});
+  const notesInp=el('textarea',{class:'inp',rows:'2',placeholder:'Sertifikada yer alacak ek not (isteğe bağlı)'});
+  m.append(el('div',{class:'row'},
+    el('div',{class:'field',style:'flex:0;min-width:200px'},el('label',{class:'lab'},'Sertifika Tipi'),typeSel),
+    el('div',{class:'field grow'},el('label',{class:'lab'},'Üretim / İş Emri'),prodSel),
+    el('div',{class:'field',style:'flex:0;min-width:180px'},el('label',{class:'lab'},'Lot No'),lotInp)
+  ));
+  m.append(el('div',{class:'field'},el('label',{class:'lab'},'Notlar'),notesInp));
+  const status=el('div',{style:'color:var(--muted);font-size:12px;margin-top:4px'});
+  m.append(status);
+  m.append(el('div',{style:'display:flex;gap:8px;justify-content:flex-end;margin-top:14px'},
+    el('button',{class:'btn sm sec',onclick:()=>root.innerHTML=''},'İptal'),
+    el('button',{class:'btn sm',onclick:async()=>{
+      const pid=prodSel.value; if(!pid){toast('Üretim seç.','err');return;}
+      const p=(prods||[]).find(x=>String(x.id)===String(pid)); if(!p){toast('Üretim bulunamadı.','err');return;}
+      status.textContent='Ölçüm sonuçları toplanıyor…';
+      // bu üretimin tüm kontrol kayıtları + plan
+      const [{data:recs},{data:plan},{data:hdrRows}]=await Promise.all([
+        sb.from('control_records').select('*').eq('production_id',p.id),
+        sb.from('control_plan_items').select('*').eq('stock_code',p.stock_code),
+        sb.from('control_plan_headers').select('*').eq('stock_code',p.stock_code)
+      ]);
+      // ölçüm bazında özet: limitler + min/maks/ort + adet + OK/RET
+      const summary={}; (recs||[]).forEach(r=>(r.vals||[]).forEach(v=>{
+        const k=v.measure_name; if(!k)return; const g=summary[k]||(summary[k]={name:k,unit:v.unit,nitel:v.nitel_hedef,lower:v.lower_limit,upper:v.upper_limit,target:v.target,is_q:v.is_qualitative,vals:[],ok:0,ret:0});
+        (v.samples||[]).forEach(s=>{ if(s.value!=null&&s.value!==''){ const n=Number(s.value); if(isFinite(n))g.vals.push(n); }
+          if(s.ok===true)g.ok++; else if(s.ok===false)g.ret++; });
+      }));
+      const data={ work_order:p.work_order, op_no:p.op_no, machine_name:p.machine_name, prod_date:p.prod_date||p.start_time, summary, total_records:(recs||[]).length };
+      const hdr=(hdrRows||[])[0]||{};
+      const payload={cert_no:certNo, cert_type:typeSel.value, stock_code:p.stock_code, stock_name:p.stock_name, customer:p.customer, production_id:p.id, lot_no:lotInp.value.trim()||null, quantity:p.quantity, unit:p.unit, doc_no:hdr.doc_no||null, rev_no:hdr.rev_no||null, header:hdr, data, notes:notesInp.value.trim()||null, created_by:ME&&ME.id };
+      const {data:ins,error}=await sb.from('certificates').insert(payload).select().maybeSingle();
+      if(error){toast(esc(error.message),'err');return;}
+      root.innerHTML=''; toast('Sertifika '+certNo+' oluşturuldu.','ok');
+      printCert(ins||payload); renderCert();
+    }},'💾 Oluştur & PDF')
+  ));
+  bg.append(m); root.innerHTML=''; root.append(bg);
+}
+function printCert(c){
+  const w=window.open('','_blank','width=900,height=1100'); if(!w)return toast('Pop-up engellenmiş.','err');
+  const d=c.data||{}; const sum=d.summary||{};
+  const overallOK=Object.values(sum).every(g=>g.ret===0);
+  const rows=Object.values(sum).map(g=>{
+    let val='-', lim='-';
+    if(g.is_q){ val=(g.ok>0&&g.ret===0)?'<b style="color:#166534">UYGUN</b>':(g.ret>0?'<b style="color:#991b1b">UYGUNSUZ ('+g.ret+')</b>':'-'); lim=esc(g.nitel||'-'); }
+    else if(g.vals.length){ const mn=Math.min(...g.vals),mx=Math.max(...g.vals),av=g.vals.reduce((a,b)=>a+b,0)/g.vals.length;
+      val=`Min ${mn.toFixed(3)} · Maks ${mx.toFixed(3)} · Ort ${av.toFixed(3)}`;
+      lim=(g.lower!=null?g.lower:'…')+' ÷ '+(g.upper!=null?g.upper:'…')+(g.unit?(' '+g.unit):''); }
+    const st=g.ret===0?'<span class="pill ok">OK</span>':'<span class="pill ret">RET ('+g.ret+')</span>';
+    return `<tr><td>${esc(g.name)}</td><td>${esc(g.target!=null?String(g.target)+(g.unit?' '+g.unit:''):'-')}</td><td>${lim}</td><td>${val}</td><td style="text-align:center">${g.ok+g.ret}</td><td style="text-align:center">${st}</td></tr>`;
+  }).join('');
+  const title=(c.cert_type==='CoA')?'CERTIFICATE OF ANALYSIS (CoA)':'CERTIFICATE OF CONFORMITY (CoC)';
+  const titleTr=(c.cert_type==='CoA')?'ANALİZ SERTİFİKASI':'UYGUNLUK SERTİFİKASI';
+  const html=`<!doctype html><html><head><meta charset="utf-8"><title>${esc(c.cert_no)} — ${esc(title)}</title>
+<style>
+@page{size:A4;margin:14mm}
+body{font-family:Segoe UI,Arial,sans-serif;color:#111;font-size:12px;margin:0}
+.head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1e40af;padding-bottom:10px;margin-bottom:14px}
+.head .l{display:flex;gap:14px;align-items:center}
+.head .l img{height:50px}
+.head .t b{font-size:17px;color:#1e40af}
+.head .t small{color:#444}
+.head .r{font-size:11px;text-align:right}
+.head .r table{border-collapse:collapse} .head .r td{border:1px solid #999;padding:3px 7px}
+.meta{margin:0 0 12px 0;padding:10px 12px;background:#f5f7fb;border:1px solid #ddd;border-radius:4px;font-size:12px}
+.meta-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:4px 22px;margin-top:4px}
+.meta b{color:#444}
+h2{font-size:13px;margin:14px 0 6px;border-bottom:1px solid #aaa;padding-bottom:3px;color:#1e40af;letter-spacing:.3px}
+table.res{width:100%;border-collapse:collapse;font-size:11px}
+table.res th{background:#1e40af;color:#fff;padding:6px 8px;text-align:left;border:1px solid #1e40af}
+table.res td{border:1px solid #bbb;padding:5px 8px;vertical-align:middle}
+table.res tr:nth-child(even) td{background:#f9fafe}
+.pill{display:inline-block;padding:2px 9px;border-radius:10px;font-size:10px;font-weight:800}
+.pill.ok{background:#dcfce7;color:#166534;border:1px solid #16a34a}
+.pill.ret{background:#fee2e2;color:#991b1b;border:1px solid #ef4444}
+.overall{padding:12px;border-radius:6px;text-align:center;margin:14px 0;font-size:14px;font-weight:800;letter-spacing:.6px}
+.overall.ok{background:#dcfce7;color:#166534;border:2px solid #16a34a}
+.overall.ret{background:#fee2e2;color:#991b1b;border:2px solid #ef4444}
+.notes{margin:12px 0;padding:10px;border:1px solid #ddd;border-radius:4px;background:#fafafa;font-size:11.5px}
+.sig{margin-top:34px;display:grid;grid-template-columns:1fr 1fr;gap:30px;font-size:11px}
+.sig div{border-top:1px solid #555;padding-top:5px;text-align:center}
+.foot{margin-top:18px;text-align:center;color:#888;font-size:10px;border-top:1px solid #ddd;padding-top:6px}
+</style></head><body>
+<div class="head">
+  <div class="l">
+    <img src="https://www.sanifoam.com/Content/Images/Slider/logo.png" alt="" onerror="this.style.display='none'">
+    <div class="t"><b>${esc(titleTr)}</b><br><small>${esc(title)}</small></div>
+  </div>
+  <div class="r"><table>
+    <tr><td><b>Sertifika No</b></td><td>${esc(c.cert_no)}</td></tr>
+    <tr><td>Tarih</td><td>${fmtDate(c.issue_date)}</td></tr>
+    ${c.doc_no?'<tr><td>Doküman No</td><td>'+esc(c.doc_no)+'</td></tr>':''}
+    ${c.rev_no?'<tr><td>Revizyon</td><td>'+esc(c.rev_no)+'</td></tr>':''}
+  </table></div>
+</div>
+<div class="meta">
+  <div class="meta-grid">
+    <div><b>Müşteri / Cari:</b> ${esc(c.customer||'-')}</div>
+    <div><b>İş Emri:</b> ${esc(d.work_order||'-')}</div>
+    <div><b>Stok Kodu:</b> ${esc(c.stock_code||'-')}</div>
+    <div><b>Ürün Adı:</b> ${esc(c.stock_name||'-')}</div>
+    <div><b>Üretim Tarihi:</b> ${d.prod_date?fmtDate(d.prod_date):'-'}</div>
+    <div><b>Operasyon:</b> ${esc(d.op_no!=null?String(d.op_no):'-')} · ${esc(d.machine_name||'-')}</div>
+    <div><b>Lot No:</b> ${esc(c.lot_no||'-')}</div>
+    <div><b>Miktar:</b> ${esc(String(c.quantity??'-'))} ${esc(c.unit||'')}</div>
+  </div>
+</div>
+<div class="overall ${overallOK?'ok':'ret'}">${overallOK?'✓ TÜM KONTROLLER UYGUN — ÜRÜN MÜŞTERİYE SEVK EDİLEBİLİR':'✗ UYGUNSUZLUK TESPİT EDİLMİŞTİR'}</div>
+<h2>Ölçüm / Kontrol Sonuçları</h2>
+<table class="res">
+  <thead><tr><th>Kontrol Özelliği</th><th>Hedef</th><th>Limit / Spec</th><th>Bulunan Değer / Sonuç</th><th>Adet</th><th>Sonuç</th></tr></thead>
+  <tbody>${rows||'<tr><td colspan="6" style="text-align:center;color:#888">Ölçüm sonucu bulunamadı.</td></tr>'}</tbody>
+</table>
+${c.notes?'<div class="notes"><b>Notlar:</b><br>'+esc(c.notes).replace(/\n/g,'<br>')+'</div>':''}
+<div class="sig">
+  <div>Hazırlayan<br><small>(Kalite Kontrol)</small></div>
+  <div>Onay<br><small>(Kalite Yöneticisi)</small></div>
+</div>
+<div class="foot">Bu sertifika ${esc((c.header&&c.header.doc_title)||'Kontrol Planı')} kapsamında, ${fmtDate(c.issue_date)} tarihinde Sanifoam Endüstri ve Tüketim Ürünleri San. Tic. A.Ş. tarafından düzenlenmiştir.</div>
+${'<scr'+'ipt>'}window.onload=()=>setTimeout(()=>window.print(),300);${'</scr'+'ipt>'}
+</body></html>`;
+  w.document.write(html); w.document.close();
+}
+
 // ====================== ADMIN (KULLANICILAR) ======================
 async function renderAdmin(){
   const root=$('#tab-admin');
@@ -2776,10 +3204,10 @@ async function renderAdmin(){
   });
   tb.append(body);
   root.append(el('div',{class:'card'},el('h3',{},'Kullanıcı Yönetimi'),
-    el('p',{style:'color:var(--muted);margin:-6px 0 12px;font-size:12px'},'Her kullanıcıya yetkileri tek tek aç/kapa: Giriş (kontrol kaydı oluşturma) · Düzenle (kayıt düzeltme) · Sil · Plan (kontrol planı düzenleme) · İçe Aktar (üretim Excel) · Otomatik (rastgele uygun kayıt üretme) · Dashboard (kalite istatistik panosunu görme). Admin tüm yetkilere sahiptir.'),
+    el('p',{style:'color:var(--muted);margin:-6px 0 12px;font-size:12px'},'Her kullanıcıya yetkileri tek tek aç/kapa: Giriş (kontrol kaydı oluşturma) · Düzenle (kayıt düzeltme) · Sil · Plan (kontrol planı düzenleme) · İçe Aktar (üretim Excel) · Otomatik (rastgele uygun kayıt üretme) · Dashboard (kalite istatistik panosunu görme) · Uygunsuzluk (NCR/8D yönetimi) · Sertifika (CoC/CoA oluşturma). Admin tüm yetkilere sahiptir.'),
     el('div',{class:'tbl-wrap'},tb)));
 }
-const PERMS=[['enter','Giriş'],['edit','Düzenle'],['delete','Sil'],['plan','Plan'],['import','İçe Aktar'],['auto','Otomatik'],['dashboard','Dashboard']];
+const PERMS=[['enter','Giriş'],['edit','Düzenle'],['delete','Sil'],['plan','Plan'],['import','İçe Aktar'],['auto','Otomatik'],['dashboard','Dashboard'],['ncr','Uygunsuzluk'],['cert','Sertifika']];
 function permsCell(u){
   const td=el('td',{});
   if(u.is_admin){ td.append(el('span',{class:'pill ok'},'Tümü (admin)')); return td; }
