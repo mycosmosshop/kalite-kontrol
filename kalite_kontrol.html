@@ -2939,7 +2939,7 @@ async function renderNCR(){
     el('td',{style:'white-space:nowrap;font-size:12px;color:'+(n.due_date&&new Date(n.due_date)<new Date()&&n.status!=='closed'?'#f87171':'var(--muted)')},n.due_date?fmtDate(n.due_date):'—'),
     el('td',{onclick:e=>e.stopPropagation()},
       el('button',{class:'btn sm',style:'background:'+(e8set.has(n.id)?'#16a34a':'#7c3aed'),title:e8set.has(n.id)?'8D raporu mevcut — düzenle':'8D raporu başlat',onclick:()=>openEightD({id:n.id,ncr_no:n.ncr_no,stock_code:n.stock_code,stock_name:n.stock_name,customer:n.customer,defect_desc:n.defect_desc,responsible:n.responsible,due_date:n.due_date},null)},e8set.has(n.id)?'🔧 8D ✓':'🔧 8D'),
-      can('delete')?el('button',{class:'btn sm danger',style:'margin-left:5px',onclick:async()=>{ if(!confirm('Bu NCR silinsin mi?'))return; const {error}=await sb.from('ncrs').delete().eq('id',n.id); if(error){toast(esc(error.message),'err');return;} toast('NCR silindi.','ok'); renderNCR(); }},'Sil'):''
+      can('ncr')?el('button',{class:'btn sm danger',style:'margin-left:5px',onclick:async()=>{ if(!confirm('Bu uygunsuzluk (NCR) silinsin mi? Bağlı 8D raporu varsa o da silinir.'))return; await sb.from('eightd').delete().eq('ncr_id',n.id); const {error}=await sb.from('ncrs').delete().eq('id',n.id); if(error){toast(esc(error.message),'err');return;} toast('NCR silindi.','ok'); renderNCR(); }},'Sil'):''
     )
   )));
   tb.append(body);
@@ -3388,7 +3388,7 @@ async function renderEightD(){
       el('td',{onclick:e=>e.stopPropagation()},
         el('button',{class:'btn sm sec',onclick:()=>print8D({...e8,_ncr_no:nmap[e8.ncr_id]})},'🖨 PDF'),
         el('button',{class:'btn sm sec',style:'margin-left:5px',onclick:()=>export8DExcel({...e8,_ncr_no:nmap[e8.ncr_id]})},'📥 Excel'),
-        can('delete')?el('button',{class:'btn sm danger',style:'margin-left:5px',onclick:async()=>{ if(!confirm('Bu 8D raporu silinsin mi?'))return; const {error}=await sb.from('eightd').delete().eq('id',e8.id); if(error){toast(esc(error.message),'err');return;} toast('8D silindi.','ok'); renderEightD(); }},'Sil'):''
+        can('ncr')?el('button',{class:'btn sm danger',style:'margin-left:5px',onclick:async()=>{ if(!confirm('Bu 8D raporu silinsin mi?'))return; const {error}=await sb.from('eightd').delete().eq('id',e8.id); if(error){toast(esc(error.message),'err');return;} toast('8D silindi.','ok'); renderEightD(); }},'Sil'):''
       )));
   });
   tb.append(body);
