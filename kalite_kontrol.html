@@ -3036,7 +3036,7 @@ async function openCertCreate(allCerts){
   m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
   m.append(el('h3',{},'＋ Yeni Sertifika Oluştur'));
   const certNo=nextNo('CERT',allCerts||[],'cert_no');
-  m.append(el('div',{class:'meta'},`Sertifika No: <b>${esc(certNo)}</b>`));
+  m.append(el('div',{class:'meta',html:`Sertifika No: <b>${esc(certNo)}</b>`}));
   // tip + üretim seçimi
   const typeSel=el('select',{class:'inp'}); [['CoC','📄 CoC — Uygunluk Sertifikası'],['CoA','🧪 CoA — Analiz Sertifikası']].forEach(([v,t])=>{const o=el('option',{value:v},t);typeSel.append(o);});
   // üretim açılır listesi (cari + stok + iş emri + tarih)
