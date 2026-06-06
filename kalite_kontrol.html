@@ -1608,9 +1608,10 @@ async function saveControl(p,items,state,stage,sampleFor){
   const rec={production_id:p.id,stock_code:p.stock_code,stock_name:p.stock_name,machine_code:p.machine_code,
     work_order:p.work_order,stage,operator:oper,shift:p.shift,vals,overall_result:overall,
     note:$('#m_note').value.trim()||null};
-  const {error}=await sb.from('control_records').insert(rec);
+  const {data:ins,error}=await sb.from('control_records').insert(rec).select().maybeSingle();
   if(error){toast(esc(error.message),'err');return;}
   toast(`${STAGES[stage]} kontrolü kaydedildi (${overall}).`, overall==='RET'?'err':'ok');
+  if(overall==='RET') await autoOpenNCR(ins||rec, p);   // RET → otomatik uygunsuzluk
   $('#modalRoot').innerHTML='';
   if(!$('#tab-kayitlar').classList.contains('hidden'))renderKayitlar();
   loadControlCounts();
@@ -2046,6 +2047,7 @@ async function editRecord(r,prod){
     const patch={vals,stage,operator:$('#er_oper').value.trim()||null,note:$('#er_note').value.trim()||null,overall_result:overall};
     const {error}=await sb.from('control_records').update(patch).eq('id',r.id);
     if(error){toast(esc(error.message),'err');return;}
+    if(overall==='RET') await autoOpenNCR({id:r.id,overall_result:overall,vals,stock_code:r.stock_code,stock_name:r.stock_name,checked_at:r.checked_at,production_id:r.production_id}, prod);   // RET → otomatik uygunsuzluk
     toast('Kayıt güncellendi.','ok'); root.innerHTML=''; renderKayitlar();
   }
   render();
@@ -2832,6 +2834,26 @@ function nextNo(prefix, list, field){ const ys=String(new Date().getFullYear()).
 }
 const NCR_DECISION={rework:'🔄 Yeniden işle', scrap:'🗑 Hurda', concession:'⚠ Şartlı kabul', return:'↩ İade'};
 const NCR_STATUS={open:'🟠 Açık', in_progress:'🔵 Devam', closed:'🟢 Kapalı'};
+// RET kontrol kaydı kaydedilince otomatik uygunsuzluk (NCR) aç
+async function autoOpenNCR(rec, prod){
+  try{
+    if(!rec || rec.overall_result!=='RET') return;
+    if(!can('ncr')) return;   // NCR yetkisi yoksa atla (Uygunsuzluk sekmesinden elle açılabilir)
+    prod=prod||{};
+    if(rec.id){ const {data:ex}=await sb.from('ncrs').select('id').eq('record_id',rec.id).limit(1); if(ex&&ex.length) return; }  // bu kayıt için zaten NCR var
+    const fails=(rec.vals||[]).filter(v=>(v.samples||[]).some(s=>s.ok===false)).map(v=>(v.measure_name||'')+(v.nitel_hedef?(' ('+v.nitel_hedef+')'):'')).filter(Boolean);
+    const {data:all}=await sb.from('ncrs').select('ncr_no');
+    const ncrNo=nextNo('NCR', all||[], 'ncr_no');
+    const payload={ ncr_no:ncrNo, source:'record', record_id:rec.id||null,
+      stock_code:rec.stock_code||prod.stock_code||null, stock_name:rec.stock_name||prod.stock_name||null,
+      customer:prod.customer||null, production_id:rec.production_id||prod.id||null,
+      detected_at:rec.checked_at||new Date().toISOString(),
+      defect_desc:fails.length?('Uygunsuz ölçüm(ler): '+fails.join(', ')):'Kontrolde uygunsuzluk tespit edildi',
+      qty_total:(prod.quantity!=null?prod.quantity:null), status:'open', severity:'medium', created_by:ME&&ME.id };
+    const {error}=await sb.from('ncrs').insert(payload);
+    if(!error) toast('⚠ Uygunsuzluk otomatik açıldı: '+ncrNo+' — «Uygunsuzluk» sekmesinden 8D işleyebilirsin.','ok');
+  }catch(e){ /* otomatik NCR başarısız olsa kaydı engelleme */ }
+}
 async function renderNCR(){
   const root=$('#tab-ncr');
   if(!can('ncr')){ root.innerHTML='<div class="card"><div class="empty">Bu bölüm için yetkin yok (admin veya «Uygunsuzluk» yetkisi gerekir).</div></div>'; return; }
