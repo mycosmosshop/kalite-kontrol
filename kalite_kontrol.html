@@ -1815,22 +1815,24 @@ function kalanGunCell(v,startMap,autoFirst,refMs){
   const editable=can('plan');
   const pill=el('span',{class:'pill',style:editable?'cursor:pointer':''});
   function recompute(dStr){
-    if(!dStr){ pill.className='pill gray'; pill.textContent='⏳ ilk tarih?'; pill.title=editable?'İlk tarih girmek için tıkla':''; return; }
+    if(!dStr){ pill.className='pill gray'; pill.textContent='⏳ son tarih?'; pill.title=editable?'Son yapılma tarihini girmek için tıkla':''; return; }
     const fd=new Date(dStr+'T00:00:00').getTime(), perMs=per*86400000, now=ref;
-    let due=fd+perMs;
-    if(due<=now){ const k=Math.ceil((now-fd)/perMs); due=fd+k*perMs; }   // vade geçtiyse sonraki periyoda yuvarla → hep kalan gün
-    const left=Math.max(0,Math.ceil((due-now)/86400000));
-    pill.className='pill '+(left<=30?'proses':'ok');
-    pill.textContent='⏳ '+left+' gün';
-    pill.title=`İlk: ${fmtDate(dStr)} · Sonraki: ${fmtDate(new Date(due))} (${per} gün periyot) · ${fmtDate(new Date(ref))} tarihine göre`+(editable?' — düzenlemek için tıkla':'');
+    const due=fd+perMs;                                   // YUVARLAMA YOK: son yapılma + periyot = bir sonraki vade
+    const diff=Math.ceil((due-now)/86400000);            // + : kaldı  ·  - : GECİKTİ
+    if(diff<0){ pill.className='pill ret'; pill.textContent='⚠ '+(-diff)+' gün gecikti'; }
+    else { const warnTh=Math.max(7,Math.round(per*0.15)); pill.className='pill '+(diff<=warnTh?'proses':'ok'); pill.textContent='⏳ '+diff+' gün'; }
+    pill.title=`Son yapılma: ${fmtDate(dStr)} · Vade: ${fmtDate(new Date(due))} (${per} gün periyot) · ${fmtDate(new Date(ref))} tarihine göre`+(diff<0?' — GECİKMİŞ, bu üretime kadar test yapılmamış':'')+(editable?' · düzenlemek için tıkla':'');
   }
-  const start=(startMap[v.plan_item_id]?String(startMap[v.plan_item_id]).slice(0,10):(autoFirst?String(autoFirst).slice(0,10):''));
+  // anchor = en güncel olan: elle girilen «son tarih» ya da sistemdeki son fiilî yapılma (lastDone/firstDone)
+  const manualS=startMap[v.plan_item_id]?String(startMap[v.plan_item_id]).slice(0,10):'';
+  const autoS=autoFirst?String(autoFirst).slice(0,10):'';
+  const start=(manualS&&autoS)?(manualS>autoS?manualS:autoS):(manualS||autoS);
   const dateInp=el('input',{type:'date',class:'cell-inp',style:'width:135px',value:start,
     onchange:async e=>{ const d=e.target.value; startMap[v.plan_item_id]=d||null; recompute(d);
       if(v.plan_item_id){ const {error}=await sb.from('control_plan_items').update({periodic_start:d||null}).eq('id',v.plan_item_id);
         error?toast(esc(error.message),'err'):toast('İlk tarih kaydedildi.','ok'); } }});
   const dwrap=el('div',{class:'hidden',style:'display:flex;flex-direction:column;gap:2px;margin-top:4px'},
-    el('span',{style:'font-size:10px;color:var(--muted)'},'İlk tarih'), dateInp);
+    el('span',{style:'font-size:10px;color:var(--muted)'},'Son yapılma tarihi'), dateInp);
   recompute(start);
   if(editable) pill.onclick=()=>{ dwrap.classList.toggle('hidden'); if(!dwrap.classList.contains('hidden')) setTimeout(()=>dateInp.focus(),0); };
   return el('td',{}, el('div',{style:'display:flex;flex-direction:column;align-items:center;min-width:120px'}, pill, dwrap));
@@ -1841,10 +1843,16 @@ async function editRecord(r,prod){
   let stage=r.stage, oper=r.operator||'';
   // üretim bilgisi (tarih vb. kayıtta üretimle aynı görünsün)
   if(!prod && r.production_id){ const {data}=await sb.from('productions').select('*').eq('id',r.production_id).maybeSingle(); prod=data||null; }
-  // periyodik maddeler için "ilk yapılma" tarihleri (bu ürünün tüm kayıtlarından) + elle girilen ilk tarih
-  const firstDone={};
-  { const {data:hist}=await sb.from('control_records').select('checked_at,vals').eq('stock_code',r.stock_code);
-    (hist||[]).forEach(rc=>{ (rc.vals||[]).forEach(vv=>{ const k=vv.measure_name; if(k&&(!firstDone[k]||rc.checked_at<firstDone[k])) firstDone[k]=rc.checked_at; }); }); }
+  // periyodik maddeler: ilk yapılma + SON FİİLEN YAPILMA tarihi (bu üretim tarihinden ÖNCE, ölçüm girilmiş kayıtlar)
+  const refT=new Date(r.checked_at||(prod&&(prod.start_time||prod.prod_date))||Date.now()).getTime();
+  const firstDone={}, lastDone={};
+  { const {data:hist}=await sb.from('control_records').select('id,checked_at,vals').eq('stock_code',r.stock_code);
+    (hist||[]).forEach(rc=>{ if(rc.id&&r.id&&rc.id===r.id)return;   // mevcut kaydı sayma
+      const before=new Date(rc.checked_at).getTime()<=refT;          // bu üretimden önceki/aynı tarihli
+      (rc.vals||[]).forEach(vv=>{ const k=vv.measure_name; if(!k)return;
+        if(!firstDone[k]||rc.checked_at<firstDone[k]) firstDone[k]=rc.checked_at;
+        const measured=(vv.samples||[]).some(s=>(s.value!=null&&s.value!=='')||s.ok===true||s.ok===false);
+        if(measured && before && (!lastDone[k]||rc.checked_at>lastDone[k])) lastDone[k]=rc.checked_at; }); }); }
   const startMap={}; let OLCU={};
   { const {data:pl}=await sb.from('control_plan_items').select('id,periodic_start,op_no,seq').eq('stock_code',r.stock_code);
     (pl||[]).forEach(it=>{ if(it.periodic_start) startMap[it.id]=it.periodic_start; });
@@ -1915,7 +1923,7 @@ async function editRecord(r,prod){
           el('td',{},tgl),
           el('td',{},noteInp),
           el('td',{},byInp),
-          kalanGunCell(v,startMap,firstDone[v.measure_name]||r.checked_at, new Date(r.checked_at||(prod&&(prod.start_time||prod.prod_date))||Date.now()).getTime())
+          kalanGunCell(v,startMap,lastDone[v.measure_name]||firstDone[v.measure_name]||r.checked_at, refT)
         );
         paint();
         body.append(row);
