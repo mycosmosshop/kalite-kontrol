@@ -3185,16 +3185,18 @@ function printCert(c){
   }).join('');
   const title=(c.cert_type==='CoA')?'CERTIFICATE OF ANALYSIS (CoA)':'CERTIFICATE OF CONFORMITY (CoC)';
   const titleTr=(c.cert_type==='CoA')?'ANALİZ SERTİFİKASI':'UYGUNLUK SERTİFİKASI';
+  const logoUrl=location.href.replace(/[#?].*$/,'').replace(/[^/]*$/,'')+'SanifoamLogo-Transparent.png';
   const html=`<!doctype html><html><head><meta charset="utf-8"><title>${esc(c.cert_no)} — ${esc(title)}</title>
 <style>
 @page{size:A4;margin:14mm}
 body{font-family:Segoe UI,Arial,sans-serif;color:#111;font-size:12px;margin:0}
-.head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1e40af;padding-bottom:10px;margin-bottom:14px}
-.head .l{display:flex;gap:14px;align-items:center}
-.head .l img{height:50px}
-.head .t b{font-size:17px;color:#1e40af}
-.head .t small{color:#444}
-.head .r{font-size:11px;text-align:right}
+.head{display:flex;justify-content:space-between;align-items:center;gap:14px;border-bottom:2px solid #1e40af;padding-bottom:10px;margin-bottom:14px}
+.head .l{flex:0 0 auto}
+.head .l img{height:56px}
+.head .c{flex:1 1 auto;text-align:center}
+.head .c b{font-size:19px;color:#1e40af;letter-spacing:.5px}
+.head .c small{color:#444}
+.head .r{flex:0 0 auto;font-size:11px;text-align:right}
 .head .r table{border-collapse:collapse} .head .r td{border:1px solid #999;padding:3px 7px}
 .meta{margin:0 0 12px 0;padding:10px 12px;background:#f5f7fb;border:1px solid #ddd;border-radius:4px;font-size:12px}
 .meta-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:4px 22px;margin-top:4px}
@@ -3216,10 +3218,8 @@ table.res tr:nth-child(even) td{background:#f9fafe}
 .foot{margin-top:18px;text-align:center;color:#888;font-size:10px;border-top:1px solid #ddd;padding-top:6px}
 </style></head><body>
 <div class="head">
-  <div class="l">
-    <img src="https://www.sanifoam.com/Content/Images/Slider/logo.png" alt="" onerror="this.style.display='none'">
-    <div class="t"><b>${esc(titleTr)}</b><br><small>${esc(title)}</small></div>
-  </div>
+  <div class="l"><img src="${logoUrl}" alt="Sanifoam" onerror="this.style.display='none'"></div>
+  <div class="c"><b>${esc(titleTr)}</b><br><small>${esc(title)}</small></div>
   <div class="r"><table>
     <tr><td><b>Sertifika No</b></td><td>${esc(c.cert_no)}</td></tr>
     <tr><td>Tarih</td><td>${fmtDate(c.issue_date)}</td></tr>
@@ -3239,7 +3239,6 @@ table.res tr:nth-child(even) td{background:#f9fafe}
     <div><b>Miktar:</b> ${esc(String(c.quantity??'-'))} ${esc(c.unit||'')}</div>
   </div>
 </div>
-<div class="overall ${overallOK?'ok':'ret'}">${overallOK?'✓ TÜM KONTROLLER UYGUN — ÜRÜN MÜŞTERİYE SEVK EDİLEBİLİR':'✗ UYGUNSUZLUK TESPİT EDİLMİŞTİR'}</div>
 <h2>Ölçüm / Kontrol Sonuçları</h2>
 <table class="res">
   <thead><tr><th>Kontrol Özelliği</th><th>Hedef</th><th>Limit / Spec</th><th>Bulunan Değer / Sonuç</th><th>Adet</th><th>Sonuç</th></tr></thead>
