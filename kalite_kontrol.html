@@ -3162,16 +3162,20 @@ async function openEightD(ncr, existing){
   const L6=mkActionList(D.d6,'Tamamlanma'); m.append(L6.el);
   sec('7D — Önleyici Faaliyet (Preventive Action)');
   const L7=mkActionList(D.d7,'Termin'); m.append(L7.el);
-  // 8D
-  sec('8D — Takım Takdiri / Kapanış (Closure)');
-  const i_d8=ta(d8.text,2,'Takdir + kapanış notu'), i_d8r=inp(d8.responsible||ncr.responsible), i_d8d=inp(d8.date,'date');
-  m.append(el('div',{style:'margin-bottom:8px'},el('label',{class:'lab'},'Kapanış Notu'),i_d8));
-  m.append(R(FF('Sorumlu',i_d8r),FF('Kapanış Tarihi',i_d8d)));
+  // 8D — Takımın Kutlanması / Kapanış (orijinal formatla aynı alanlar)
+  sec('8D — Takımın Kutlanması / Kapanış (Team Recognition)');
+  const i_d8_close=inp(d8.close_date,'date'), i_d8_notifyD=inp(d8.notify_date,'date'), i_d8_notifyM=inp(d8.notify_method), i_d8_actual=inp(d8.actual_close,'date'), i_d8_rel=inp(d8.related||ncr.responsible), i_d8_evalD=inp(d8.eval_date,'date'), i_d8_closedBy=inp(d8.closed_by||ncr.responsible);
+  const i_d8_eval=ta(d8.eval_text||d8.text,2,'Etkinlik değerlendirme / kapanış notu');
+  m.append(R(FF('Kapatma Tarihi',i_d8_close),FF('Bildirim Tarihi',i_d8_notifyD)));
+  m.append(R(FF('Bildirim Yöntemi',i_d8_notifyM),FF('Fiili Kapatma Tarihi',i_d8_actual)));
+  m.append(R(FF('İlgili',i_d8_rel),FF('Kapatan',i_d8_closedBy)));
+  m.append(el('div',{style:'margin-bottom:8px'},el('label',{class:'lab'},'Etkinlik Değerlendirme'),i_d8_eval));
+  m.append(R(FF('Etkinlik Değerlendirme Tarihi',i_d8_evalD)));
   const i_status=el('select',{class:'inp'}); Object.entries(NCR_STATUS).forEach(([k,v])=>i_status.append(el('option',{value:k},v))); i_status.value=(existing&&existing.status)||'open';
   const collect=()=>({ d1:{responsible:i_resp.value.trim()||null,estimated_closing:i_close.value||null,complaint_date:i_complaint.value||null,team_members:i_team.value.trim()||null,start_date:i_start.value||null,problem_category:i_cat.value||null,tip:i_tip.value||null},
     d2:{stock_code:i_sc.value.trim()||null,stock_name:i_sn.value.trim()||null,customer:i_cust.value.trim()||null,waybill_no:i_way.value.trim()||null,report_date:i_rep.value||null,problem_description:i_prob.value.trim()||null},
     d3:L3.get(), d4:{management:c_man.value.trim()||null,method:c_method.value.trim()||null,machine:c_machine.value.trim()||null,man:c_human.value.trim()||null,material:c_material.value.trim()||null,measurement:c_meas.value.trim()||null},
-    d5:L5.get(), d6:L6.get(), d7:L7.get(), d8:{text:i_d8.value.trim()||null,responsible:i_d8r.value.trim()||null,date:i_d8d.value||null} });
+    d5:L5.get(), d6:L6.get(), d7:L7.get(), d8:{ close_date:i_d8_close.value||null, notify_date:i_d8_notifyD.value||null, notify_method:i_d8_notifyM.value.trim()||null, actual_close:i_d8_actual.value||null, related:i_d8_rel.value.trim()||null, eval_text:i_d8_eval.value.trim()||null, eval_date:i_d8_evalD.value||null, closed_by:i_d8_closedBy.value.trim()||null } });
   const btns=el('div',{style:'display:flex;gap:8px;margin-top:16px;justify-content:flex-end;flex-wrap:wrap'});
   btns.append(el('div',{style:'flex:1;min-width:160px'},el('label',{class:'lab'},'Durum'),i_status));
   btns.append(el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>print8D({report_no:repNo,status:i_status.value,stock_code:i_sc.value,customer:i_cust.value,data:collect(),_ncr_no:ncr.ncr_no})},'🖨 PDF'));
@@ -3265,7 +3269,7 @@ ${'<scr'+'ipt>'}window.onload=()=>setTimeout(()=>window.print(),300);${'</scr'+'
 </body></html>`;
   w.document.write(html); w.document.close();
 }
-// 8D'yi orijinal 8D_Report.xlsx formatında Excel olarak indir
+// 8D'yi orijinal 8D_Report.xlsx (FR13) formatında BIREBIR Excel üret
 function export8DExcel(e8){
   if(typeof XLSX==='undefined'){toast('Excel kütüphanesi yüklenemedi.','err');return;}
   const D=e8.data||{}; const d1=D.d1||{},d2=D.d2||{},d4=D.d4||{},d8=D.d8||{};
@@ -3273,66 +3277,86 @@ function export8DExcel(e8){
   const enc=(r,c)=>XLSX.utils.encode_cell({r,c});
   const set=(r,c,v,s)=>{ cells[enc(r,c)]={t:'s',v:(v==null?'':String(v)),s:s||{}}; };
   const mrg=(r1,c1,r2,c2)=>merges.push({s:{r:r1,c:c1},e:{r:r2,c:c2}});
+  const span=(r1,c1,r2,c2,v,s)=>{ for(let r=r1;r<=r2;r++)for(let c=c1;c<=c2;c++) set(r,c,(r===r1&&c===c1)?v:'',s); if(r1!==r2||c1!==c2) mrg(r1,c1,r2,c2); };
   const fd=v=>v?fmtDate(v):'';
-  const thin={style:'thin',color:{rgb:'B0B0B0'}}; const bAll={top:thin,bottom:thin,left:thin,right:thin};
-  const SEC={fill:{patternType:'solid',fgColor:{rgb:'1E40AF'}},font:{bold:true,color:{rgb:'FFFFFF'},sz:11},alignment:{horizontal:'left',vertical:'center'},border:bAll};
-  const LAB={font:{bold:true,color:{rgb:'333333'},sz:10},fill:{patternType:'solid',fgColor:{rgb:'EEF2FB'}},alignment:{vertical:'center',wrapText:true},border:bAll};
-  const VAL={font:{sz:10},alignment:{vertical:'top',wrapText:true},border:bAll};
-  const COLH={font:{bold:true,sz:9.5,color:{rgb:'1E40AF'}},fill:{patternType:'solid',fgColor:{rgb:'F0F4FB'}},alignment:{horizontal:'center',vertical:'center'},border:bAll};
-  const CAT={font:{bold:true,sz:10,color:{rgb:'1E40AF'}},fill:{patternType:'solid',fgColor:{rgb:'F0F4FB'}},alignment:{horizontal:'center',vertical:'center'},border:bAll};
-  // header block (0-3)
-  set(0,0,'Sanifoam®',{font:{bold:true,sz:16,color:{rgb:'0E7AB5'}},alignment:{horizontal:'center',vertical:'center'},border:bAll}); mrg(0,0,3,1);
-  set(0,2,'8D RAPORU / 8D REPORT',{font:{bold:true,sz:16,color:{rgb:'1E40AF'}},alignment:{horizontal:'center',vertical:'center'},border:bAll}); mrg(0,2,3,5);
-  const hb=(r,l,v)=>{ set(r,6,l,{font:{bold:true,sz:9},alignment:{horizontal:'left',vertical:'center'},border:bAll}); set(r,7,v,{font:{sz:9},alignment:{horizontal:'left',vertical:'center'},border:bAll}); };
-  hb(0,'Dok No:','FR13'); hb(1,'Yayın Tarihi:','24.01.2016'); hb(2,'Revizyon No:','04'); hb(3,'Sayfa No:','1/1');
+  const CAL='Calibri';
+  const bd={style:'thin',color:{rgb:'808080'}}; const B={top:bd,bottom:bd,left:bd,right:bd};
+  const F=(sz,b,col)=>({name:CAL,sz:sz,bold:!!b,color:{rgb:col||'000000'}});
+  const fl=c=>({patternType:'solid',fgColor:{rgb:c}});
+  const AL=(h,v,w)=>({horizontal:h||'left',vertical:v||'center',wrapText:!!w});
+  const S=(font,al,fill)=>({font:font,alignment:al,fill:fill?fl(fill):undefined,border:B});
+  const secG=S(F(11,true,'FFFFFF'),AL('center'),'00B050');   // 1-4D yeşil
+  const secY=S(F(11,true,'000000'),AL('center'),'FFFF00');   // 5-6D sarı
+  const sec7=S(F(11,true,'000000'),AL('center'),'FFA500');   // 7D turuncu
+  const sec8=S(F(11,true,'FFFFFF'),AL('center'),'FF6600');   // 8D koyu turuncu
+  const LBL=S(F(9,true),AL('left'));
+  const VALc=S(F(9,false),AL('center'));
+  const VALl=S(F(9,false),AL('left','center',true));
+  const COLH=S(F(9,true),AL('center'));
+  const stat=(e8.status==='closed'?'Kapalı':e8.status==='in_progress'?'Devam':'Açık');
+  // header bloğu
+  set(0,0,'Sanifoam®',S(F(16,true,'1F5C9E'),AL('center'))); span(0,0,3,1,'Sanifoam®',S(F(16,true,'1F5C9E'),AL('center')));
+  span(0,2,3,5,'8D Report',S(F(16,true,'000000'),AL('center')));
+  const hb=(r,l,v,vc)=>{ set(r,6,l,S(F(9,true),AL('left'))); set(r,7,v,S(F(9,false,vc),AL('left'))); };
+  hb(0,'Dok No:','FR13','CC6600'); hb(1,'Yayın Tarihi:','24.01.2016'); hb(2,'Revizyon No:','04'); hb(3,'Sayfa No:','1/1');
   R=4;
-  set(R,0,'Report No: '+(e8.report_no||'')+(e8._ncr_no?('     ·     NCR: '+e8._ncr_no):''),{font:{bold:true,sz:11},alignment:{vertical:'center'},border:bAll}); mrg(R,0,R,7); R++;
-  const sec=t=>{ set(R,0,t,SEC); mrg(R,0,R,7); rowH[R]=20; R++; };
-  const field=(l1,v1,l2,v2)=>{ set(R,0,l1,LAB); set(R,1,v1,VAL); mrg(R,1,R,3); if(l2!=null){ set(R,4,l2,LAB); set(R,5,v2,VAL); mrg(R,5,R,7);} else { mrg(R,1,R,7);} R++; };
-  const block=(l,v,h)=>{ set(R,0,l,LAB); mrg(R,0,R,7); R++; set(R,0,v,VAL); mrg(R,0,R,7); rowH[R]=h||60; R++; };
-  const actTable=(colH,items,dateLab)=>{ set(R,0,colH,COLH); mrg(R,0,R,5); set(R,6,dateLab,COLH); set(R,7,'Sorumlu',COLH); R++;
-    const arr=(items&&items.length)?items:[{}]; arr.forEach(a=>{ set(R,0,a.action||'',VAL); mrg(R,0,R,5); set(R,6,fd(a.date),VAL); set(R,7,a.responsible||'',VAL); rowH[R]=Math.max(20,Math.ceil((String(a.action||'').length||1)/58)*15); R++; }); };
-  const cat=(r,c,name,val)=>{ set(r,c,name,CAT); mrg(r,c,r,c+1); set(r+1,c,val||'',VAL); mrg(r+1,c,r+1,c+1); };
+  span(R,0,R,7,'Report No: '+(e8.report_no||'')+(e8._ncr_no?('     ·     NCR: '+e8._ncr_no):''),S(F(10,true),AL('left'))); rowH[R]=16; R++;
+  const sec=(t,sty)=>{ span(R,0,R,7,t,sty); rowH[R]=18; R++; };
+  const field=(l1,v1,l2,v2)=>{ set(R,0,l1,LBL); if(l2!=null){ span(R,1,R,3,v1,VALc); set(R,4,l2,LBL); span(R,5,R,7,v2,VALc);} else span(R,1,R,7,v1,VALc); rowH[R]=18; R++; };
+  const block=(l,v,h)=>{ span(R,0,R,7,l,S(F(9,true),AL('left'),'F5F5F5')); rowH[R]=14; R++; span(R,0,R,7,v,VALl); rowH[R]=h||40; R++; };
+  const actTable=(label,items,dateLab,ica)=>{ if(ica){ set(R,0,label,LBL); span(R,1,R,5,'',COLH); } else span(R,0,R,5,label,COLH); set(R,6,dateLab,COLH); set(R,7,'Responsible',COLH); rowH[R]=16; R++;
+    const arr=(items&&items.length)?items:[{}]; arr.forEach(a=>{ if(ica){ set(R,0,'',VALl); span(R,1,R,5,a.action||'',VALl);} else span(R,0,R,5,a.action||'',VALl); set(R,6,fd(a.date),VALc); set(R,7,a.responsible||'',VALc); rowH[R]=Math.max(18,Math.ceil((String(a.action||'').length||1)/55)*14); R++; }); };
+  const cat=(r,c,name,fill)=>span(r,c,r,c+1,name,S(F(9,true,'FFFFFF'),AL('center'),fill));
+  const cause=(r,c,v,fill,col)=>span(r,c,r,c+1,v||'',S(F(9,false,col),AL('left','top',true),fill));
+  const arrowRow=(glyph,cols)=>{ for(let c=0;c<=5;c++) set(R,c,'',S(F(9),AL('center'),'2D6596')); set(R,1,glyph,S(F(14,true,cols[0]),AL('center'),'2D6596')); set(R,3,glyph,S(F(14,true,cols[1]),AL('center'),'2D6596')); set(R,5,glyph,S(F(14,true,cols[2]),AL('center'),'2D6596')); rowH[R]=14; R++; };
   // 1D
-  sec('1 D Takım Oluşumu (Team Formation)');
-  field('Responsible / Sorumlu',d1.responsible,'Estimated Closing / Tahmini Kapanış',fd(d1.estimated_closing));
-  field('Complaint Date / Şikayet T.',fd(d1.complaint_date),'Team Members / Takım Üyeleri',d1.team_members);
-  field('Start Date / Başlangıç',fd(d1.start_date),'Problem Category / Kategori',d1.problem_category);
+  sec('1 D Takım Oluşumu (Team Formation)',secG);
+  field('Responsible',d1.responsible,'Estimated Closing Date',fd(d1.estimated_closing));
+  field('Complaint Date',fd(d1.complaint_date),'Team Members',d1.team_members);
+  field('Start Date',fd(d1.start_date),'Problem Category',d1.problem_category);
   field('Tip',d1.tip,null,null);
   // 2D
-  sec('2 D Problemin Tarifi (Problem Description)');
-  field('Stock Code / Stok Kodu',d2.stock_code,'Report Date / Rapor T.',fd(d2.report_date));
-  field('Stock Name / Stok Adı',d2.stock_name,'Waybill No / İrsaliye No',d2.waybill_no);
-  field('Customer / Cari',d2.customer,null,null);
-  block('Problem Description / Problem Tanımı',d2.problem_description,72);
+  sec('2 D Problemin Tarifi (Problem Description)',secG);
+  field('Stock Code',d2.stock_code,'Report Date',fd(d2.report_date));
+  field('Stock Name',d2.stock_name,'Report No',e8.report_no);
+  field('Customer',d2.customer,'Waybill No',d2.waybill_no);
+  block('Problem Description',d2.problem_description,40);
   // 3D
-  sec('3 D Acil Önlem (Containment Action)');
-  actTable('ICA',D.d3,'Target Date / Termin');
-  // 4D — 6M / Ishikawa
-  sec('4 D Ana Sebep (Root Cause) — 6M / Ishikawa');
-  cat(R,0,'Yönetim (Management)',d4.management); cat(R,2,'Metot (Method)',d4.method); cat(R,4,'Makine (Machine)',d4.machine);
-  set(R,6,'Problem',CAT); mrg(R,6,R,7); set(R+1,6,d2.problem_description||'',VAL); mrg(R+1,6,R+1,7);
-  rowH[R+1]=58; R+=2;
-  cat(R,0,'İnsan (Man)',d4.man); cat(R,2,'Malzeme (Material)',d4.material); cat(R,4,'Ölçüm (Measurement)',d4.measurement);
-  set(R,6,'',CAT); mrg(R,6,R,7); set(R+1,6,'',VAL); mrg(R+1,6,R+1,7);
-  rowH[R+1]=58; R+=2;
+  sec('3 D Acil Önlem (Containment Action)',secG);
+  actTable('ICA',D.d3,'Target Date',true);
+  // 4D — 6M / Ishikawa (oklar + spine dahil)
+  sec('4 D Ana Sebep (Root Cause)',secG);
+  const fishTop=R;
+  cat(R,0,'Yönetim (Management)','1B5E20'); cat(R,2,'Metot (Method)','0D47A1'); cat(R,4,'Makine (Machine)','E65100');
+  span(R,6,R+6,7,d2.problem_description||'',S(F(8,false,'FFFFFF'),AL('left','center',true),'C62828')); rowH[R]=17; R++;
+  cause(R,0,d4.management,'D7F0DA','1B3A0A'); cause(R,2,d4.method,'D6E8FA','0A1F5C'); cause(R,4,d4.machine,'FEECD7','6B2500'); rowH[R]=78; R++;
+  arrowRow('↘',['66EE33','44BBFF','66EE33']);
+  span(R,0,R,5,'──────────────────────────────────────────────►',S(F(10,true,'FFFFFF'),AL('right'),'2D6596')); rowH[R]=14; R++;
+  arrowRow('↗',['FF6666','FF6666','FF6666']);
+  cause(R,0,d4.man,'FDDEDE','5C0000'); cause(R,2,d4.material,'EDD9FA','2A0057'); cause(R,4,d4.measurement,'D9DDF5','0D1257'); rowH[R]=55; R++;
+  cat(R,0,'İnsan (Man)','B71C1C'); cat(R,2,'Malzeme (Material)','4A148C'); cat(R,4,'Ölçüm (Measurement)','1A237E'); rowH[R]=17; R++;
   // 5D-7D
-  sec('5 D Düzeltici Faaliyet (Corrective Action)');
-  actTable('Planned Corrective Action',D.d5,'Target Date / Termin');
-  sec('6 D Düzeltici Faaliyeti Geçerli Kılma (Validate Corrective Actions)');
-  actTable('Validated Corrective Actions',D.d6,'Completion Date / Tamamlanma');
-  sec('7 D Önleyici Faaliyet (Preventive Action)');
-  actTable('Preventive Action',D.d7,'Target Date / Termin');
-  // 8D
-  sec('8 D Takım Takdiri / Kapanış (Closure)');
-  block('Closure / Kapanış Notu',d8.text,55);
-  field('Responsible / Sorumlu',d8.responsible,'Closing Date / Kapanış T.',fd(d8.date));
-  // sheet
+  sec('5 D Düzeltici Faaliyet (Corrective Action)',secY);
+  actTable('Planned Corrective Action',D.d5,'Target Date');
+  sec('6 D Düzeltici Faaliyeti Geçerli Kılma (Validate Corrective Actions)',secY);
+  actTable('Validated Corrective Actions',D.d6,'Completion Date');
+  sec('7 D Önleyici Faaliyet (Preventive Action)',sec7);
+  actTable('Preventive Action',D.d7,'Target Date');
+  // 8D — Takımın Kutlanması
+  sec('8 D Takımın Kutlanması (Team Recognation)',sec8);
+  const recTop=R;
+  set(R,0,'Kapatma Tarihi',LBL); span(R,1,R,3,fd(d8.close_date),VALl); set(R,4,'Sonuç',S(F(9,true,'FF6600'),AL('left'))); span(R,5,recTop+7,7,stat,S(F(9,false,'FF6600'),AL('left','center',true))); R++;
+  const rec=(l,v)=>{ set(R,0,l,LBL); span(R,1,R,3,v,VALl); set(R,4,'',VALl); R++; };
+  rec('Bildirim Tarihi',fd(d8.notify_date)); rec('Bildirim Yöntemi',d8.notify_method); rec('Fiili Kapatma Tarihi',fd(d8.actual_close)); rec('İlgili',d8.related);
+  set(R,0,'Etkinlik Değerlendirme',LBL); span(R,1,R,3,d8.eval_text,VALl); set(R,4,'',VALl); rowH[R]=24; R++;
+  rec('Etkinlik Değerlendirme Tarihi',fd(d8.eval_date)); rec('Kapatan',d8.closed_by);
+  span(R,0,R,7,'8 D Raporu KAPALI / AÇIK  →  '+(e8.status==='closed'?'KAPALI':'AÇIK'),{font:F(12,true),alignment:AL('center')}); rowH[R]=18; R++;
+  // sayfa
   const ws=cells;
-  ws['!ref']=XLSX.utils.encode_range({s:{r:0,c:0},e:{r:R+1,c:7}});
+  ws['!ref']=XLSX.utils.encode_range({s:{r:0,c:0},e:{r:R,c:7}});
   ws['!merges']=merges;
-  ws['!cols']=[{wch:22},{wch:17},{wch:17},{wch:17},{wch:17},{wch:17},{wch:17},{wch:17}];
-  ws['!rows']=[]; for(let i=0;i<=R+1;i++) ws['!rows'][i]={hpt:rowH[i]||18};
+  ws['!cols']=[{wch:22},{wch:18},{wch:17},{wch:17},{wch:17},{wch:17},{wch:17},{wch:17}];
+  ws['!rows']=[]; for(let i=0;i<R;i++) ws['!rows'][i]={hpt:rowH[i]||18};
   const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'8D Report');
   XLSX.writeFile(wb,(e8.report_no||'8D')+'.xlsx');
   toast('8D Excel indirildi.','ok');
