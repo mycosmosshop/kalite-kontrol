@@ -375,8 +375,20 @@ let _deferredInstall=null;
 const _installBtn=$('#installBtn');
 const _isStandalone=(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches)||window.navigator.standalone===true;
 if(_installBtn && _isStandalone) _installBtn.style.display='none';   // zaten uygulama olarak açık → gizle
-window.addEventListener('beforeinstallprompt',e=>{ e.preventDefault(); _deferredInstall=e; if(_installBtn&&!_isStandalone) _installBtn.style.display=''; });
-window.addEventListener('appinstalled',()=>{ _deferredInstall=null; if(_installBtn)_installBtn.style.display='none'; toast('✓ Uygulama yüklendi — artık simgesinden açabilirsin.','ok'); });
+function showInstallBanner(){
+  if(_isStandalone || document.getElementById('installBanner')) return;
+  const b=el('div',{id:'installBanner',style:'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:9999;display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--accent);border-radius:14px;padding:11px 14px;box-shadow:0 14px 40px rgba(0,0,0,.55);max-width:94vw'});
+  b.append(el('img',{src:'icon-192.png',alt:'',style:'width:42px;height:42px;border-radius:10px;flex:0 0 auto'}));
+  b.append(el('div',{style:'display:flex;flex-direction:column;min-width:0'}, el('b',{style:'font-size:14px'},'Uygulamayı yükle'), el('span',{style:'font-size:12px;color:var(--muted)'},'Masaüstüne/ana ekrana ekle — app gibi açılır')));
+  b.append(el('button',{class:'btn sm',style:'flex:0 0 auto',onclick:async()=>{
+    if(_deferredInstall){ _deferredInstall.prompt(); let c; try{c=await _deferredInstall.userChoice;}catch(_){}; _deferredInstall=null; if(c&&c.outcome==='accepted'){ if(_installBtn)_installBtn.style.display='none'; } b.remove(); }
+    else { b.remove(); openInstallHelp(); }
+  }},'📲 Yükle'));
+  b.append(el('button',{class:'theme-btn',style:'flex:0 0 auto',title:'Kapat',onclick:()=>b.remove()},'✕'));
+  document.body.appendChild(b);
+}
+window.addEventListener('beforeinstallprompt',e=>{ e.preventDefault(); _deferredInstall=e; if(_installBtn&&!_isStandalone) _installBtn.style.display=''; showInstallBanner(); });
+window.addEventListener('appinstalled',()=>{ _deferredInstall=null; const bn=document.getElementById('installBanner'); if(bn)bn.remove(); if(_installBtn)_installBtn.style.display='none'; toast('✓ Uygulama yüklendi — artık simgesinden açabilirsin.','ok'); });
 if(_installBtn) _installBtn.onclick=async()=>{
   if(_deferredInstall){
     _deferredInstall.prompt();
