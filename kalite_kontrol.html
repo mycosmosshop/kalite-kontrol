@@ -3595,15 +3595,17 @@ async function openCertCreate(allCerts, existing){
 function openCertPrint(c){
   const root=$('#modalRoot');
   const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
-  const m=el('div',{class:'modal',style:'position:relative;max-width:470px'});
+  const m=el('div',{class:'modal',style:'position:relative;max-width:580px'});
   m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
   m.append(el('h3',{},'🖨 Sertifika Yazdır — '+esc(c.cert_no)));
   const today=isoDateLocal(new Date());
   const dInp=el('input',{type:'date',class:'inp'}); dInp.value=c.issue_date||today;
   const lotInp=el('input',{class:'inp',placeholder:'örn. LOT-2026-001'}); lotInp.value=c.lot_no||'';
+  const langSel=el('select',{class:'inp'}); [['tr','🇹🇷 Türkçe'],['en','🇬🇧 English']].forEach(([v,t])=>{const o=el('option',{value:v},t); langSel.append(o);});
   m.append(el('div',{class:'row'},
-    el('div',{class:'field grow'},el('label',{class:'lab'},'Düzenleme Tarihi (PDF üst/alt bilgisinde görünür)'),dInp),
-    el('div',{class:'field',style:'flex:0;min-width:170px'},el('label',{class:'lab'},'Lot No'),lotInp)));
+    el('div',{class:'field grow'},el('label',{class:'lab'},'Düzenleme Tarihi'),dInp),
+    el('div',{class:'field',style:'flex:0;min-width:150px'},el('label',{class:'lab'},'Dil / Language'),langSel),
+    el('div',{class:'field',style:'flex:0;min-width:150px'},el('label',{class:'lab'},'Lot No'),lotInp)));
   let irsNo, irsDate;
   if(c.cert_type==='CoA'){
     irsNo=el('input',{class:'inp',placeholder:'örn. 123456'});
@@ -3617,7 +3619,7 @@ function openCertPrint(c){
     el('button',{class:'btn sm',style:'flex:0',onclick:async()=>{
       const lot=lotInp.value.trim()||null; c.lot_no=lot;
       if(c.id){ const {error}=await sb.from('certificates').update({lot_no:lot}).eq('id',c.id); if(error){toast(esc(error.message),'err');return;} renderCert(); }
-      const opts={issueDate:dInp.value||today, lotNo:lot};
+      const opts={issueDate:dInp.value||today, lotNo:lot, lang:langSel.value};
       if(c.cert_type==='CoA'){opts.irsaliyeNo=irsNo.value;opts.irsaliyeDate=irsDate.value;}
       root.innerHTML=''; printCert(c,opts);
     }},'🖨 Yazdır')));
@@ -3629,15 +3631,20 @@ function printCert(c, opts){ opts=opts||{};
   const issD=opts.issueDate||c.issue_date;                 // yazdırırken seçilen düzenleme tarihi
   const irsNo=(opts.irsaliyeNo||'').trim(), irsDate=opts.irsaliyeDate||'';   // CoA için irsaliye
   const lotNo=(opts.lotNo!=null&&opts.lotNo!=='')?opts.lotNo:(c.lot_no||'');  // yazdırırken girilen lot
+  const EN=(opts.lang==='en');                                                // komple İngilizce seçeneği
+  const T=EN?{certNo:'Certificate No',date:'Date',docNo:'Document No',rev:'Revision',customer:'Customer',workOrder:'Work Order',stockCode:'Product Code',productName:'Product Name',prodDate:'Production Date',operation:'Operation',lotNo:'Lot No',qty:'Quantity',dispNo:'Dispatch Note No',dispDate:'Dispatch Date',overallOk:'✔ ALL RESULTS CONFORMING',overallRet:'✘ NON-CONFORMITY FOUND',resultsH:'Measurement / Inspection Results',thChar:'Inspection Characteristic',thTarget:'Target',thLimit:'Limit / Spec',thMethod:'Method / Standard',thFound:'Measured Value / Result',thQty:'Qty',thResult:'Result',noResults:'No measurement results found.',notes:'Notes',planDef:'Control Plan',footFn:(dt,dd)=>`This certificate has been issued within the scope of ${dt}, on ${dd}, by Sanifoam Endüstri ve Tüketim Ürünleri San. Tic. A.Ş.`}
+    :{certNo:'Sertifika No',date:'Tarih',docNo:'Doküman No',rev:'Revizyon',customer:'Müşteri / Cari',workOrder:'İş Emri',stockCode:'Stok Kodu',productName:'Ürün Adı',prodDate:'Üretim Tarihi',operation:'Operasyon',lotNo:'Lot No',qty:'Miktar',dispNo:'İrsaliye No',dispDate:'İrsaliye Tarihi',overallOk:'✔ TÜM SONUÇLAR UYGUN',overallRet:'✘ UYGUNSUZLUK VAR',resultsH:'Ölçüm / Kontrol Sonuçları',thChar:'Kontrol Özelliği',thTarget:'Hedef',thLimit:'Limit / Spec',thMethod:'Metot / Standart',thFound:'Bulunan Değer / Sonuç',thQty:'Adet',thResult:'Sonuç',noResults:'Ölçüm sonucu bulunamadı.',notes:'Notlar',planDef:'Kontrol Planı',footFn:(dt,dd)=>`Bu sertifika ${dt} kapsamında, ${dd} tarihinde Sanifoam Endüstri ve Tüketim Ürünleri San. Tic. A.Ş. tarafından düzenlenmiştir.`};
+  const tcell=s=>{ s=String(s==null?'':s); if(EN){ s=s.replace(/UYGUNSUZ/g,'NON-CONFORMING').replace(/UYGUN/g,'CONFORMING').replace(/Maks/g,'Max').replace(/Ort/g,'Avg'); } return s; };
   const rowObjs = Array.isArray(d.rows) ? d.rows : certRowsFromExisting(c);   // yeni satır modeli (eski özet otomatik dönüşür)
   const overallOK = rowObjs.every(r=>String(r.result||'').toUpperCase()!=='RET');
   const rows=rowObjs.map(r=>{
     const isRet=String(r.result||'').toUpperCase()==='RET';
     const st=isRet?'<span class="pill ret">RET</span>':'<span class="pill ok">OK</span>';
-    return `<tr><td>${esc(r.name||'')}</td><td>${esc(r.hedef||'-')}</td><td>${esc(r.limit||'-')}</td><td>${esc(r.metot||'-')}</td><td>${esc(r.bulunan||'-')}</td><td style="text-align:center">${esc(r.adet!=null&&r.adet!==''?String(r.adet):'-')}</td><td style="text-align:center">${st}</td></tr>`;
+    return `<tr><td>${esc(r.name||'')}</td><td>${esc(r.hedef||'-')}</td><td>${esc(r.limit||'-')}</td><td>${esc(r.metot||'-')}</td><td>${esc(tcell(r.bulunan||'-'))}</td><td style="text-align:center">${esc(r.adet!=null&&r.adet!==''?String(r.adet):'-')}</td><td style="text-align:center">${st}</td></tr>`;
   }).join('');
   const title=(c.cert_type==='CoA')?'CERTIFICATE OF ANALYSIS (CoA)':'CERTIFICATE OF CONFORMITY (CoC)';
   const titleTr=(c.cert_type==='CoA')?'ANALİZ SERTİFİKASI':'UYGUNLUK SERTİFİKASI';
+  const titleMain=EN?title:titleTr, titleSub=EN?'':title;
   const logoUrl=location.href.replace(/[#?].*$/,'').replace(/[^/]*$/,'')+'SanifoamLogo-Transparent.png';
   const html=`<!doctype html><html><head><meta charset="utf-8"><title>${esc(c.cert_no)} — ${esc(title)}</title>
 <style>
@@ -3672,36 +3679,36 @@ table.res tr:nth-child(even) td{background:#f9fafe}
 </style></head><body>
 <div class="head">
   <div class="l"><img src="${logoUrl}" alt="Sanifoam" onerror="this.style.display='none'"></div>
-  <div class="c"><b>${esc(titleTr)}</b><br><small>${esc(title)}</small></div>
+  <div class="c"><b>${esc(titleMain)}</b>${titleSub?'<br><small>'+esc(titleSub)+'</small>':''}</div>
   <div class="r"><table>
-    <tr><td><b>Sertifika No</b></td><td>${esc(c.cert_no)}</td></tr>
-    <tr><td>Tarih</td><td>${fmtDate(issD)}</td></tr>
-    ${c.doc_no?'<tr><td>Doküman No</td><td>'+esc(c.doc_no)+'</td></tr>':''}
-    ${c.rev_no?'<tr><td>Revizyon</td><td>'+esc(c.rev_no)+'</td></tr>':''}
+    <tr><td><b>${esc(T.certNo)}</b></td><td>${esc(c.cert_no)}</td></tr>
+    <tr><td>${esc(T.date)}</td><td>${fmtDate(issD)}</td></tr>
+    ${c.doc_no?'<tr><td>'+esc(T.docNo)+'</td><td>'+esc(c.doc_no)+'</td></tr>':''}
+    ${c.rev_no?'<tr><td>'+esc(T.rev)+'</td><td>'+esc(c.rev_no)+'</td></tr>':''}
   </table></div>
 </div>
 <div class="meta">
   <div class="meta-grid">
-    <div><b>Müşteri / Cari:</b> ${esc(c.customer||'-')}</div>
-    <div><b>İş Emri:</b> ${esc(d.work_order||'-')}</div>
-    <div><b>Stok Kodu:</b> ${esc(c.stock_code||'-')}</div>
-    <div><b>Ürün Adı:</b> ${esc(c.stock_name||'-')}</div>
-    <div><b>Üretim Tarihi:</b> ${d.prod_date?fmtDate(d.prod_date):'-'}</div>
-    <div><b>Operasyon:</b> ${esc(d.op_no!=null?String(d.op_no):'-')} · ${esc(d.machine_name||'-')}</div>
-    <div><b>Lot No:</b> ${esc(lotNo||'-')}</div>
-    <div><b>Miktar:</b> ${esc(String(c.quantity??'-'))} ${esc(c.unit||'')}</div>
-    ${(c.cert_type==='CoA'&&irsNo)?'<div><b>İrsaliye No:</b> '+esc(irsNo)+'</div>':''}
-    ${(c.cert_type==='CoA'&&irsDate)?'<div><b>İrsaliye Tarihi:</b> '+fmtDate(irsDate)+'</div>':''}
+    <div><b>${esc(T.customer)}:</b> ${esc(c.customer||'-')}</div>
+    <div><b>${esc(T.workOrder)}:</b> ${esc(d.work_order||'-')}</div>
+    <div><b>${esc(T.stockCode)}:</b> ${esc(c.stock_code||'-')}</div>
+    <div><b>${esc(T.productName)}:</b> ${esc(c.stock_name||'-')}</div>
+    <div><b>${esc(T.prodDate)}:</b> ${d.prod_date?fmtDate(d.prod_date):'-'}</div>
+    <div><b>${esc(T.operation)}:</b> ${esc(d.op_no!=null?String(d.op_no):'-')} · ${esc(d.machine_name||'-')}</div>
+    <div><b>${esc(T.lotNo)}:</b> ${esc(lotNo||'-')}</div>
+    <div><b>${esc(T.qty)}:</b> ${esc(String(c.quantity??'-'))} ${esc(c.unit||'')}</div>
+    ${(c.cert_type==='CoA'&&irsNo)?'<div><b>'+esc(T.dispNo)+':</b> '+esc(irsNo)+'</div>':''}
+    ${(c.cert_type==='CoA'&&irsDate)?'<div><b>'+esc(T.dispDate)+':</b> '+fmtDate(irsDate)+'</div>':''}
   </div>
 </div>
-<div class="overall ${overallOK?'ok':'ret'}">${overallOK?'✔ TÜM SONUÇLAR UYGUN':'✘ UYGUNSUZLUK VAR'}</div>
-<h2>Ölçüm / Kontrol Sonuçları</h2>
+<div class="overall ${overallOK?'ok':'ret'}">${overallOK?T.overallOk:T.overallRet}</div>
+<h2>${esc(T.resultsH)}</h2>
 <table class="res">
-  <thead><tr><th>Kontrol Özelliği</th><th>Hedef</th><th>Limit / Spec</th><th>Metot / Standart</th><th>Bulunan Değer / Sonuç</th><th>Adet</th><th>Sonuç</th></tr></thead>
-  <tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:#888">Ölçüm sonucu bulunamadı.</td></tr>'}</tbody>
+  <thead><tr><th>${esc(T.thChar)}</th><th>${esc(T.thTarget)}</th><th>${esc(T.thLimit)}</th><th>${esc(T.thMethod)}</th><th>${esc(T.thFound)}</th><th>${esc(T.thQty)}</th><th>${esc(T.thResult)}</th></tr></thead>
+  <tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:#888">'+esc(T.noResults)+'</td></tr>'}</tbody>
 </table>
-${c.notes?'<div class="notes"><b>Notlar:</b><br>'+esc(c.notes).replace(/\n/g,'<br>')+'</div>':''}
-<div class="foot">Bu sertifika ${esc((c.header&&c.header.doc_title)||'Kontrol Planı')} kapsamında, ${fmtDate(issD)} tarihinde Sanifoam Endüstri ve Tüketim Ürünleri San. Tic. A.Ş. tarafından düzenlenmiştir.</div>
+${c.notes?'<div class="notes"><b>'+esc(T.notes)+':</b><br>'+esc(c.notes).replace(/\n/g,'<br>')+'</div>':''}
+<div class="foot">${esc(T.footFn(((c.header&&c.header.doc_title)||T.planDef), fmtDate(issD)))}</div>
 ${'<scr'+'ipt>'}window.onload=()=>setTimeout(()=>window.print(),300);${'</scr'+'ipt>'}
 </body></html>`;
   w.document.write(html); w.document.close();
