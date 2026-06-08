@@ -3642,16 +3642,23 @@ function printCert(c, opts){ opts=opts||{};
   const irsNo=(opts.irsaliyeNo||'').trim(), irsDate=opts.irsaliyeDate||'';   // CoA için irsaliye
   const lotNo=(opts.lotNo!=null&&opts.lotNo!=='')?opts.lotNo:(c.lot_no||'');  // yazdırırken girilen lot
   const EN=(opts.lang==='en');                                                // komple İngilizce seçeneği
-  const T=EN?{certNo:'Certificate No',date:'Date',docNo:'Document No',rev:'Revision',customer:'Customer',workOrder:'Work Order',stockCode:'Product Code',productName:'Product Name',prodDate:'Production Date',operation:'Operation',lotNo:'Lot No',qty:'Quantity',dispNo:'Dispatch Note No',dispDate:'Dispatch Date',overallOk:'✔ ALL RESULTS PASS',overallRet:'✘ FAIL — NONCONFORMITY FOUND',resultsH:'Measurement / Inspection Results',thChar:'Inspection Characteristic',thTarget:'Target',thLimit:'Limit / Spec',thMethod:'Method / Standard',thFound:'Measured Value / Result',thQty:'Qty',thResult:'Result',noResults:'No measurement results found.',notes:'Notes',planDef:'Control Plan',footFn:(dt,dd)=>`This certificate has been issued within the scope of ${dt}, on ${dd}, by Sanifoam Endüstri ve Tüketim Ürünleri San. Tic. A.Ş.`}
-    :{certNo:'Sertifika No',date:'Tarih',docNo:'Doküman No',rev:'Revizyon',customer:'Müşteri / Cari',workOrder:'İş Emri',stockCode:'Stok Kodu',productName:'Ürün Adı',prodDate:'Üretim Tarihi',operation:'Operasyon',lotNo:'Lot No',qty:'Miktar',dispNo:'İrsaliye No',dispDate:'İrsaliye Tarihi',overallOk:'✔ TÜM SONUÇLAR UYGUN',overallRet:'✘ UYGUNSUZLUK VAR',resultsH:'Ölçüm / Kontrol Sonuçları',thChar:'Kontrol Özelliği',thTarget:'Hedef',thLimit:'Limit / Spec',thMethod:'Metot / Standart',thFound:'Bulunan Değer / Sonuç',thQty:'Adet',thResult:'Sonuç',noResults:'Ölçüm sonucu bulunamadı.',notes:'Notlar',planDef:'Kontrol Planı',footFn:(dt,dd)=>`Bu sertifika ${dt} kapsamında, ${dd} tarihinde Sanifoam Endüstri ve Tüketim Ürünleri San. Tic. A.Ş. tarafından düzenlenmiştir.`};
+  const T=EN?{certNo:'Certificate No',date:'Date',docNo:'Document No',rev:'Revision',customer:'Customer',workOrder:'Work Order',stockCode:'Product Code',productName:'Product Name',prodDate:'Production Date',operation:'Operation',lotNo:'Lot No',qty:'Quantity',dispNo:'Dispatch Note No',dispDate:'Dispatch Date',overallOk:'✔ ALL RESULTS PASS',overallRet:'✘ FAIL — NONCONFORMITY FOUND',resultsH:'Measurement / Inspection Results',thChar:'Inspection Characteristic',thTarget:'Target',thLimit:'Limit / Spec',thMethod:'Method / Standard',thFound:'Measured Value / Result',thQty:'Qty',thResult:'Result',noResults:'No measurement results found.',notes:'Notes',planDef:'Control Plan',summaryH:'Conformity Summary',declConfOk:'We hereby declare that the product/lot specified above CONFORMS to the relevant control plan and technical specifications.',declConfRet:'Note: one or more characteristics of the product/lot specified above do NOT conform to the specified requirements.',footFn:(dt,dd)=>`This certificate has been issued within the scope of ${dt}, on ${dd}, by Sanifoam Endüstri ve Tüketim Ürünleri San. Tic. A.Ş.`}
+    :{certNo:'Sertifika No',date:'Tarih',docNo:'Doküman No',rev:'Revizyon',customer:'Müşteri / Cari',workOrder:'İş Emri',stockCode:'Stok Kodu',productName:'Ürün Adı',prodDate:'Üretim Tarihi',operation:'Operasyon',lotNo:'Lot No',qty:'Miktar',dispNo:'İrsaliye No',dispDate:'İrsaliye Tarihi',overallOk:'✔ TÜM SONUÇLAR UYGUN',overallRet:'✘ UYGUNSUZLUK VAR',resultsH:'Ölçüm / Kontrol Sonuçları',thChar:'Kontrol Özelliği',thTarget:'Hedef',thLimit:'Limit / Spec',thMethod:'Metot / Standart',thFound:'Bulunan Değer / Sonuç',thQty:'Adet',thResult:'Sonuç',noResults:'Ölçüm sonucu bulunamadı.',notes:'Notlar',planDef:'Kontrol Planı',summaryH:'Uygunluk Özeti',declConfOk:'İşbu belge ile yukarıda belirtilen ürün/parti, ilgili kontrol planı ve teknik spesifikasyonlara UYGUNDUR.',declConfRet:'Not: Yukarıda belirtilen ürün/partinin bir veya daha fazla özelliği belirtilen şartlara UYGUN DEĞİLDİR.',footFn:(dt,dd)=>`Bu sertifika ${dt} kapsamında, ${dd} tarihinde Sanifoam Endüstri ve Tüketim Ürünleri San. Tic. A.Ş. tarafından düzenlenmiştir.`};
   const tcell=s=>{ s=String(s==null?'':s); if(EN){ s=s.replace(/UYGUNSUZ/g,'FAIL').replace(/UYGUN/g,'PASS').replace(/Maks/g,'Max').replace(/Ort/g,'Avg'); } return s; };
+  const isCoA=(c.cert_type==='CoA');                                          // CoA=analiz(değerli), CoC=uygunluk(beyan)
   const rowObjs = Array.isArray(d.rows) ? d.rows : certRowsFromExisting(c);   // yeni satır modeli (eski özet otomatik dönüşür)
   const overallOK = rowObjs.every(r=>String(r.result||'').toUpperCase()!=='RET');
   const rows=rowObjs.map(r=>{
     const isRet=String(r.result||'').toUpperCase()==='RET';
     const st=isRet?'<span class="pill ret">RET</span>':'<span class="pill ok">OK</span>';
-    return `<tr><td>${esc(r.name||'')}</td><td>${esc(r.hedef||'-')}</td><td>${esc(r.limit||'-')}</td><td>${esc(r.metot||'-')}</td><td>${esc(tcell(r.bulunan||'-'))}</td><td style="text-align:center">${esc(r.adet!=null&&r.adet!==''?String(r.adet):'-')}</td><td style="text-align:center">${st}</td></tr>`;
+    return isCoA
+      ? `<tr><td>${esc(r.name||'')}</td><td>${esc(r.hedef||'-')}</td><td>${esc(r.limit||'-')}</td><td>${esc(r.metot||'-')}</td><td>${esc(tcell(r.bulunan||'-'))}</td><td style="text-align:center">${esc(r.adet!=null&&r.adet!==''?String(r.adet):'-')}</td><td style="text-align:center">${st}</td></tr>`
+      : `<tr><td>${esc(r.name||'')}</td><td>${esc(r.hedef||'-')}</td><td>${esc(r.limit||'-')}</td><td>${esc(r.metot||'-')}</td><td style="text-align:center">${st}</td></tr>`;
   }).join('');
+  const theadHtml=isCoA
+    ? `<th>${esc(T.thChar)}</th><th>${esc(T.thTarget)}</th><th>${esc(T.thLimit)}</th><th>${esc(T.thMethod)}</th><th>${esc(T.thFound)}</th><th>${esc(T.thQty)}</th><th>${esc(T.thResult)}</th>`
+    : `<th>${esc(T.thChar)}</th><th>${esc(T.thTarget)}</th><th>${esc(T.thLimit)}</th><th>${esc(T.thMethod)}</th><th>${esc(T.thResult)}</th>`;
+  const colspan=isCoA?7:5;
   const title=(c.cert_type==='CoA')?'CERTIFICATE OF ANALYSIS (CoA)':'CERTIFICATE OF CONFORMITY (CoC)';
   const titleTr=(c.cert_type==='CoA')?'ANALİZ SERTİFİKASI':'UYGUNLUK SERTİFİKASI';
   const titleMain=EN?title:titleTr, titleSub=EN?'':title;
@@ -3683,6 +3690,8 @@ table.res tr:nth-child(even) td{background:#f9fafe}
 .overall.ok{background:#dcfce7;color:#166534;border:2px solid #16a34a}
 .overall.ret{background:#fee2e2;color:#991b1b;border:2px solid #ef4444}
 .notes{margin:12px 0;padding:10px;border:1px solid #ddd;border-radius:4px;background:#fafafa;font-size:11.5px}
+.decl{margin:14px 0;padding:13px 16px;border:1.6px solid #1e40af;border-radius:6px;background:#eef3fb;font-size:12.5px;font-weight:600;text-align:center;color:#1e3a8a}
+.decl.ret{border-color:#ef4444;background:#fee2e2;color:#991b1b}
 .sig{margin-top:34px;display:grid;grid-template-columns:1fr 1fr;gap:30px;font-size:11px}
 .sig div{border-top:1px solid #555;padding-top:5px;text-align:center}
 .foot{margin-top:18px;text-align:center;color:#888;font-size:10px;border-top:1px solid #ddd;padding-top:6px}
@@ -3712,11 +3721,12 @@ table.res tr:nth-child(even) td{background:#f9fafe}
   </div>
 </div>
 <div class="overall ${overallOK?'ok':'ret'}">${overallOK?T.overallOk:T.overallRet}</div>
-<h2>${esc(T.resultsH)}</h2>
+<h2>${esc(isCoA?T.resultsH:T.summaryH)}</h2>
 <table class="res">
-  <thead><tr><th>${esc(T.thChar)}</th><th>${esc(T.thTarget)}</th><th>${esc(T.thLimit)}</th><th>${esc(T.thMethod)}</th><th>${esc(T.thFound)}</th><th>${esc(T.thQty)}</th><th>${esc(T.thResult)}</th></tr></thead>
-  <tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:#888">'+esc(T.noResults)+'</td></tr>'}</tbody>
+  <thead><tr>${theadHtml}</tr></thead>
+  <tbody>${rows||'<tr><td colspan="'+colspan+'" style="text-align:center;color:#888">'+esc(T.noResults)+'</td></tr>'}</tbody>
 </table>
+${!isCoA?'<div class="decl '+(overallOK?'':'ret')+'">'+esc(overallOK?T.declConfOk:T.declConfRet)+'</div>':''}
 ${c.notes?'<div class="notes"><b>'+esc(T.notes)+':</b><br>'+esc(c.notes).replace(/\n/g,'<br>')+'</div>':''}
 <div class="foot">${esc(T.footFn(((c.header&&c.header.doc_title)||T.planDef), fmtDate(issD)))}</div>
 ${'<scr'+'ipt>'}window.onload=()=>setTimeout(()=>window.print(),300);${'</scr'+'ipt>'}
