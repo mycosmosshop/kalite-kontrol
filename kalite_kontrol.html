@@ -3453,17 +3453,36 @@ function buildCertRows(recs, plan){
   return proses.map(it=>{
     const g=recMap[it.measure_name]||{vals:[],ok:0,ret:0};
     const isq=!!it.is_qualitative;
-    const hedef=(it.target!=null&&it.target!=='')?(String(it.target)+(it.unit&&!isq?(' '+it.unit):'')):(isq?(it.nitel_hedef||''):'');
-    const limit=isq?(it.nitel_hedef||''):((it.lower_limit!=null&&it.lower_limit!==''?it.lower_limit:'…')+' ÷ '+(it.upper_limit!=null&&it.upper_limit!==''?it.upper_limit:'…')+(it.unit?(' '+it.unit):''));
-    let bulunan='';
-    if(isq){ bulunan=(g.ok>0&&g.ret===0)?'UYGUN':(g.ret>0?'UYGUNSUZ':''); }
-    else if(g.vals.length){ const mn=Math.min(...g.vals),mx=Math.max(...g.vals),av=g.vals.reduce((a,b)=>a+b,0)/g.vals.length; bulunan='Min '+mn.toFixed(3)+' · Maks '+mx.toFixed(3)+' · Ort '+av.toFixed(3); }
-    return { name:it.measure_name||'', hedef, limit, bulunan, adet:(g.ok+g.ret)||'', result:g.ret>0?'RET':'OK' };
+    const unit=it.unit||'';
+    const lo=it.lower_limit, hi=it.upper_limit;
+    const hedef=(it.target!=null&&it.target!=='')?(String(it.target)+(unit&&!isq?(' '+unit):'')):(isq?(it.nitel_hedef||''):'');
+    const limit=isq?(it.nitel_hedef||''):((lo!=null&&lo!==''?lo:'…')+' ÷ '+(hi!=null&&hi!==''?hi:'…')+(unit?(' '+unit):''));
+    const metot=it.method||'';
+    let bulunan='', adet='';
+    const hasRec=g.vals.length>0||g.ok>0||g.ret>0;
+    if(hasRec){
+      if(isq){ bulunan=(g.ok>0&&g.ret===0)?'UYGUN':(g.ret>0?'UYGUNSUZ':''); }
+      else if(g.vals.length){ const mn=Math.min(...g.vals),mx=Math.max(...g.vals),av=g.vals.reduce((a,b)=>a+b,0)/g.vals.length; bulunan='Min '+mn.toFixed(3)+' · Maks '+mx.toFixed(3)+' · Ort '+av.toFixed(3); }
+      adet=(g.ok+g.ret)||'';
+    } else {
+      // ölçüm kaydı yok → makul "uygun" varsayılan (kullanıcı değiştirebilir)
+      if(isq){ bulunan='UYGUN'; }
+      else {
+        let def=null; const t=Number(it.target), a=Number(lo), b=Number(hi);
+        if(it.target!=null&&it.target!==''&&isFinite(t)) def=t;
+        else if(isFinite(a)&&isFinite(b)) def=(a+b)/2;
+        else if(isFinite(a)) def=a; else if(isFinite(b)) def=b;
+        if(def!=null) bulunan=String(parseFloat(def.toFixed(3)))+(unit?(' '+unit):'');
+        else if(it.target!=null&&it.target!=='') bulunan=String(it.target)+(unit?(' '+unit):'');
+      }
+      adet=(it.sample_size!=null&&it.sample_size!=='')?it.sample_size:1;
+    }
+    return { name:it.measure_name||'', hedef, limit, metot, bulunan, adet, result:g.ret>0?'RET':'OK' };
   });
 }
 function certRowsFromExisting(c){
   const d=c.data||{};
-  if(Array.isArray(d.rows)) return d.rows.map(r=>({name:r.name||'',hedef:r.hedef||'',limit:r.limit||'',bulunan:r.bulunan||'',adet:(r.adet??''),result:(String(r.result||'OK').toUpperCase()==='RET')?'RET':'OK'}));
+  if(Array.isArray(d.rows)) return d.rows.map(r=>({name:r.name||'',hedef:r.hedef||'',limit:r.limit||'',metot:r.metot||'',bulunan:r.bulunan||'',adet:(r.adet??''),result:(String(r.result||'OK').toUpperCase()==='RET')?'RET':'OK'}));
   const sum=d.summary||{};
   return Object.values(sum).map(g=>{
     const isq=g.is_q;
@@ -3472,14 +3491,14 @@ function certRowsFromExisting(c){
     let bulunan='';
     if(isq) bulunan=(g.ok>0&&g.ret===0)?'UYGUN':(g.ret>0?'UYGUNSUZ':'');
     else if((g.vals||[]).length){const mn=Math.min(...g.vals),mx=Math.max(...g.vals),av=g.vals.reduce((a,b)=>a+b,0)/g.vals.length;bulunan='Min '+mn.toFixed(3)+' · Maks '+mx.toFixed(3)+' · Ort '+av.toFixed(3);}
-    return {name:g.name||'',hedef,limit,bulunan,adet:((g.ok+g.ret))||'',result:g.ret>0?'RET':'OK'};
+    return {name:g.name||'',hedef,limit,metot:'',bulunan,adet:((g.ok+g.ret))||'',result:g.ret>0?'RET':'OK'};
   });
 }
 function renderCertRowsTable(wrap, ROWS){
   wrap.innerHTML='';
   if(!ROWS.length){ wrap.append(el('div',{class:'empty',style:'padding:12px'},'Satır yok. Üretim seç veya «＋ Satır Ekle».')); return; }
   const tbl=el('table');
-  tbl.append(el('thead',{},el('tr',{},...['Kontrol Özelliği','Hedef','Limit / Spec','Bulunan Değer / Sonuç','Adet','Sonuç','Sil'].map(h=>el('th',{},h)))));
+  tbl.append(el('thead',{},el('tr',{},...['Kontrol Özelliği','Hedef','Limit / Spec','Metot / Standart','Bulunan Değer / Sonuç','Adet','Sonuç','Sil'].map(h=>el('th',{},h)))));
   const tbo=el('tbody');
   ROWS.forEach((row,i)=>{
     const mk=(field)=>{ const inp=el('input',{class:'cell-inp',value:(row[field]??''),style:'width:100%'}); inp.addEventListener('input',()=>{row[field]=inp.value;}); return inp; };
@@ -3487,11 +3506,12 @@ function renderCertRowsTable(wrap, ROWS){
     const del=el('button',{class:'btn sm danger',onclick:()=>{ ROWS.splice(i,1); renderCertRowsTable(wrap,ROWS); }},'🗑');
     tbo.append(el('tr',{},
       el('td',{},mk('name')),
-      el('td',{style:'width:120px'},mk('hedef')),
-      el('td',{style:'width:150px'},mk('limit')),
+      el('td',{style:'width:110px'},mk('hedef')),
+      el('td',{style:'width:120px'},mk('limit')),
+      el('td',{style:'width:120px'},mk('metot')),
       el('td',{},mk('bulunan')),
-      el('td',{style:'width:64px'},mk('adet')),
-      el('td',{style:'width:84px'},resSel),
+      el('td',{style:'width:60px'},mk('adet')),
+      el('td',{style:'width:80px'},resSel),
       el('td',{style:'width:44px;text-align:center'},del)
     ));
   });
@@ -3527,7 +3547,7 @@ async function openCertCreate(allCerts, existing){
     el('label',{class:'lab',style:'margin:0;font-size:13px'},'Kontrol / Ölçüm Sonuçları (PROSES) — düzenlenebilir'),
     el('div',{class:'grow'}),
     el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>loadResults()},'↻ Plandan Yeniden Getir'),
-    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{ ROWS.push({name:'',hedef:'',limit:'',bulunan:'',adet:'',result:'OK'}); renderCertRowsTable(resWrap,ROWS); }},'＋ Satır Ekle')
+    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{ ROWS.push({name:'',hedef:'',limit:'',metot:'',bulunan:'',adet:'',result:'OK'}); renderCertRowsTable(resWrap,ROWS); }},'＋ Satır Ekle')
   ));
   m.append(resWrap); m.append(status);
   async function loadResults(){
@@ -3551,7 +3571,7 @@ async function openCertCreate(allCerts, existing){
     el('button',{class:'btn sm',onclick:async()=>{
       const pid=prodSel.value; if(!pid){toast('Üretim seç.','err');return;}
       const p=(prods||[]).find(x=>String(x.id)===String(pid)); if(!p){toast('Üretim bulunamadı.','err');return;}
-      const cleanRows=ROWS.filter(r=>(r.name||'').trim()!=='').map(r=>({name:(r.name||'').trim(),hedef:(r.hedef||'').trim(),limit:(r.limit||'').trim(),bulunan:(r.bulunan||'').trim(),adet:(r.adet===''||r.adet==null)?'':(isFinite(Number(r.adet))?Number(r.adet):r.adet),result:(String(r.result||'OK').toUpperCase()==='RET')?'RET':'OK'}));
+      const cleanRows=ROWS.filter(r=>(r.name||'').trim()!=='').map(r=>({name:(r.name||'').trim(),hedef:(r.hedef||'').trim(),limit:(r.limit||'').trim(),metot:(r.metot||'').trim(),bulunan:(r.bulunan||'').trim(),adet:(r.adet===''||r.adet==null)?'':(isFinite(Number(r.adet))?Number(r.adet):r.adet),result:(String(r.result||'OK').toUpperCase()==='RET')?'RET':'OK'}));
       const {data:hdrRows}=await sb.from('control_plan_headers').select('*').eq('stock_code',p.stock_code);
       const hdr=(hdrRows||[])[0]||{};
       const data={ work_order:p.work_order, op_no:p.op_no, machine_name:p.machine_name, prod_date:p.prod_date||p.start_time, rows:cleanRows, total_records:cleanRows.length };
@@ -3614,7 +3634,7 @@ function printCert(c, opts){ opts=opts||{};
   const rows=rowObjs.map(r=>{
     const isRet=String(r.result||'').toUpperCase()==='RET';
     const st=isRet?'<span class="pill ret">RET</span>':'<span class="pill ok">OK</span>';
-    return `<tr><td>${esc(r.name||'')}</td><td>${esc(r.hedef||'-')}</td><td>${esc(r.limit||'-')}</td><td>${esc(r.bulunan||'-')}</td><td style="text-align:center">${esc(r.adet!=null&&r.adet!==''?String(r.adet):'-')}</td><td style="text-align:center">${st}</td></tr>`;
+    return `<tr><td>${esc(r.name||'')}</td><td>${esc(r.hedef||'-')}</td><td>${esc(r.limit||'-')}</td><td>${esc(r.metot||'-')}</td><td>${esc(r.bulunan||'-')}</td><td style="text-align:center">${esc(r.adet!=null&&r.adet!==''?String(r.adet):'-')}</td><td style="text-align:center">${st}</td></tr>`;
   }).join('');
   const title=(c.cert_type==='CoA')?'CERTIFICATE OF ANALYSIS (CoA)':'CERTIFICATE OF CONFORMITY (CoC)';
   const titleTr=(c.cert_type==='CoA')?'ANALİZ SERTİFİKASI':'UYGUNLUK SERTİFİKASI';
@@ -3677,8 +3697,8 @@ table.res tr:nth-child(even) td{background:#f9fafe}
 <div class="overall ${overallOK?'ok':'ret'}">${overallOK?'✔ TÜM SONUÇLAR UYGUN':'✘ UYGUNSUZLUK VAR'}</div>
 <h2>Ölçüm / Kontrol Sonuçları</h2>
 <table class="res">
-  <thead><tr><th>Kontrol Özelliği</th><th>Hedef</th><th>Limit / Spec</th><th>Bulunan Değer / Sonuç</th><th>Adet</th><th>Sonuç</th></tr></thead>
-  <tbody>${rows||'<tr><td colspan="6" style="text-align:center;color:#888">Ölçüm sonucu bulunamadı.</td></tr>'}</tbody>
+  <thead><tr><th>Kontrol Özelliği</th><th>Hedef</th><th>Limit / Spec</th><th>Metot / Standart</th><th>Bulunan Değer / Sonuç</th><th>Adet</th><th>Sonuç</th></tr></thead>
+  <tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:#888">Ölçüm sonucu bulunamadı.</td></tr>'}</tbody>
 </table>
 ${c.notes?'<div class="notes"><b>Notlar:</b><br>'+esc(c.notes).replace(/\n/g,'<br>')+'</div>':''}
 <div class="foot">Bu sertifika ${esc((c.header&&c.header.doc_title)||'Kontrol Planı')} kapsamında, ${fmtDate(issD)} tarihinde Sanifoam Endüstri ve Tüketim Ürünleri San. Tic. A.Ş. tarafından düzenlenmiştir.</div>
