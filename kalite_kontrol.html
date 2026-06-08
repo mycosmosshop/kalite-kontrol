@@ -3503,7 +3503,10 @@ function openCertPrint(c){
   m.append(el('h3',{},'🖨 Sertifika Yazdır — '+esc(c.cert_no)));
   const today=isoDateLocal(new Date());
   const dInp=el('input',{type:'date',class:'inp'}); dInp.value=c.issue_date||today;
-  m.append(el('div',{class:'field'},el('label',{class:'lab'},'Düzenleme Tarihi (PDF üst/alt bilgisinde görünür)'),dInp));
+  const lotInp=el('input',{class:'inp',placeholder:'örn. LOT-2026-001'}); lotInp.value=c.lot_no||'';
+  m.append(el('div',{class:'row'},
+    el('div',{class:'field grow'},el('label',{class:'lab'},'Düzenleme Tarihi (PDF üst/alt bilgisinde görünür)'),dInp),
+    el('div',{class:'field',style:'flex:0;min-width:170px'},el('label',{class:'lab'},'Lot No'),lotInp)));
   let irsNo, irsDate;
   if(c.cert_type==='CoA'){
     irsNo=el('input',{class:'inp',placeholder:'örn. 123456'});
@@ -3514,7 +3517,13 @@ function openCertPrint(c){
   }
   m.append(el('div',{style:'display:flex;gap:8px;justify-content:flex-end;margin-top:12px'},
     el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>root.innerHTML=''},'İptal'),
-    el('button',{class:'btn sm',style:'flex:0',onclick:()=>{ const opts={issueDate:dInp.value||today}; if(c.cert_type==='CoA'){opts.irsaliyeNo=irsNo.value;opts.irsaliyeDate=irsDate.value;} root.innerHTML=''; printCert(c,opts); }},'🖨 Yazdır')));
+    el('button',{class:'btn sm',style:'flex:0',onclick:async()=>{
+      const lot=lotInp.value.trim()||null; c.lot_no=lot;
+      if(c.id){ const {error}=await sb.from('certificates').update({lot_no:lot}).eq('id',c.id); if(error){toast(esc(error.message),'err');return;} renderCert(); }
+      const opts={issueDate:dInp.value||today, lotNo:lot};
+      if(c.cert_type==='CoA'){opts.irsaliyeNo=irsNo.value;opts.irsaliyeDate=irsDate.value;}
+      root.innerHTML=''; printCert(c,opts);
+    }},'🖨 Yazdır')));
   bg.append(m); root.append(bg);
 }
 function printCert(c, opts){ opts=opts||{};
@@ -3522,6 +3531,7 @@ function printCert(c, opts){ opts=opts||{};
   const d=c.data||{}; const sum=d.summary||{};
   const issD=opts.issueDate||c.issue_date;                 // yazdırırken seçilen düzenleme tarihi
   const irsNo=(opts.irsaliyeNo||'').trim(), irsDate=opts.irsaliyeDate||'';   // CoA için irsaliye
+  const lotNo=(opts.lotNo!=null&&opts.lotNo!=='')?opts.lotNo:(c.lot_no||'');  // yazdırırken girilen lot
   const overallOK=Object.values(sum).every(g=>g.ret===0);
   const rows=Object.values(sum).map(g=>{
     let val='-', lim='-';
@@ -3584,7 +3594,7 @@ table.res tr:nth-child(even) td{background:#f9fafe}
     <div><b>Ürün Adı:</b> ${esc(c.stock_name||'-')}</div>
     <div><b>Üretim Tarihi:</b> ${d.prod_date?fmtDate(d.prod_date):'-'}</div>
     <div><b>Operasyon:</b> ${esc(d.op_no!=null?String(d.op_no):'-')} · ${esc(d.machine_name||'-')}</div>
-    <div><b>Lot No:</b> ${esc(c.lot_no||'-')}</div>
+    <div><b>Lot No:</b> ${esc(lotNo||'-')}</div>
     <div><b>Miktar:</b> ${esc(String(c.quantity??'-'))} ${esc(c.unit||'')}</div>
     ${(c.cert_type==='CoA'&&irsNo)?'<div><b>İrsaliye No:</b> '+esc(irsNo)+'</div>':''}
     ${(c.cert_type==='CoA'&&irsDate)?'<div><b>İrsaliye Tarihi:</b> '+fmtDate(irsDate)+'</div>':''}
