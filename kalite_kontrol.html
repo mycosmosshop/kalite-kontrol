@@ -3530,7 +3530,7 @@ async function openCertCreate(allCerts, existing){
   m.append(el('div',{class:'meta',html:`Sertifika No: <b>${esc(certNo)}</b>`}));
   const typeSel=el('select',{class:'inp'}); [['CoC','📄 CoC — Uygunluk Sertifikası'],['CoA','🧪 CoA — Analiz Sertifikası']].forEach(([v,t])=>{const o=el('option',{value:v},t); if(editing&&existing.cert_type===v)o.selected=true; typeSel.append(o);});
   const prodSel=el('select',{class:'inp'}); prodSel.append(el('option',{value:''},'— üretim seç —'));
-  (prods||[]).forEach(p=>{ const lab=`${fmtDate(p.prod_date||p.start_time)} · ${p.stock_code||''} · ${p.customer||''} · İŞ:${p.work_order||'-'} · ${p.quantity||''} ${p.unit||''}`;
+  (prods||[]).forEach(p=>{ const lab=`${fmtDate(p.prod_date||p.start_time)} · ${p.stock_code||''} · ${p.customer||''} · İŞ:${p.work_order||'-'} · 🛠 ${p.machine_name||'-'} · ${p.quantity||''} ${p.unit||''}`;
     const o=el('option',{value:p.id},lab); if(editing&&String(existing.production_id)===String(p.id))o.selected=true; prodSel.append(o); });
   const lotInp=el('input',{class:'inp',placeholder:'örn. LOT-2026-001'}); if(editing)lotInp.value=existing.lot_no||'';
   const notesInp=el('textarea',{class:'inp',rows:'2',placeholder:'Sertifikada yer alacak ek not (isteğe bağlı)'}); if(editing)notesInp.value=existing.notes||'';
