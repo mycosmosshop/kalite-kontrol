@@ -834,7 +834,8 @@ function planHeaderCard(sc,stockName){
       el('div',{style:'font-size:15px;font-weight:800'},(PLAN_HDR.doc_title||'KONTROL PLANI')+(PLAN_HDR.doc_no?(' · '+PLAN_HDR.doc_no):'')),
       el('div',{style:'font-size:12px;color:var(--muted)'},`${sc} — ${esc(stockName||'')}`)),
     el('button',{class:'btn sm',onclick:()=>exportPlanExcel(sc,stockName)},'⬇ Excel'),
-    el('button',{class:'btn sm sec',onclick:()=>printPlan(sc,stockName)},'🖨 PDF / Yazdır')
+    el('button',{class:'btn sm sec',onclick:()=>printPlan(sc,stockName,'tr')},'🖨 PDF / Yazdır'),
+    el('button',{class:'btn sm sec',onclick:()=>printPlan(sc,stockName,'en')},'🖨 PDF (EN)')
   ));
   const grid=el('div',{style:'display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px'});
   HDR_FIELDS.forEach(([key,label,type])=>{
@@ -851,11 +852,15 @@ function planHeaderCard(sc,stockName){
   return card;
 }
 // plan tablosunu ortak sütun düzeniyle dışa aktar
-function planColsAOA(items){
-  const head=['Ölçü No','Op Kartı','Op No','Proses','Giriş','Son','Ölçülecek Değer','Nicel Hedef','Nitel Hedef / Birim','Alt Limit','Üst Limit','Örn. Büyüklüğü','Örn. Sıklığı','Son K. Örn.','Üretim Ekipmanı','FMEA No','Özel Karakteristik','Kontrol Yöntemi','Alternatif Yöntem','Acil Eylem Planı','DÖF Planı','Tip'];
+function planColsAOA(items, lang){
+  const EN=lang==='en';
+  const head=EN
+    ? ['Char. No','Op Card','Op No','Process','Incoming','Final','Characteristic','Quant. Target','Qual. Target / Unit','Lower Limit','Upper Limit','Sample Size','Sample Freq.','Final Insp. Smp.','Production Equipment','FMEA No','Special Char.','Control Method','Alternative Method','Emergency Action Plan','CAPA Plan','Type']
+    : ['Ölçü No','Op Kartı','Op No','Proses','Giriş','Son','Ölçülecek Değer','Nicel Hedef','Nitel Hedef / Birim','Alt Limit','Üst Limit','Örn. Büyüklüğü','Örn. Sıklığı','Son K. Örn.','Üretim Ekipmanı','FMEA No','Özel Karakteristik','Kontrol Yöntemi','Alternatif Yöntem','Acil Eylem Planı','DÖF Planı','Tip'];
+  const tip=q=> EN?(q?'Qualitative':'Measurement'):(q?'Nitel':'Ölçüm');
   const rows=items.map((it,i)=>[i+1, it.operasyon_karti,it.op_no, it.process_control!==false?'✓':'—', it.giris_kalite===true?'✓':'—', it.final_control!==false?'✓':'—',
     it.measure_name,it.target, it.is_qualitative?it.nitel_hedef:it.unit, it.lower_limit,it.upper_limit,it.sample_size,it.sampling_frequency,it.son_kontrol_ornekleme,
-    it.production_equipment,it.fmea_number,it.special_characteristic,it.method,it.backup_method,it.emergency_action_plan,it.capa_plan, it.is_qualitative?'Nitel':'Ölçüm']);
+    it.production_equipment,it.fmea_number,it.special_characteristic,it.method,it.backup_method,it.emergency_action_plan,it.capa_plan, tip(it.is_qualitative)]);
   return {head,rows};
 }
 function exportPlanExcel(sc,stockName){
@@ -900,14 +905,17 @@ function exportPlanExcel(sc,stockName){
   const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Kontrol Planı');
   XLSX.writeFile(wb,`kontrol_plani_${sc}.xlsx`);
 }
-function printPlan(sc,stockName){
+function printPlan(sc,stockName,lang){
+  const EN=lang==='en';
+  const T=EN?{title:'CONTROL PLAN',tab:'Control Plan',docNo:'Doc.No',pubDate:'Issue Date',revNoDate:'Rev. No/Date',page:'Page',stockCode:'Product Code',stockName:'Product Name',controlType:'Control Type',customer:'Customer',contact:'Contact',coreTeam:'Core Team',tolTable:'Tolerance Table',engApp:'Eng. Approval',qualApp:'Quality Approval',planApp:'Plan Approval',otherApp:'Other Approval',techRevNo:'Tech. Drawing Rev No',techRevDate:'Tech. Drawing Rev Date',planNo:'Control Plan No',revReason:'Revision Reason',footL:'Sanifoam — Quality Control',items:'items',htmlLang:'en'}
+    :{title:'KONTROL PLANI',tab:'Kontrol Planı',docNo:'Dok.No',pubDate:'Yayın Trh.',revNoDate:'Rev. No/Trh',page:'Sayfa',stockCode:'Stok Kodu',stockName:'Stok Adı',controlType:'Kontrol Tipi',customer:'Cari Kartı',contact:'İlgili Kişi',coreTeam:'Çekirdek Takım',tolTable:'Tolerans Tablosu',engApp:'Müh. Onay',qualApp:'Kalite Onay',planApp:'Plan Onay',otherApp:'Diğer Onay',techRevNo:'Tek. Resim Rev No',techRevDate:'Tek. Resim Rev Tarihi',planNo:'Kontrol Planı No',revReason:'Revizyon Nedeni',footL:'Sanifoam — Kalite Kontrol',items:'madde',htmlLang:'tr'};
   const items=planSorted((PLAN||[]).filter(p=>p.stock_code===sc));
-  const {head,rows}=planColsAOA(items); const H=PLAN_HDR;
+  const {head,rows}=planColsAOA(items,lang); const H=PLAN_HDR;
   const logoSrc=(document.querySelector('.brand-logo')||{}).src||'';
   const headHtml=head.map(h=>`<th>${esc(h)}</th>`).join('');
   const bodyHtml=rows.map(r=>`<tr>${r.map(c=>`<td>${esc(c==null?'':c)}</td>`).join('')}</tr>`).join('');
   const win=window.open('','_blank','width=1200,height=860');
-  win.document.write(`<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><title>Kontrol Planı ${esc(sc)}</title>
+  win.document.write(`<!DOCTYPE html><html lang="${T.htmlLang}"><head><meta charset="UTF-8"><title>${esc(T.tab)} ${esc(sc)}</title>
 <style>
  @page{size:A4 landscape;margin:8mm}
  *{box-sizing:border-box} body{font-family:Arial,Helvetica,sans-serif;color:#000;margin:0;padding:6px}
@@ -927,25 +935,25 @@ function printPlan(sc,stockName){
 <table class="antet">
  <tr>
    <td class="logo-cell">${logoSrc?`<img src="${logoSrc}">`:'SANİFOAM'}</td>
-   <td class="title-cell">${esc(H.doc_title||'KONTROL PLANI')}</td>
+   <td class="title-cell">${esc(H.doc_title||T.title)}</td>
    <td style="width:232px;padding:0">
      <table class="docbox">
-       <tr><td>Dok.No</td><td>${esc(H.doc_no||'')}</td></tr>
-       <tr><td>Yayın Trh.</td><td>${esc(hv('pub_date'))}</td></tr>
-       <tr><td>Rev. No/Trh</td><td>${esc(H.rev_no||'')}${(H.rev_no&&hv('rev_date'))?' / ':''}${esc(hv('rev_date'))}</td></tr>
-       <tr><td>Sayfa</td><td>1/1</td></tr>
+       <tr><td>${esc(T.docNo)}</td><td>${esc(H.doc_no||'')}</td></tr>
+       <tr><td>${esc(T.pubDate)}</td><td>${esc(hv('pub_date'))}</td></tr>
+       <tr><td>${esc(T.revNoDate)}</td><td>${esc(H.rev_no||'')}${(H.rev_no&&hv('rev_date'))?' / ':''}${esc(hv('rev_date'))}</td></tr>
+       <tr><td>${esc(T.page)}</td><td>1/1</td></tr>
      </table>
    </td>
  </tr>
 </table>
 <table class="antet">
- <tr><th>Stok Kodu</th><td>${esc(sc)}</td><th>Stok Adı</th><td colspan="3">${esc(stockName||'')}</td><th>Kontrol Tipi</th><td>${esc(H.control_type||'')}</td></tr>
- <tr><th>Cari Kartı</th><td>${esc(H.customer||'')}</td><th>İlgili Kişi</th><td>${esc(H.contact||'')}</td><th>Çekirdek Takım</th><td>${esc(H.core_team||'')}</td><th>Tolerans Tablosu</th><td>${esc(H.tolerance_table||'')}</td></tr>
- <tr><th>Müh. Onay</th><td>${esc(hv('eng_approve_date'))}</td><th>Kalite Onay</th><td>${esc(hv('quality_approve_date'))}</td><th>Plan Onay</th><td>${esc(hv('plan_approve_date'))}</td><th>Diğer Onay</th><td>${esc(hv('other_approve_date'))}</td></tr>
- <tr><th>Tek. Resim Rev No</th><td>${esc(H.tech_rev_no||'')}</td><th>Tek. Resim Rev Tarihi</th><td>${esc(hv('tech_rev_date'))}</td><th>Kontrol Planı No</th><td>${esc(H.plan_no||'')}</td><th>Revizyon Nedeni</th><td>${esc(H.rev_reason||'')}</td></tr>
+ <tr><th>${esc(T.stockCode)}</th><td>${esc(sc)}</td><th>${esc(T.stockName)}</th><td colspan="3">${esc(stockName||'')}</td><th>${esc(T.controlType)}</th><td>${esc(H.control_type||'')}</td></tr>
+ <tr><th>${esc(T.customer)}</th><td>${esc(H.customer||'')}</td><th>${esc(T.contact)}</th><td>${esc(H.contact||'')}</td><th>${esc(T.coreTeam)}</th><td>${esc(H.core_team||'')}</td><th>${esc(T.tolTable)}</th><td>${esc(H.tolerance_table||'')}</td></tr>
+ <tr><th>${esc(T.engApp)}</th><td>${esc(hv('eng_approve_date'))}</td><th>${esc(T.qualApp)}</th><td>${esc(hv('quality_approve_date'))}</td><th>${esc(T.planApp)}</th><td>${esc(hv('plan_approve_date'))}</td><th>${esc(T.otherApp)}</th><td>${esc(hv('other_approve_date'))}</td></tr>
+ <tr><th>${esc(T.techRevNo)}</th><td>${esc(H.tech_rev_no||'')}</td><th>${esc(T.techRevDate)}</th><td>${esc(hv('tech_rev_date'))}</td><th>${esc(T.planNo)}</th><td>${esc(H.plan_no||'')}</td><th>${esc(T.revReason)}</th><td>${esc(H.rev_reason||'')}</td></tr>
 </table>
 <table class="data"><thead><tr>${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table>
-<div class="footer"><span>Sanifoam — Kalite Kontrol</span><span>${esc(sc)} · ${items.length} madde</span></div>
+<div class="footer"><span>${esc(T.footL)}</span><span>${esc(sc)} · ${items.length} ${esc(T.items)}</span></div>
 <script>window.onload=function(){setTimeout(function(){window.print();},250);}<\/script>
 </body></html>`);
   win.document.close();
