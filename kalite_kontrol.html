@@ -549,7 +549,17 @@ async function finishSelectedProds(){
   const {data:prods}=await sb.from('productions').select('*').in('id',ids);
   if(!prods||!prods.length){ toast('Üretim bulunamadı.','err'); return; }
   const now=new Date();
-  if(!confirm(`${prods.length} üretim bitirilecek (bitişi olmayanlara ŞİMDİ yazılır: ${now.toLocaleString('tr-TR')}). Eksik kontroller — Seri Başı + saatlik Proses + Son — uygun (rastgele) üretilecek. Devam?`)) return;
+  let endOverride=now;   // diğer kullanıcılar: otomatik = şimdi
+  if(PROFILE.is_admin){  // admin: bitiş saatini sor
+    const _pad=n=>String(n).padStart(2,'0');
+    const def=`${now.getFullYear()}-${_pad(now.getMonth()+1)}-${_pad(now.getDate())} ${_pad(now.getHours())}:${_pad(now.getMinutes())}`;
+    const inp=prompt('Bitiş tarih-saatini gir (bitişi olmayan üretimlere uygulanır)\nÖrn: 2026-06-08 23:50', def);
+    if(inp===null) return;
+    const d=new Date(inp.trim().replace(' ','T'));
+    if(isNaN(d.getTime())){ toast('Geçersiz tarih/saat. Örn: 2026-06-08 23:50','err'); return; }
+    endOverride=d;
+  }
+  if(!confirm(`${prods.length} üretim bitirilecek (bitişi olmayanlara: ${endOverride.toLocaleString('tr-TR')}). Eksik kontroller — Seri Başı + saatlik Proses + Son — uygun üretilecek. Devam?`)) return;
   const stocks=[...new Set(prods.map(p=>p.stock_code).filter(Boolean))];
   const {data:planAll}=await sb.from('control_plan_items').select('*').in('stock_code',stocks).eq('active',true);
   const plan=planAll||[];
@@ -559,7 +569,8 @@ async function finishSelectedProds(){
   for(const p of prods){
     if(!p.start_time){ skip++; continue; }
     const start=new Date(p.start_time);
-    const end = p.end_time ? new Date(p.end_time) : now;        // bitiş yoksa ŞİMDİ
+    const end = p.end_time ? new Date(p.end_time) : endOverride;   // bitiş yoksa: admin girdiği saat / şimdi
+    if(end.getTime()<=start.getTime()){ skip++; continue; }        // bitiş başlamadan önce olamaz
     let durMin=Math.round((end.getTime()-start.getTime())/60000); if(durMin<1)durMin=1;
     if(!p.end_time){ await sb.from('productions').update({end_time:end.toISOString(),duration_min:durMin}).eq('id',p.id); p.end_time=end.toISOString(); p.duration_min=durMin; }
     const items=opItemsFor(plan.filter(x=>x.stock_code===p.stock_code), p.op_no);
