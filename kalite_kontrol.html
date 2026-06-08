@@ -1705,22 +1705,23 @@ async function openBulkAuto(){
   const noPlanStocks=[...new Set(noPlan.map(p=>p.stock_code).filter(Boolean))];
   root.innerHTML='';
   if(!prods.length){ toast(secili?'Seçili üretimlerin planı yok.':'Bu kapsamda planı tanımlı üretim yok.','err'); return; }
-  const machines={}; prods.forEach(p=>{ const k=p.machine_code||'?'; if(!machines[k])machines[k]={code:k,name:p.machine_name,unit:p.unit,count:0}; machines[k].count++; });
-  let savedCyc={}; try{ savedCyc=JSON.parse(localStorage.getItem('kk_cyc')||'{}'); }catch(e){}   // makine başına kayıtlı çevrim süreleri
-  const cyc={}; Object.keys(machines).forEach(k=>{ if(Number(savedCyc[k])>0) cyc[k]=Number(savedCyc[k]); });
+  const combos={}; prods.forEach(p=>{ const mc=p.machine_code||'?', sc=p.stock_code||'?'; const k=mc+'||'+sc;
+    if(!combos[k])combos[k]={key:k,machine_code:mc,machine_name:p.machine_name,stock_code:sc,stock_name:p.stock_name,unit:p.unit,count:0}; combos[k].count++; });
+  let savedCyc={}; try{ savedCyc=JSON.parse(localStorage.getItem('kk_cyc')||'{}'); }catch(e){}   // KOD+MAKİNE bazlı kayıtlı çevrim süreleri
+  const cyc={}; Object.keys(combos).forEach(k=>{ if(Number(savedCyc[k])>0) cyc[k]=Number(savedCyc[k]); });
   const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
   const m=el('div',{class:'modal',style:'position:relative;max-width:860px'});
   m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
   m.append(el('h3',{},'🎲 Otomatik Kontrol Üret'));
   const kapsam = secili ? ('🎯 '+prods.length+' SEÇİLİ üretim') : (aktifFiltre ? ('🔎 Filtreli kapsam — '+prods.length+' üretim'+(URETIM_FILT.stock?' · '+URETIM_FILT.stock:'')+((URETIM_FILT.start||URETIM_FILT.end)?' · '+(URETIM_FILT.start||'…')+'–'+(URETIM_FILT.end||'…'):'')) : (prods.length+' üretim (planı olan tümü)'));
-  m.append(el('p',{class:'meta'},`${kapsam}. Çevrim süresi (saniye/birim) girersen bitiş = başlangıç + adet × çevrim olarak yeniden hesaplanıp üretime yazılır. ÇEVRİM GİRMEZSEN üretimin MEVCUT başlama–bitiş süresi kullanılır. Sonra plandaki örnekleme sıklığına göre Seri Başı + saatlik Proses + Son üretilir (hepsi uygun, rastgele). Satır seçersen sadece seçilenlere; filtre uygularsan filtre kapsamına uygulanır.`));
+  m.append(el('p',{class:'meta'},`${kapsam}. Çevrim süresi (saniye/birim) girersen bitiş = başlangıç + adet × çevrim olarak yeniden hesaplanıp üretime yazılır. <b>Her satır KOD + MAKİNE bazlıdır</b> (aynı makinede 12 gözlü kalıp vb. farklı ürün = farklı çevrim); girdiğin değer o <b>ürün+makine</b> için hafızaya kaydedilir — tekrar açınca hatırlanır ve düzenlenebilir. ÇEVRİM GİRMEZSEN üretimin MEVCUT başlama–bitiş süresi kullanılır. Sonra plandaki örnekleme sıklığına göre Seri Başı + saatlik Proses + Son üretilir (hepsi uygun, rastgele). Satır seçersen sadece seçilenlere; filtre uygularsan filtre kapsamına uygulanır.`));
   if(noPlan.length){ m.append(el('div',{class:'msg err',style:'margin:0 0 12px',html:`⚠ <b>${noPlan.length} üretim</b> kapsam DIŞI: stok kodunun kontrol planı yok → <b>${noPlanStocks.map(esc).join(', ')}</b>. Bu makineler/çevrimler aşağıda görünmez ve bitişleri hesaplanmaz. Çözüm: Kontrol Planı’nda «📋 Başka Koda Kopyala» ile bu kod(lar)a plan oluştur, sonra tekrar dene.`}));}
-  Object.values(machines).forEach(mc=>{
+  Object.values(combos).sort((a,b)=>(a.stock_code+a.machine_code).localeCompare(b.stock_code+b.machine_code)).forEach(c=>{
     m.append(el('div',{class:'row',style:'margin-bottom:8px'},
-      el('div',{class:'field grow'},el('label',{class:'lab'},`${mc.code} — ${esc(mc.name||'')} · ${mc.count} üretim · birim: ${esc(mc.unit||'-')}`),
-        el('input',{class:'inp',type:'number',step:'0.001',value:(cyc[mc.code]>0?cyc[mc.code]:''),placeholder:'çevrim süresi (sn/'+(mc.unit||'birim')+')',
-          oninput:e=>{ const v=Number(e.target.value)||0; cyc[mc.code]=v;
-            try{ const s=JSON.parse(localStorage.getItem('kk_cyc')||'{}'); if(v>0)s[mc.code]=v; else delete s[mc.code]; localStorage.setItem('kk_cyc',JSON.stringify(s)); }catch(_){} }}))));
+      el('div',{class:'field grow'},el('label',{class:'lab'},`📦 ${esc(c.stock_code)}${c.stock_name?(' — '+esc(c.stock_name)):''} · 🛠 ${esc(c.machine_code)} ${esc(c.machine_name||'')} · ${c.count} üretim · birim: ${esc(c.unit||'-')}`),
+        el('input',{class:'inp',type:'number',step:'0.001',value:(cyc[c.key]>0?cyc[c.key]:''),placeholder:'çevrim süresi (sn/'+(c.unit||'birim')+')',
+          oninput:e=>{ const v=Number(e.target.value)||0; cyc[c.key]=v;
+            try{ const s=JSON.parse(localStorage.getItem('kk_cyc')||'{}'); if(v>0)s[c.key]=v; else delete s[c.key]; localStorage.setItem('kk_cyc',JSON.stringify(s)); }catch(_){} }}))));
   });
   const regenCb=el('input',{type:'checkbox'});
   m.append(el('label',{style:'display:flex;align-items:center;gap:6px;margin:6px 0 6px;cursor:pointer'},regenCb,'Var olan kayıtları silip yeniden üret (kapalıysa sadece eksik aşamalar tamamlanır)'));
@@ -1751,7 +1752,7 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
   let made=0,prodN=0,skipped=0,cleaned=0,recalcN=0;
   for(const p of prods){
     if(!p.start_time||!p.quantity||p.quantity<=0){skipped++;continue;}
-    const cs=cyc[p.machine_code], start=new Date(p.start_time);
+    const cs=cyc[(p.machine_code||'?')+'||'+(p.stock_code||'?')], start=new Date(p.start_time);
     let end, durMin, recomputed=false;
     if(cs>0){ const durSec=p.quantity*cs; end=new Date(start.getTime()+durSec*1000); durMin=durSec/60; recomputed=true;  // BİTİŞ = başlama + adet × çevrim (DB'ye yazılır)
       const {error:upErr}=await sb.from('productions').update({end_time:end.toISOString(),duration_min:Math.round(durMin)}).eq('id',p.id);
