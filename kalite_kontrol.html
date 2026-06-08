@@ -3607,7 +3607,7 @@ function openCertPrint(c){
   m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
   m.append(el('h3',{},'🖨 Sertifika Yazdır — '+esc(c.cert_no)));
   const today=isoDateLocal(new Date());
-  const dInp=el('input',{type:'date',class:'inp'}); dInp.value=c.issue_date||today;
+  const dInp=el('input',{type:'date',class:'inp'}); dInp.value=c.issue_date?String(c.issue_date).slice(0,10):today;
   const lotInp=el('input',{class:'inp',placeholder:'örn. LOT-2026-001'}); lotInp.value=c.lot_no||'';
   const langSel=el('select',{class:'inp'}); [['tr','🇹🇷 Türkçe'],['en','🇬🇧 English']].forEach(([v,t])=>{const o=el('option',{value:v},t); langSel.append(o);});
   m.append(el('div',{class:'row'},
@@ -3640,9 +3640,9 @@ function printCert(c, opts){ opts=opts||{};
   const irsNo=(opts.irsaliyeNo||'').trim(), irsDate=opts.irsaliyeDate||'';   // CoA için irsaliye
   const lotNo=(opts.lotNo!=null&&opts.lotNo!=='')?opts.lotNo:(c.lot_no||'');  // yazdırırken girilen lot
   const EN=(opts.lang==='en');                                                // komple İngilizce seçeneği
-  const T=EN?{certNo:'Certificate No',date:'Date',docNo:'Document No',rev:'Revision',customer:'Customer',workOrder:'Work Order',stockCode:'Product Code',productName:'Product Name',prodDate:'Production Date',operation:'Operation',lotNo:'Lot No',qty:'Quantity',dispNo:'Dispatch Note No',dispDate:'Dispatch Date',overallOk:'✔ ALL RESULTS CONFORMING',overallRet:'✘ NON-CONFORMITY FOUND',resultsH:'Measurement / Inspection Results',thChar:'Inspection Characteristic',thTarget:'Target',thLimit:'Limit / Spec',thMethod:'Method / Standard',thFound:'Measured Value / Result',thQty:'Qty',thResult:'Result',noResults:'No measurement results found.',notes:'Notes',planDef:'Control Plan',footFn:(dt,dd)=>`This certificate has been issued within the scope of ${dt}, on ${dd}, by Sanifoam Endüstri ve Tüketim Ürünleri San. Tic. A.Ş.`}
+  const T=EN?{certNo:'Certificate No',date:'Date',docNo:'Document No',rev:'Revision',customer:'Customer',workOrder:'Work Order',stockCode:'Product Code',productName:'Product Name',prodDate:'Production Date',operation:'Operation',lotNo:'Lot No',qty:'Quantity',dispNo:'Dispatch Note No',dispDate:'Dispatch Date',overallOk:'✔ ALL RESULTS PASS',overallRet:'✘ FAIL — NONCONFORMITY FOUND',resultsH:'Measurement / Inspection Results',thChar:'Inspection Characteristic',thTarget:'Target',thLimit:'Limit / Spec',thMethod:'Method / Standard',thFound:'Measured Value / Result',thQty:'Qty',thResult:'Result',noResults:'No measurement results found.',notes:'Notes',planDef:'Control Plan',footFn:(dt,dd)=>`This certificate has been issued within the scope of ${dt}, on ${dd}, by Sanifoam Endüstri ve Tüketim Ürünleri San. Tic. A.Ş.`}
     :{certNo:'Sertifika No',date:'Tarih',docNo:'Doküman No',rev:'Revizyon',customer:'Müşteri / Cari',workOrder:'İş Emri',stockCode:'Stok Kodu',productName:'Ürün Adı',prodDate:'Üretim Tarihi',operation:'Operasyon',lotNo:'Lot No',qty:'Miktar',dispNo:'İrsaliye No',dispDate:'İrsaliye Tarihi',overallOk:'✔ TÜM SONUÇLAR UYGUN',overallRet:'✘ UYGUNSUZLUK VAR',resultsH:'Ölçüm / Kontrol Sonuçları',thChar:'Kontrol Özelliği',thTarget:'Hedef',thLimit:'Limit / Spec',thMethod:'Metot / Standart',thFound:'Bulunan Değer / Sonuç',thQty:'Adet',thResult:'Sonuç',noResults:'Ölçüm sonucu bulunamadı.',notes:'Notlar',planDef:'Kontrol Planı',footFn:(dt,dd)=>`Bu sertifika ${dt} kapsamında, ${dd} tarihinde Sanifoam Endüstri ve Tüketim Ürünleri San. Tic. A.Ş. tarafından düzenlenmiştir.`};
-  const tcell=s=>{ s=String(s==null?'':s); if(EN){ s=s.replace(/UYGUNSUZ/g,'NON-CONFORMING').replace(/UYGUN/g,'CONFORMING').replace(/Maks/g,'Max').replace(/Ort/g,'Avg'); } return s; };
+  const tcell=s=>{ s=String(s==null?'':s); if(EN){ s=s.replace(/UYGUNSUZ/g,'FAIL').replace(/UYGUN/g,'PASS').replace(/Maks/g,'Max').replace(/Ort/g,'Avg'); } return s; };
   const rowObjs = Array.isArray(d.rows) ? d.rows : certRowsFromExisting(c);   // yeni satır modeli (eski özet otomatik dönüşür)
   const overallOK = rowObjs.every(r=>String(r.result||'').toUpperCase()!=='RET');
   const rows=rowObjs.map(r=>{
