@@ -3541,11 +3541,13 @@ async function openCertCreate(allCerts, existing){
   (prods||[]).forEach(p=>{ const lab=`${fmtDate(p.prod_date||p.start_time)} · ${p.stock_code||''} · ${p.customer||''} · İŞ:${p.work_order||'-'} · 🛠 ${p.machine_name||'-'} · ${p.quantity||''} ${p.unit||''}`;
     const o=el('option',{value:p.id},lab); if(editing&&String(existing.production_id)===String(p.id))o.selected=true; prodSel.append(o); });
   const lotInp=el('input',{class:'inp',placeholder:'örn. LOT-2026-001'}); if(editing)lotInp.value=existing.lot_no||'';
+  const issueInp=el('input',{type:'date',class:'inp'}); issueInp.value=(editing&&existing.issue_date)?String(existing.issue_date).slice(0,10):isoDateLocal(new Date());
   const notesInp=el('textarea',{class:'inp',rows:'2',placeholder:'Sertifikada yer alacak ek not (isteğe bağlı)'}); if(editing)notesInp.value=existing.notes||'';
   m.append(el('div',{class:'row'},
-    el('div',{class:'field',style:'flex:0;min-width:200px'},el('label',{class:'lab'},'Sertifika Tipi'),typeSel),
+    el('div',{class:'field',style:'flex:0;min-width:190px'},el('label',{class:'lab'},'Sertifika Tipi'),typeSel),
     el('div',{class:'field grow'},el('label',{class:'lab'},'Üretim / İş Emri'),prodSel),
-    el('div',{class:'field',style:'flex:0;min-width:170px'},el('label',{class:'lab'},'Lot No'),lotInp)
+    el('div',{class:'field',style:'flex:0;min-width:150px'},el('label',{class:'lab'},'Sertifika Tarihi'),issueInp),
+    el('div',{class:'field',style:'flex:0;min-width:140px'},el('label',{class:'lab'},'Lot No'),lotInp)
   ));
   m.append(el('div',{class:'field'},el('label',{class:'lab'},'Notlar'),notesInp));
   let ROWS = editing ? certRowsFromExisting(existing) : [];
@@ -3583,7 +3585,7 @@ async function openCertCreate(allCerts, existing){
       const {data:hdrRows}=await sb.from('control_plan_headers').select('*').eq('stock_code',p.stock_code);
       const hdr=(hdrRows||[])[0]||{};
       const data={ work_order:p.work_order, op_no:p.op_no, machine_name:p.machine_name, prod_date:p.prod_date||p.start_time, rows:cleanRows, total_records:cleanRows.length };
-      const payload={cert_no:certNo, cert_type:typeSel.value, stock_code:p.stock_code, stock_name:p.stock_name, customer:p.customer, production_id:p.id, lot_no:lotInp.value.trim()||null, quantity:p.quantity, unit:p.unit, doc_no:hdr.doc_no||null, rev_no:hdr.rev_no||null, header:hdr, data, notes:notesInp.value.trim()||null };
+      const payload={cert_no:certNo, cert_type:typeSel.value, stock_code:p.stock_code, stock_name:p.stock_name, customer:p.customer, production_id:p.id, lot_no:lotInp.value.trim()||null, issue_date:issueInp.value||isoDateLocal(new Date()), quantity:p.quantity, unit:p.unit, doc_no:hdr.doc_no||null, rev_no:hdr.rev_no||null, header:hdr, data, notes:notesInp.value.trim()||null };
       let saved;
       if(editing){
         const {data:up,error}=await sb.from('certificates').update(payload).eq('id',existing.id).select().maybeSingle();
@@ -3625,9 +3627,9 @@ function openCertPrint(c){
   m.append(el('div',{style:'display:flex;gap:8px;justify-content:flex-end;margin-top:12px'},
     el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>root.innerHTML=''},'İptal'),
     el('button',{class:'btn sm',style:'flex:0',onclick:async()=>{
-      const lot=lotInp.value.trim()||null; c.lot_no=lot;
-      if(c.id){ const {error}=await sb.from('certificates').update({lot_no:lot}).eq('id',c.id); if(error){toast(esc(error.message),'err');return;} renderCert(); }
-      const opts={issueDate:dInp.value||today, lotNo:lot, lang:langSel.value};
+      const lot=lotInp.value.trim()||null; const iss=dInp.value||today; c.lot_no=lot; c.issue_date=iss;
+      if(c.id){ const {error}=await sb.from('certificates').update({lot_no:lot, issue_date:iss}).eq('id',c.id); if(error){toast(esc(error.message),'err');return;} renderCert(); }
+      const opts={issueDate:iss, lotNo:lot, lang:langSel.value};
       if(c.cert_type==='CoA'){opts.irsaliyeNo=irsNo.value;opts.irsaliyeDate=irsDate.value;}
       root.innerHTML=''; printCert(c,opts);
     }},'🖨 Yazdır')));
