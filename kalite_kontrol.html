@@ -542,6 +542,42 @@ function matchesUF(p){
   return true;
 }
 function closeAutozones(){ document.querySelectorAll('.autozone.open').forEach(z=>z.classList.remove('open')); }
+async function finishSelectedProds(){
+  if(!(can('auto')||PROFILE.is_admin)){ toast('Bunun için yetkin yok.','err'); return; }
+  const ids=[...document.querySelectorAll('#prodBody .prodChk:checked')].map(c=>Number(c.dataset.id));
+  if(!ids.length){ toast('Önce üretim seç (sol kutucuk).','err'); return; }
+  const {data:prods}=await sb.from('productions').select('*').in('id',ids);
+  if(!prods||!prods.length){ toast('Üretim bulunamadı.','err'); return; }
+  const now=new Date();
+  if(!confirm(`${prods.length} üretim bitirilecek (bitişi olmayanlara ŞİMDİ yazılır: ${now.toLocaleString('tr-TR')}). Eksik kontroller — Seri Başı + saatlik Proses + Son — uygun (rastgele) üretilecek. Devam?`)) return;
+  const stocks=[...new Set(prods.map(p=>p.stock_code).filter(Boolean))];
+  const {data:planAll}=await sb.from('control_plan_items').select('*').in('stock_code',stocks).eq('active',true);
+  const plan=planAll||[];
+  const {data:exr}=await sb.from('control_records').select('production_id,stage').in('production_id',ids);
+  const have={}; (exr||[]).forEach(r=>{ (have[r.production_id]=have[r.production_id]||new Set()).add(r.stage); });
+  let madeN=0,prodN=0,skip=0;
+  for(const p of prods){
+    if(!p.start_time){ skip++; continue; }
+    const start=new Date(p.start_time);
+    const end = p.end_time ? new Date(p.end_time) : now;        // bitiş yoksa ŞİMDİ
+    let durMin=Math.round((end.getTime()-start.getTime())/60000); if(durMin<1)durMin=1;
+    if(!p.end_time){ await sb.from('productions').update({end_time:end.toISOString(),duration_min:durMin}).eq('id',p.id); p.end_time=end.toISOString(); p.duration_min=durMin; }
+    const items=opItemsFor(plan.filter(x=>x.stock_code===p.stock_code), p.op_no);
+    if(!items.length){ skip++; continue; }                      // bu stok kodunun planı yok
+    const freqs=stageItems(items,'proses').map(it=>Number(it.sampling_frequency)).filter(v=>v>0&&v<=1440);
+    const freq=freqs.length?Math.min(...freqs):60;
+    const cur=have[p.id]||new Set();
+    const recs=[];
+    const offWhen=()=>new Date(Math.min(start.getTime()+Math.round((1+Math.random()*4)*60000), end.getTime()-30000));
+    if(!cur.has('seri_basi')){ const r=buildAutoRec(p,'seri_basi',offWhen(),items,null); if(r)recs.push(r); }
+    if(!cur.has('proses')){ let n=0; for(let t=freq;t<durMin && n<120;t+=freq,n++){ const jit=Math.round((Math.random()*10-5)*60000); let tm=start.getTime()+t*60000+jit; tm=Math.min(Math.max(tm,start.getTime()+60000),end.getTime()-60000); const r=buildAutoRec(p,'proses',new Date(tm),items,null); if(r)recs.push(r); } }
+    if(!cur.has('son')){ const r=buildAutoRec(p,'son',end,items,null); if(r)recs.push(r); }
+    if(recs.length){ const {error}=await sb.from('control_records').insert(recs); if(!error)madeN+=recs.length; }
+    prodN++;
+  }
+  toast(`${prodN} üretim bitirildi, ${madeN} kontrol üretildi`+(skip?` (${skip} atlandı: başlama/plan yok)`:'')+' ✔','ok');
+  renderUretimler();
+}
 async function deleteSelectedProds(){
   const ids=[...document.querySelectorAll('#prodBody .prodChk:checked')].map(c=>Number(c.dataset.id));
   if(!ids.length){ toast('Önce silinecek üretimleri seç (sol kutucuk).','err'); return; }
@@ -646,6 +682,7 @@ async function renderUretimler(){
         el('div',{class:'auto-menu',onclick:e=>e.stopPropagation()},
           can('auto')?el('button',{class:'btn sm',onclick:()=>{closeAutozones();openBulkAuto();}},'🎲 Otomatik Kontrol Üret'):'',
           can('import')?el('button',{class:'btn sm',onclick:()=>{closeAutozones();openManualProd();}},'➕ Manuel Üretim Ekle'):'',
+          can('auto')?el('button',{class:'btn sm',onclick:()=>{closeAutozones();finishSelectedProds();}},'🏁 Seçilenleri Bitir + Kontrol Üret'):'',
           (can('delete')||PROFILE.is_admin)?el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteSelectedRecs();}},'🧹 Seçilenlerin Kontrollerini Sil'):'',
           PROFILE.is_admin?el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteSelectedProds();}},'🗑 Seçilenleri Sil (üretim+kontrol)'):''
         )
@@ -1524,6 +1561,11 @@ async function openControl(p){
     m.append(seg);
     m.append(el('div',{class:'field',style:'margin:8px 0 14px'},el('label',{class:'lab'},'Operatör / Kontrol eden'),
       el('input',{class:'inp',id:'m_oper',value:operVal,oninput:e=>operVal=e.target.value})));
+    if(PROFILE.is_admin){
+      const _ds=t=>{ const d=t?new Date(t):new Date(),pd=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${pd(d.getMonth()+1)}-${pd(d.getDate())}T${pd(d.getHours())}:${pd(d.getMinutes())}`; };
+      m.append(el('div',{class:'field',style:'margin:0 0 14px'},el('label',{class:'lab'},'Kontrol Saati (admin) — proses/kontrol zamanını elle gir · boş = kayıt anı'),
+        el('input',{class:'inp',type:'datetime-local',id:'m_checkedat',value:_ds(p.start_time)})));
+    }
 
     if(!items.length){
       m.append(el('div',{class:'msg info'},`<b>${STAGES[stage]}</b> için bu üründe (<b>${esc(p.stock_code)}</b>, Op ${p.op_no??'-'}) kontrol planı maddesi yok. «Kontrol Planı» sekmesinden ekle.`));
@@ -1617,9 +1659,12 @@ async function saveControl(p,items,state,stage,sampleFor){
   const allSamples=vals.flatMap(v=>v.samples);
   if(!allSamples.length){toast('Hiç ölçüm girilmedi.','err');return;}
   const overall=allSamples.some(s=>s.ok===false)?'RET':'OK';
+  const _ca=document.getElementById('m_checkedat');
+  const _checkedAt=(_ca&&_ca.value)?new Date(_ca.value).toISOString():null;   // admin: elle girilen kontrol saati
   const rec={production_id:p.id,stock_code:p.stock_code,stock_name:p.stock_name,machine_code:p.machine_code,
-    work_order:p.work_order,stage,operator:oper,shift:p.shift,vals,overall_result:overall,
+    work_order:p.work_order,stage,operator:oper,shift:_checkedAt?(shiftForTime(new Date(_checkedAt))??p.shift):p.shift,vals,overall_result:overall,
     note:$('#m_note').value.trim()||null};
+  if(_checkedAt) rec.checked_at=_checkedAt;
   const {data:ins,error}=await sb.from('control_records').insert(rec).select().maybeSingle();
   if(error){toast(esc(error.message),'err');return;}
   toast(`${STAGES[stage]} kontrolü kaydedildi (${overall}).`, overall==='RET'?'err':'ok');
