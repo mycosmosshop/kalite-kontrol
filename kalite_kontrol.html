@@ -615,6 +615,17 @@ async function deleteSelectedProds(){
   if(e2){ toast('Üretim silinemedi: '+esc(e2.message),'err'); return; }
   toast(`${ids.length} üretim ve kontrolleri silindi.`,'ok'); renderUretimler();
 }
+async function deleteAllProds(){
+  if(!PROFILE.is_admin){ toast('Yetki yok.','err'); return; }
+  if(!confirm('DİKKAT: Veritabanındaki TÜM üretim kayıtları ve bunlara ait kontrol kayıtları KALICI silinecek (geri alınamaz). Devam edilsin mi?')) return;
+  if(!confirm('SON ONAY: BÜTÜN üretimler silinecek. Eminsen «Tamam».')) return;
+  const {error:e1}=await sb.from('control_records').delete().neq('id',0);
+  if(e1){ toast('Kontrol kayıtları silinemedi: '+esc(e1.message),'err'); return; }
+  const {error:e2}=await sb.from('productions').delete().neq('id',0);
+  if(e2){ toast('Üretimler silinemedi: '+esc(e2.message),'err'); return; }
+  toast('Tüm üretimler ve kontrol kayıtları silindi.','ok');
+  URETIM_FILT={start:'',end:'',stock:''}; renderUretimler();
+}
 async function deleteSelectedRecs(){
   const ids=[...document.querySelectorAll('#prodBody .prodChk:checked')].map(c=>Number(c.dataset.id));
   if(!ids.length){ toast('Önce üretimleri seç (sol kutucuk).','err'); return; }
@@ -821,7 +832,8 @@ async function renderUretimler(){
           can('import')?el('button',{class:'btn sm',onclick:()=>{closeAutozones();editSelectedProd();}},'✏️ Seçileni Düzenle'):'',
           can('auto')?el('button',{class:'btn sm',onclick:()=>{closeAutozones();finishSelectedProds();}},'🏁 Seçilenleri Bitir + Kontrol Üret'):'',
           (can('delete')||PROFILE.is_admin)?el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteSelectedRecs();}},'🧹 Seçilenlerin Kontrollerini Sil'):'',
-          PROFILE.is_admin?el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteSelectedProds();}},'🗑 Seçilenleri Sil (üretim+kontrol)'):''
+          PROFILE.is_admin?el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteSelectedProds();}},'🗑 Seçilenleri Sil (üretim+kontrol)'):'',
+          PROFILE.is_admin?el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteAllProds();}},'🧨 TÜMÜNÜ Sil (bütün üretimler)'):''
         )
       ):'',
       el('input',{class:'inp',id:'prodSearch',placeholder:'🔍 ara…',style:'max-width:220px',oninput:filterProdRows})
