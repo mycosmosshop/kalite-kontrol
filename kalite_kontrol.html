@@ -684,15 +684,21 @@ async function renderLeanSys(){
   root.innerHTML='';
   if(!(PROFILE&&PROFILE.is_admin)){ root.innerHTML='<div class="card"><div class="msg err" style="margin:0">Bu bölüm yalnızca admin içindir.</div></div>'; return; }
   const dirName=localStorage.getItem('leansys_dir_name');
+  // 1) ÖNERİLEN: doğrudan veritabanından, pencere uygulaması ile
   root.append(el('div',{class:'card'},
     el('h3',{},'🏭 LeanSys Üretim Verisi → Kalite Kontrol'),
-    el('div',{class:'msg info',style:'margin-top:6px',html:'<b>Otomatik akış:</b><br>1) LeanSys masaüstü <b>açık + giriş yapılmış</b> olsun.<br>2) Masaüstündeki <b>LeanSys_Export.bat</b>’a çift tıkla → <b>stok kodu</b> + <b>başlangıç/bitiş tarihi</b> gir. (>30 gün otomatik <b>aylık</b> bölünür.) Makro, Üretim Raporu (0071)’i kendisi açar, filtreler ve Excel’e aktarır.<br>3) Dosyalar <b>Masaüstü\\LeanSysExport</b> klasörüne düşer.<br>4) Aşağıdan o klasörü <b>bağla</b> → <b>Senkronize Et</b> → üretimler (başlama/bitiş saatleri dahil) içeri gelir. Kopya olmaz.'}),
-    el('div',{class:'row',style:'margin-top:12px'},
+    el('div',{class:'msg info',style:'margin-top:6px;border-left:4px solid #2e7d32',html:'<b>✅ Otomatik aktarım (önerilen) — doğrudan veritabanından, anında:</b><br>1) Masaüstündeki <b>LeanSys_Aktar</b> (pencere) uygulamasına çift tıkla.<br>2) <b>Stok Kodu</b> (boş bırak = TÜM stoklar) + <b>başlangıç/bitiş tarihi</b> seç — ya da <b>“Bugün”</b> / <b>“Tüm 2026”</b> düğmesi.<br>3) <b>AKTAR</b> → üretimler (başlama/bitiş <b>saatleri dahil</b>) <b>doğrudan buraya</b> yazılır.<br>UI yok, Excel yok, <b>30 gün sınırı yok</b>, kopya olmaz. Sonra <b>Üretimler</b>’i yenile (Ctrl+Shift+R).'})
+  ));
+  // 2) MANUEL (eski yöntem) — korunuyor
+  root.append(el('div',{class:'card'},
+    el('h4',{style:'margin:0 0 8px'},'📁 Manuel aktarım (eski yöntem — korunuyor)'),
+    el('div',{class:'msg info',style:'margin-top:0',html:'Excel dosyalarından içe aktarma: aşağıdan <b>klasör senkron</b>, ya da Üretimler sekmesindeki <b>“İçe Aktar”</b>.'}),
+    el('div',{class:'row',style:'margin-top:10px'},
       el('button',{class:'btn',style:'flex:0;min-width:210px',onclick:()=>syncLeanSysFolder(false)},'🔄 Klasörden Senkronize Et'),
       el('button',{class:'btn sec',style:'flex:0',onclick:()=>syncLeanSysFolder(true)},'🔗 Klasör Seç / Değiştir'),
       el('span',{style:'color:var(--muted);font-size:12px;align-self:center'},dirName?('📁 '+dirName):'Henüz klasör bağlı değil')
     ),
-    el('p',{class:'det',style:'color:var(--muted);font-size:12px;margin-top:10px'},'Not: Klasör Senkron yalnızca Chrome/Edge’de çalışır. Manuel “İçe Aktar” (dosya seç) Üretimler sekmesinde de durmaya devam ediyor.')
+    el('p',{class:'det',style:'color:var(--muted);font-size:12px;margin-top:10px'},'Not: Klasör Senkron yalnızca Chrome/Edge’de çalışır.')
   ));
 }
 async function renderBekleyen(){
