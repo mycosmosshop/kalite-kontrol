@@ -714,11 +714,11 @@ async function _renderDueControls(root){
     const o=byProd[p.id]||{seri:false,proses:0,son:false};
     const freq=freqByStock[p.stock_code]||60;
     const prosesExp=elapsed>=freq?Math.min(Math.floor(elapsed/freq),100):0;
-    if(!o.seri) groups.seri_basi.push({p,finished,start,extra:''});
-    if(prosesExp>o.proses) groups.proses.push({p,finished,start,extra:`${o.proses}/${prosesExp}`});
-    if(finished && !o.son) groups.son.push({p,finished,start,extra:''});
+    if(!o.seri) groups.seri_basi.push({p,finished,start});
+    if(prosesExp>o.proses){ for(let k=o.proses+1;k<=prosesExp;k++) groups.proses.push({p,finished,start,prosesNo:k,dueMs:start+k*freq*60000}); }   // her vadesi gelen proses = AYRI satır
+    if(finished && !o.son) groups.son.push({p,finished,start});
   });
-  Object.values(groups).forEach(g=> g.sort((a,b)=> (a.finished?1:0)-(b.finished?1:0) || (b.start-a.start)) );
+  Object.values(groups).forEach(g=> g.sort((a,b)=> (a.finished?1:0)-(b.finished?1:0) || (b.start-a.start) || ((a.prosesNo||0)-(b.prosesNo||0)) ) );
   const STG=[['seri_basi','🏁 Seri Başı'],['proses','⚙️ Proses'],['son','🏆 Son Kontrol']];
   let active = (STG.find(([k])=>groups[k].length)||STG[0])[0];
   function renderSeg(){ seg.innerHTML='';
@@ -727,18 +727,20 @@ async function _renderDueControls(root){
   function renderList(){ listWrap.innerHTML='';
     const arr=groups[active];
     if(!arr.length){ listWrap.innerHTML='<div class="empty" style="padding:16px;color:var(--ok)">Bu aşamada bekleyen kontrol yok 👍</div>'; return; }
-    arr.slice(0,100).forEach(({p,finished,extra})=>{
+    arr.slice(0,150).forEach(({p,finished,prosesNo,dueMs})=>{
+      const openIt=()=>openControl(p,active, active==='proses'?dueMs:undefined);
       const row=el('div',{title:'Giriş için tıkla',style:'display:flex;align-items:center;gap:10px;padding:13px 12px;border-bottom:1px solid var(--border);flex-wrap:wrap;cursor:pointer;border-radius:8px;transition:background .12s',
-        onclick:()=>openControl(p,active),
+        onclick:openIt,
         onmouseenter:e=>e.currentTarget.style.background='rgba(125,125,125,.10)',
         onmouseleave:e=>e.currentTarget.style.background=''});
+      const headHtml=`${active==='proses'?`<span class="pill gray" style="margin-right:6px">⚙️ ${prosesNo}. proses · hedef ~${fmtTime(dueMs)}</span>`:''}${esc(p.machine_name||'')}${p.machine_code?` (${esc(p.machine_code)})`:''}${finished?'':' <span style="color:var(--ok);font-weight:700">● devam</span>'}`;
       row.append(el('div',{class:'grow',style:'min-width:240px;pointer-events:none'},
-        el('div',{style:'font-weight:600;font-size:14px',html:`${esc(p.machine_name||'')}${p.machine_code?` (${esc(p.machine_code)})`:''}${finished?'':' <span style="color:var(--ok);font-weight:700">● devam</span>'}`}),
+        el('div',{style:'font-weight:600;font-size:14px',html:headHtml}),
         el('div',{style:'font-size:12.5px;color:var(--muted)',html:`${esc(p.stock_code||'')} ${esc((p.stock_name||'').slice(0,28))} · ${fmtDate(p.prod_date)} ${fmtTime(p.start_time)}${p.end_time?'–'+fmtTime(p.end_time):''} · İş ${esc(p.work_order||'-')} · ${p.quantity??''} ${esc(p.unit||'')}`})));
-      row.append(el('button',{class:'btn',style:'flex:0;min-width:150px;padding:12px 24px;font-size:15px;font-weight:600',onclick:e=>{e.stopPropagation();openControl(p,active);}}, `➕ Gir${extra?' ('+extra+')':''}`));
+      row.append(el('button',{class:'btn',style:'flex:0;min-width:150px;padding:12px 24px;font-size:15px;font-weight:600',onclick:e=>{e.stopPropagation();openIt();}}, '➕ Gir'));
       listWrap.append(row);
     });
-    if(arr.length>100) listWrap.append(el('div',{style:'color:var(--muted);font-size:12px;text-align:center;padding:6px'},`… ${arr.length-100} üretim daha`));
+    if(arr.length>150) listWrap.append(el('div',{style:'color:var(--muted);font-size:12px;text-align:center;padding:6px'},`… ${arr.length-150} kayıt daha`));
   }
   renderSeg(); renderList();
 }
@@ -1590,7 +1592,7 @@ async function importPlan(){
 }
 
 // ====================== KONTROL GİRİŞİ (MODAL) ======================
-async function openControl(p, forceStage){
+async function openControl(p, forceStage, suggestTime){
   const {data:plan}=await sb.from('control_plan_items').select('*').eq('stock_code',p.stock_code).eq('active',true).order('op_no',{nullsFirst:true}).order('seq');
   const OLCU=olcuNoMap(plan||[]);   // Ölçü No (tüm plan kanonik sırası)
   let allItems=plan||[];
@@ -1703,7 +1705,7 @@ async function openControl(p, forceStage){
     if(PROFILE.is_admin){
       const _ds=t=>{ const d=t?new Date(t):new Date(),pd=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${pd(d.getMonth()+1)}-${pd(d.getDate())}T${pd(d.getHours())}:${pd(d.getMinutes())}`; };
       m.append(el('div',{class:'field',style:'margin:0 0 14px'},el('label',{class:'lab'},'Kontrol Saati (admin) — proses/kontrol zamanını elle gir · boş = kayıt anı'),
-        el('input',{class:'inp',type:'datetime-local',id:'m_checkedat',value:_ds(p.start_time)})));
+        el('input',{class:'inp',type:'datetime-local',id:'m_checkedat',value:_ds(suggestTime||p.start_time)})));
     }
 
     if(!stage){
