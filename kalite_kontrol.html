@@ -700,14 +700,9 @@ async function renderLeanSys(){
     el('h3',{},'🏭 LeanSys Üretim Verisi → Kalite Kontrol'),
     el('div',{class:'msg info',style:'margin-top:6px;border-left:4px solid #2e7d32',html:'<b>✅ Otomatik aktarım (önerilen) — doğrudan veritabanından, anında:</b><br>1) Masaüstündeki <b>LeanSys_Aktar</b> (pencere) uygulamasına çift tıkla.<br>2) <b>Stok Kodu</b> (boş bırak = TÜM stoklar) + <b>başlangıç/bitiş tarihi</b> seç — ya da <b>“Bugün”</b> / <b>“Tüm 2026”</b> düğmesi.<br>3) <b>AKTAR</b> → üretimler (başlama/bitiş <b>saatleri dahil</b>) <b>doğrudan buraya</b> yazılır.<br>UI yok, Excel yok, <b>30 gün sınırı yok</b>, kopya olmaz. Sonra <b>Üretimler</b>’i yenile (Ctrl+Shift+R).'})
   ));
-  // 2) MANUEL (eski yöntem) — korunuyor
+  // 2) Excel yedek -> Üretimler sekmesinde (çift #prodFile çakışmasını önlemek için sadece not)
   root.append(el('div',{class:'card'},
-    el('h4',{style:'margin:0 0 8px'},'📁 Yedek yöntem — Excel’den İçe Aktar'),
-    el('div',{class:'msg info',style:'margin-top:0',html:'<b>Ne olur ne olmaz, yedek:</b> LeanSys → «Excel’e Aktar» ile aldığın Excel (.xlsx) dosyalarını seç (çoklu olabilir) → İçe Aktar. Tekrar yüklesen kopya olmaz. Normalde <b>LeanSys_Aktar</b> penceresi (📥 LeanSys Güncelle) yeterli.'}),
-    el('div',{class:'row',style:'margin-top:10px'},
-      el('input',{type:'file',accept:'.xlsx,.xls',multiple:'true',class:'inp grow',id:'prodFile'}),
-      el('button',{class:'btn',style:'flex:0',onclick:importProds},'📄 İçe Aktar')
-    )
+    el('div',{class:'msg info',style:'margin:0',html:'📄 <b>Excel’den manuel içe aktarma</b> (yedek) → <b>Üretimler</b> sekmesinin üstünde ("📄 Excel yedek içe aktar"). Normalde <b>LeanSys_Aktar</b> penceresi (📥 LeanSys Güncelle) zaten yeterli.'})
   ));
 }
 async function renderBekleyen(){
@@ -806,7 +801,16 @@ async function renderUretimler(){
   if(error){root.innerHTML=`<div class="card"><div class="msg err">${esc(error.message)}</div></div>`;return;}
   PRODS=data||[];
   root.innerHTML='';
-  // İçe aktarma kartı Üretimler'den kaldırıldı → manuel için 🏭 LeanSys sekmesi, otomatik için "📥 LeanSys Güncelle" / LeanSys_Aktar penceresi
+  // Üstte KOMPAKT Excel yedek import (klasör butonu yok)
+  if(can('import')){
+    root.append(el('div',{class:'card',style:'padding:8px 14px'},
+      el('div',{class:'row',style:'align-items:center;gap:10px;margin:0'},
+        el('span',{style:'font-size:13px;color:var(--muted);white-space:nowrap'},'📄 Excel yedek içe aktar:'),
+        el('input',{type:'file',accept:'.xlsx,.xls',multiple:'true',class:'inp grow',id:'prodFile'}),
+        el('button',{class:'btn sm',style:'flex:0',onclick:importProds},'İçe Aktar')
+      )
+    ));
+  }
   // stats + filtreler (tarih + stok kodu)
   const stockSet=[...new Set(PRODS.map(p=>p.stock_code).filter(Boolean))];
   const filtered=PRODS.filter(matchesUF);
