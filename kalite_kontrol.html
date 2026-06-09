@@ -888,11 +888,19 @@ function parseProdFile(buf){
     const g=k=>idx[k]!=null?row[idx[k]]:null;
     const gw=k=>(idx[k]!=null&&rowsW[r])?rowsW[r][idx[k]]:null;   // o hücrenin Excel'de görünen metni
     const toISO=v=>v instanceof Date?v.toISOString():(v?new Date(v).toISOString():null);
-    const start=toISO(g('start_time')), end=toISO(g('end_time'));
     // prod_date: Excel'de GÖRÜNEN metinden al (saat dilimi bağımsız) → anti-detect / farklı saat dilimli tarayıcıda 1 gün KAYMAZ. Olmazsa Date'in UTC bileşeni.
     const dtRaw=g('prod_date');
     let pdate=parseExcelDateStr(gw('prod_date'));
     if(!pdate) pdate = dtRaw instanceof Date ? isoDateUTC(dtRaw) : parseExcelDateStr(dtRaw);
+    // başlama/bitiş = TARİH + SAAT (görünen metinden, tz/float bağımsız). Gece yarısını geçerse bitiş ERTESİ güne taşınır.
+    const sHM=parseExcelTimeStr(gw('start_time')) || timeFromExcel(g('start_time'));
+    const eHM=parseExcelTimeStr(gw('end_time'))   || timeFromExcel(g('end_time'));
+    let start = (pdate&&sHM) ? `${pdate}T${sHM}:00` : toISO(g('start_time'));
+    let end;
+    if(pdate&&eHM){ end=`${pdate}T${eHM}:00`;
+      if(typeof start==='string' && start.length===19 && end<start){ const d2=new Date(pdate+'T00:00:00'); d2.setDate(d2.getDate()+1); end=`${isoDateLocal(d2)}T${eHM}:00`; }
+    } else end=toISO(g('end_time'));
+    const start_fp=toISO(g('start_time'));   // fingerprint ESKİ değerle sabit → re-import mevcut kaydı GÜNCELLER (kopya OLMAZ)
     out.push({
       machine_code:String(mc).trim(), machine_name:str(g('machine_name')), customer:str(g('customer')),
       stock_code:String(sc).trim(), stock_name:str(g('stock_name')),
@@ -900,7 +908,7 @@ function parseProdFile(buf){
       start_time:start, end_time:end, duration_min:num(g('duration_min')), operator:str(g('operator')),
       op_no:num(g('op_no')), work_order:str(g('work_order')), customer_order_no:str(g('customer_order_no')),
       order_serial:str(g('order_serial')), order_seq:str(g('order_seq')),
-      fingerprint:`${String(mc).trim()}|${start||''}|${String(sc).trim()}|${num(g('op_no'))??''}`
+      fingerprint:`${String(mc).trim()}|${start_fp||''}|${String(sc).trim()}|${num(g('op_no'))??''}`
     });
   }
   return {rows:out,err:null};
@@ -938,6 +946,17 @@ function parseExcelDateStr(s){            // Excel'de GÖRÜNEN tarih metnini sa
     let day,mon; if(a>12){day=a;mon=b;} else if(b>12){day=b;mon=a;} else {day=a;mon=b;}   // belirsizse gg.aa.yyyy (TR)
     if(mon>=1&&mon<=12&&day>=1&&day<=31) return `${y}-${z(mon)}-${z(day)}`; }
   return null;
+}
+function parseExcelTimeStr(s){            // Excel'de GÖRÜNEN saat metni → "HH:MM" (tz/float bağımsız)
+  if(s==null||s==='') return null; s=String(s).trim();
+  const m=s.match(/(\d{1,2}):(\d{2})/);
+  if(m){ const h=+m[1], mi=+m[2]; if(h<24&&mi<60) return String(h).padStart(2,'0')+':'+String(mi).padStart(2,'0'); }
+  return null;
+}
+function timeFromExcel(v){                // Excel saat-Date'i → "HH:MM" (en yakın dakikaya yuvarla → float -1dk düzelir)
+  if(!(v instanceof Date)) return null;
+  const d=new Date(Math.round(v.getTime()/60000)*60000);
+  return String(d.getUTCHours()).padStart(2,'0')+':'+String(d.getUTCMinutes()).padStart(2,'0');
 }
 
 // ====================== KONTROL PLANI ======================
