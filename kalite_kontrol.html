@@ -761,6 +761,13 @@ async function renderUretimler(){
       el('div',{class:'row'},
         el('input',{type:'file',accept:'.xlsx,.xls',multiple:'true',class:'inp grow',id:'prodFile'}),
         el('button',{class:'btn sm',style:'flex:0',onclick:importProds},'İçe Aktar')
+      ),
+      el('div',{style:'border-top:1px solid var(--border);margin:12px 0 10px'}),
+      el('p',{class:'det',style:'color:var(--muted);margin:0 0 8px;font-size:13px',html:'⚡ <b>Klasör Senkron (API gibi):</b> Bir klasörü <b>bir kez</b> bağla; LeanSys’te <b>«Excel’e Aktar»</b> ile dosyaları o klasöre indir. Sonra <b>tek tuş</b> — klasördeki tüm üretimler otomatik içeri çekilir/güncellenir (kopya olmaz). LeanSys’e dokunmadan, sunucusuz.'}),
+      el('div',{class:'row'},
+        el('button',{class:'btn sm',style:'flex:0',onclick:()=>syncLeanSysFolder(false)},'🔄 Klasörden Senkronize Et'),
+        el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>syncLeanSysFolder(true)},'🔗 Klasör Seç / Değiştir'),
+        el('span',{id:'leansysFolderInfo',style:'color:var(--muted);font-size:12px;align-self:center'},localStorage.getItem('leansys_dir_name')?('📁 '+localStorage.getItem('leansys_dir_name')):'Henüz klasör bağlı değil')
       )
     );
     const title=el('h3',{class:collapsed?'hidden':'',style:'margin:0;margin-right:auto'},'LeanSys Üretim Verisi İçe Aktar');
@@ -931,6 +938,40 @@ async function importProds(){
   const fileNote = files.length>1 ? `${files.length} dosya · ` : '';
   toast(`${fileNote}${dedup.length} üretim işlendi (tekrarlar atlandı).`,'ok');
   if(files.length>1) console.log('İçe aktarma:', msgs.join('\n'));
+  renderUretimler();
+}
+// ===== LeanSys Klasör Senkron ("API gibi"): bir klasörü bir kez bağla, içindeki tüm Excelleri tek tuşla içeri çek =====
+function _kkIdb(){ return new Promise((res,rej)=>{ const r=indexedDB.open('kk_fs',1); r.onupgradeneeded=()=>{ try{r.result.createObjectStore('h');}catch(e){} }; r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+async function _idbGet(k){ try{ const db=await _kkIdb(); return await new Promise(res=>{ const t=db.transaction('h','readonly').objectStore('h').get(k); t.onsuccess=()=>res(t.result); t.onerror=()=>res(null); }); }catch(e){ return null; } }
+async function _idbPut(k,v){ try{ const db=await _kkIdb(); return await new Promise(res=>{ const t=db.transaction('h','readwrite').objectStore('h').put(v,k); t.onsuccess=()=>res(true); t.onerror=()=>res(false); }); }catch(e){ return false; } }
+async function syncLeanSysFolder(forcePick){
+  if(!window.showDirectoryPicker){ toast('Bu tarayıcı klasör erişimini desteklemiyor (Chrome/Edge gerekir). Anti-detect tarayıcı engelleyebilir; normal Chrome dene.','err'); return; }
+  let dir = forcePick ? null : await _idbGet('leansys_dir');
+  try{
+    if(!dir){ dir = await window.showDirectoryPicker({mode:'read',id:'leansys'}); await _idbPut('leansys_dir', dir); localStorage.setItem('leansys_dir_name', dir.name||'klasör'); }
+    let perm = await dir.queryPermission({mode:'read'});
+    if(perm!=='granted') perm = await dir.requestPermission({mode:'read'});
+    if(perm!=='granted'){ toast('Klasör izni verilmedi.','err'); return; }
+  }catch(e){ if(e&&e.name==='AbortError') return; toast('Klasör seçilemedi: '+(e&&e.message||e),'err'); return; }
+  // klasördeki (alt klasörler dahil) tüm Excelleri topla
+  const handles=[];
+  async function walk(h){ for await(const [name,ch] of h.entries()){ if(ch.kind==='file'){ if(/\.(xlsx|xls)$/i.test(name) && !/^~\$/.test(name)) handles.push(ch); } else if(ch.kind==='directory'){ try{ await walk(ch); }catch(e){} } } }
+  try{ await walk(dir); }catch(e){ toast('Klasör okunamadı: '+(e&&e.message||e),'err'); return; }
+  if(!handles.length){ toast('Klasörde Excel (.xls/.xlsx) bulunamadı.','err'); return; }
+  toast(`${handles.length} Excel okunuyor…`,'ok');
+  const all=[]; let okF=0; const msgs=[];
+  for(const h of handles){
+    try{ const f=await h.getFile(); const {rows,err}=parseProdFile(await f.arrayBuffer());
+      if(err){ msgs.push(`⚠ ${f.name}: ${err}`); continue; }
+      all.push(...rows); okF++; msgs.push(`✓ ${f.name}: ${rows.length}`);
+    }catch(e){ msgs.push(`✗ ${h.name}: ${e&&e.message||e}`); }
+  }
+  if(!all.length){ toast('İçe aktarılacak satır yok. '+msgs.join(' · '),'err'); return; }
+  const seen=new Set(); const dedup=all.filter(r=>{ if(seen.has(r.fingerprint))return false; seen.add(r.fingerprint); return true; });
+  for(let i=0;i<dedup.length;i+=500){ const {error}=await sb.from('productions').upsert(dedup.slice(i,i+500),{onConflict:'fingerprint'}); if(error){ toast('Senkron hatası: '+esc(error.message),'err'); return; } }
+  localStorage.setItem('leansys_dir_name', dir.name||'klasör');
+  console.log('LeanSys senkron:', msgs.join('\n'));
+  toast(`✅ Senkron tamam: ${okF} dosya · ${dedup.length} üretim güncellendi.`,'ok');
   renderUretimler();
 }
 const str=v=>{const s=(v==null?'':String(v)).trim();return s===''?null:s;};
