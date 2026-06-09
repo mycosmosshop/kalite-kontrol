@@ -613,7 +613,7 @@ async function openManualProd(){
   const root=$('#modalRoot');
   const stocks=[...new Set(PRODS.map(p=>p.stock_code).filter(Boolean))];
   const machineCodes=[...new Set(PRODS.map(p=>p.machine_code).filter(Boolean))];
-  const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
+  const bg=el('div',{class:'modal-bg'});   // dışına tıklayınca KAPANMASIN — sadece × ile kapanır
   const m=el('div',{class:'modal',style:'position:relative;max-width:840px'});
   m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
   m.append(el('h3',{},'➕ Manuel Üretim Ekle'));
