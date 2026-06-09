@@ -586,8 +586,7 @@ async function finishSelectedProds(){
     if(!p.end_time){ await sb.from('productions').update({end_time:end.toISOString(),duration_min:durMin}).eq('id',p.id); p.end_time=end.toISOString(); p.duration_min=durMin; }
     const items=opItemsFor(plan.filter(x=>x.stock_code===p.stock_code), p.op_no);
     if(!items.length){ skip++; continue; }                      // bu stok kodunun planı yok
-    const freqs=stageItems(items,'proses').map(it=>Number(it.sampling_frequency)).filter(v=>v>0&&v<=1440);
-    const freq=freqs.length?Math.min(...freqs):60;
+    const freq=prosesCycleFreq(stageItems(items,'proses'));
     const cur=have[p.id]||new Set();
     const recs=[];
     const offWhen=()=>new Date(Math.min(start.getTime()+Math.round((1+Math.random()*4)*60000), end.getTime()-30000));
@@ -702,8 +701,8 @@ async function _renderDueControls(root){
   const stocks=[...new Set(PRODS.map(p=>p.stock_code).filter(Boolean))];
   const freqByStock={};
   if(stocks.length){ const {data:pl}=await sb.from('control_plan_items').select('stock_code,sampling_frequency,process_control,active').in('stock_code',stocks);
-    (pl||[]).forEach(it=>{ if(it.active!==false && it.process_control!==false){ const f=Number(it.sampling_frequency);
-      if(f>0&&f<=1440){ const cur=freqByStock[it.stock_code]; if(cur==null||f<cur)freqByStock[it.stock_code]=f; } } }); }
+    const byStock={}; (pl||[]).forEach(it=>{ (byStock[it.stock_code]||(byStock[it.stock_code]=[])).push(it); });
+    Object.keys(byStock).forEach(sc=>{ freqByStock[sc]=prosesCycleFreq(byStock[sc]); }); }
   const now=Date.now();
   const groups={seri_basi:[], proses:[], son:[]};
   PRODS.forEach(p=>{
@@ -1631,7 +1630,7 @@ async function openControl(p, forceStage){
   function stItem(it){ const k=stage+'|'+it.id; if(!state[k])state[k]={samples:[],cur:{value:'',ok:false}}; return state[k]; }
   let operVal=p.operator||'', noteVal='';
 
-  const prosesFreq = Number((allItems.find(it=>it.sampling_frequency)||{}).sampling_frequency)||60;
+  const prosesFreq = prosesCycleFreq(allItems);   // en sık görülen proses sıklığı (queue ile aynı)
   // manuel akış: üretim zaman çizelgesine göre aşama durumu
   const _startMs = p.start_time?new Date(p.start_time).getTime():null;
   const _endMs = p.end_time?new Date(p.end_time).getTime():null;
@@ -1868,6 +1867,16 @@ function genSamples(it,n,override){
 // op + aşama filtreleri (toplu üretim için modül seviyesinde)
 function opItemsFor(items,op_no){ if(op_no==null)return items; const m=items.filter(it=>String(it.op_no)===String(op_no)); return m.length?m:items; }
 function stageItems(items,s){ return items.filter(it=> s==='giris'?(it.giris_kalite===true): s==='son'?(it.final_control!==false):(it.process_control!==false)); }
+// proses örnekleme periyodu = proses maddeleri arasında EN SIK görülen sıklık (tek bir kısa/uzun sapma değeri seçmesin; eşitlikte büyük olan)
+function prosesCycleFreq(items){
+  const freqs=(items||[]).filter(it=> it.active!==false && it.process_control!==false)
+    .map(it=>Number(it.sampling_frequency)).filter(v=>v>0 && v<=1440);
+  if(!freqs.length) return 60;
+  const cnt={}; freqs.forEach(f=>cnt[f]=(cnt[f]||0)+1);
+  let best=60, bestN=-1;
+  Object.keys(cnt).forEach(k=>{ const f=Number(k), n=cnt[k]; if(n>bestN || (n===bestN && f>best)){ bestN=n; best=f; } });
+  return best;
+}
 function sampleCount(it,s){ const v=(s==='son'&&it.son_kontrol_ornekleme)?it.son_kontrol_ornekleme:it.sample_size; const n=Number(v); return n>0?n:1; }
 function buildAutoRec(p,stage,when,items,priorMap){
   const its=stageItems(items,stage); if(!its.length)return null;
@@ -1960,8 +1969,7 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
     const cur=have[p.id]||new Set();
     const items=opItemsFor(plan.filter(x=>x.stock_code===p.stock_code),p.op_no);
     // proses sıklığı: proses maddelerinin EN KISA pozitif örnekleme sıklığı (aylık vb. uzun değerlere takılmasın); en çok 1 günle sınırla
-    const freqs=stageItems(items,'proses').map(it=>Number(it.sampling_frequency)).filter(v=>v>0&&v<=1440);
-    const freq=freqs.length?Math.min(...freqs):60;
+    const freq=prosesCycleFreq(stageItems(items,'proses'));
     // kısa üretim (seri başından sonra 1 freq geçmemiş) → proses olmamalı; varsa otomatik temizle (kuralı uygula)
     if(!regen && durMin<freq && recMap[p.id] && (recMap[p.id]['proses']||[]).length){
       await sb.from('control_records').delete().eq('production_id',p.id).eq('stage','proses');
