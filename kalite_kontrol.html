@@ -728,7 +728,7 @@ async function _renderDueControls(root){
       seg.append(el('button',{class:'btn '+(active===k?'':'sec'),style:'flex:0;min-width:128px;padding:11px 20px;font-size:14px',onclick:()=>{active=k;renderSeg();renderList();}},`${lab} (${n})`)); }); }
   function renderList(){ listWrap.innerHTML='';
     const arr=groups[active];
-    if(!arr.length){ listWrap.innerHTML='<div class="empty" style="padding:16px;color:var(--ok)">Bu aşamada bekleyen kontrol yok 👍</div>'; return; }
+    if(!arr.length){ listWrap.innerHTML='<div class="empty" style="padding:16px;color:var(--ok)">Bu aşamada bekleyen kontrol yok</div>'; return; }
     arr.slice(0,150).forEach(({p,finished,prosesNo,dueMs})=>{
       const openIt=()=>openControl(p,active, active==='proses'?dueMs:undefined);
       const row=el('div',{title:'Giriş için tıkla',style:'display:flex;align-items:center;gap:10px;padding:13px 12px;border-bottom:1px solid var(--border);flex-wrap:wrap;cursor:pointer;border-radius:8px;transition:background .12s',
