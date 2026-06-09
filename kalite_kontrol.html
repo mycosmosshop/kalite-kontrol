@@ -774,7 +774,24 @@ async function _renderDueControls(root){
 async function renderUretimler(){
   const root=$('#tab-uretimler');
   root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
-  const {data,error}=await sb.from('productions').select('*').order('start_time',{ascending:false}).limit(500);
+  // Filtre yoksa: en son 500 (hız). Filtre (tarih/stok) varsa: veritabanından eşleşen TÜM kayıtları sayfa sayfa çek.
+  const _f=URETIM_FILT, _active=!!(_f.start||_f.end||_f.stock);
+  let data=[], error=null;
+  if(!_active){
+    const r=await sb.from('productions').select('*').order('start_time',{ascending:false}).limit(500);
+    data=r.data||[]; error=r.error;
+  } else {
+    for(let from=0; from<40000; from+=1000){
+      let q=sb.from('productions').select('*').order('start_time',{ascending:false}).range(from,from+999);
+      if(_f.stock) q=q.eq('stock_code',_f.stock);
+      if(_f.start) q=q.gte('prod_date',_f.start);
+      if(_f.end)   q=q.lte('prod_date',_f.end);
+      const r=await q;
+      if(r.error){ error=r.error; break; }
+      data=data.concat(r.data||[]);
+      if(!r.data || r.data.length<1000) break;   // son sayfa
+    }
+  }
   if(error){root.innerHTML=`<div class="card"><div class="msg err">${esc(error.message)}</div></div>`;return;}
   PRODS=data||[];
   root.innerHTML='';
