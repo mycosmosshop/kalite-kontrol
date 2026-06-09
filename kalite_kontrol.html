@@ -352,7 +352,7 @@ const el = (tag, props={}, ...kids) => {
   return e;
 };
 const esc = s => (s??'').toString().replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const fmtDate = d => d? new Date(d).toLocaleDateString('tr-TR'):'';
+const fmtDate = d => { if(!d) return ''; const m=String(d).match(/^(\d{4})-(\d{2})-(\d{2})/); return m? `${m[3]}.${m[2]}.${m[1]}` : new Date(d).toLocaleDateString('tr-TR'); };  // tarih metnini saat-dilimi BAĞIMSIZ göster
 const fmtDT = d => d? new Date(d).toLocaleString('tr-TR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'';
 const fmtTime = d => d? new Date(d).toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'}):'';
 const commaFmt = v => (v==null||v==='')?'' : String(v).replace('.',',');   // ondalık GÖSTER: nokta→virgül
@@ -873,6 +873,7 @@ function parseProdFile(buf){
   const wb=XLSX.read(buf,{cellDates:true});
   const ws=wb.Sheets[wb.SheetNames[0]];
   const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:null});
+  const rowsW=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:null});   // Excel'de GÖRÜNEN metin (saat dilimi bağımsız tarih için)
   let hi=rows.findIndex(r=>r&&r.some(c=>normHdr(c)==='makine kodu'));
   if(hi<0) return {rows:[],err:'başlık (Makine Kodu) bulunamadı'};
   const hdr=rows[hi].map(normHdr);
@@ -885,10 +886,13 @@ function parseProdFile(buf){
     if(!mc||/^makine grup/i.test(String(mc)))continue;       // grup başlığı / boş
     if(!sc)continue;
     const g=k=>idx[k]!=null?row[idx[k]]:null;
+    const gw=k=>(idx[k]!=null&&rowsW[r])?rowsW[r][idx[k]]:null;   // o hücrenin Excel'de görünen metni
     const toISO=v=>v instanceof Date?v.toISOString():(v?new Date(v).toISOString():null);
     const start=toISO(g('start_time')), end=toISO(g('end_time'));
-    // Excel tarihi yerel gece yarısı olarak okunur → toISOString() UTC'ye kaydırır (1 gün geri). Yerel bileşenlerle al:
-    const dt=g('prod_date'); const pdate=dt instanceof Date?isoDateLocal(dt):(dt?String(dt):null);
+    // prod_date: Excel'de GÖRÜNEN metinden al (saat dilimi bağımsız) → anti-detect / farklı saat dilimli tarayıcıda 1 gün KAYMAZ. Olmazsa Date'in UTC bileşeni.
+    const dtRaw=g('prod_date');
+    let pdate=parseExcelDateStr(gw('prod_date'));
+    if(!pdate) pdate = dtRaw instanceof Date ? isoDateUTC(dtRaw) : parseExcelDateStr(dtRaw);
     out.push({
       machine_code:String(mc).trim(), machine_name:str(g('machine_name')), customer:str(g('customer')),
       stock_code:String(sc).trim(), stock_name:str(g('stock_name')),
@@ -924,6 +928,17 @@ async function importProds(){
 const str=v=>{const s=(v==null?'':String(v)).trim();return s===''?null:s;};
 const num=v=>{if(v==null||v==='')return null;const n=Number(v);return isNaN(n)?null:n;};
 const isoDateLocal=d=>{const z=n=>String(n).padStart(2,'0');return d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate());};  // yerel tarih (UTC kaymasız) YYYY-MM-DD
+const isoDateUTC=d=>{const z=n=>String(n).padStart(2,'0');return d.getUTCFullYear()+'-'+z(d.getUTCMonth()+1)+'-'+z(d.getUTCDate());};  // SheetJS UTC serisinden saat-dilimi BAĞIMSIZ YYYY-MM-DD
+function parseExcelDateStr(s){            // Excel'de GÖRÜNEN tarih metnini saat-dilimi bağımsız YYYY-MM-DD'ye çevir
+  if(s==null||s==='') return null; s=String(s).trim();
+  const z=n=>String(n).padStart(2,'0');
+  let m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); if(m) return `${m[1]}-${z(m[2])}-${z(m[3])}`;
+  m=s.match(/^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})/);
+  if(m){ let a=+m[1],b=+m[2],y=m[3]; if(y.length===2)y='20'+y;
+    let day,mon; if(a>12){day=a;mon=b;} else if(b>12){day=b;mon=a;} else {day=a;mon=b;}   // belirsizse gg.aa.yyyy (TR)
+    if(mon>=1&&mon<=12&&day>=1&&day<=31) return `${y}-${z(mon)}-${z(day)}`; }
+  return null;
+}
 
 // ====================== KONTROL PLANI ======================
 let PLAN=[]; let PLAN_SEL=''; let PLAN_HDR={};
