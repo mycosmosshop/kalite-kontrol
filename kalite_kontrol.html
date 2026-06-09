@@ -281,6 +281,7 @@
   </header>
   <nav class="tabs">
     <button data-tab="uretimler" class="active">📋 Üretimler</button>
+    <button data-tab="bekleyen">⏰ Girilecek Kontroller</button>
     <button data-tab="kayitlar">✅ Kontrol Kayıtları</button>
     <button data-tab="plan">📐 Kontrol Planı</button>
     <button data-tab="istatistik">📊 İstatistik</button>
@@ -297,6 +298,7 @@
     </div>
 
     <div id="tab-uretimler"></div>
+    <div id="tab-bekleyen" class="hidden"></div>
     <div id="tab-kayitlar" class="hidden"></div>
     <div id="tab-plan" class="hidden"></div>
     <div id="tab-istatistik" class="hidden"></div>
@@ -510,8 +512,9 @@ async function afterLogin(){
 // ====================== TABS ======================
 function switchTab(name){
   document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
-  ['uretimler','kayitlar','plan','istatistik','dashboard','ncr','eightd','cert','admin'].forEach(t=>$('#tab-'+t).classList.toggle('hidden',t!==name));
+  ['uretimler','bekleyen','kayitlar','plan','istatistik','dashboard','ncr','eightd','cert','admin'].forEach(t=>$('#tab-'+t).classList.toggle('hidden',t!==name));
   if(name==='uretimler')renderUretimler();
+  if(name==='bekleyen')renderBekleyen();
   if(name==='kayitlar')renderKayitlar();
   if(name==='plan')renderPlan();
   if(name==='istatistik')renderIstatistik();
@@ -669,6 +672,19 @@ async function openManualProd(existing){
     toast(existing?'Üretim güncellendi.':'Üretim eklendi.','ok'); root.innerHTML=''; renderUretimler();
   }
 }
+// ⏰ Girilecek Kontroller sekmesi
+async function renderBekleyen(){
+  const root=$('#tab-bekleyen');
+  root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
+  const {data,error}=await sb.from('productions').select('*').order('start_time',{ascending:false}).limit(500);
+  if(error){ root.innerHTML=`<div class="card"><div class="msg err">${esc(error.message)}</div></div>`; return; }
+  PRODS=data||[];
+  root.innerHTML='';
+  root.append(el('div',{class:'card',style:'display:flex;align-items:center;gap:10px'},
+    el('div',{class:'grow',style:'font-size:13px;color:var(--muted)'},'Aktif üretimlerde vadesi gelen Seri Başı / Proses / Son kontroller burada listelenir. ➕ ile gir; girildikçe listeden kalkar ve kontrol kayıtlarına geçer.'),
+    el('button',{class:'btn sm sec',style:'flex:0',onclick:renderBekleyen},'🔄 Yenile')));
+  await _renderDueControls(root);
+}
 // ⏰ Girilmesi Gereken Kontroller — aktif üretimlerde vadesi gelen seri başı / proses / son kontroller
 async function _renderDueControls(root){
   const card=el('div',{class:'card'});
@@ -745,8 +761,6 @@ async function renderUretimler(){
     card.append(el('div',{style:'display:flex;justify-content:flex-end;align-items:center;gap:10px'+(collapsed?'':';margin-bottom:8px')}, title, tgl), body);
     root.append(card);
   }
-  // ⏰ Girilmesi Gereken Kontroller (aktif üretimlerde vadesi gelen kontroller buraya düşer)
-  if(can('auto')) await _renderDueControls(root);
   // stats + filtreler (tarih + stok kodu)
   const stockSet=[...new Set(PRODS.map(p=>p.stock_code).filter(Boolean))];
   const filtered=PRODS.filter(matchesUF);
@@ -1792,7 +1806,8 @@ async function saveControl(p,items,state,stage,sampleFor){
   $('#modalRoot').innerHTML='';
   if(!$('#tab-kayitlar').classList.contains('hidden'))renderKayitlar();
   loadControlCounts();
-  if($('#tab-uretimler') && !$('#tab-uretimler').classList.contains('hidden'))renderUretimler();   // bekleyen kontroller listesi güncellensin (girilen kalksın)
+  if($('#tab-uretimler') && !$('#tab-uretimler').classList.contains('hidden'))renderUretimler();
+  if($('#tab-bekleyen') && !$('#tab-bekleyen').classList.contains('hidden'))renderBekleyen();   // girilen kontrol bekleyenlerden kalksın
 }
 
 // ====================== OTOMATİK (RASTGELE UYGUN) ÖLÇÜ ======================
