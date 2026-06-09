@@ -355,6 +355,8 @@ const esc = s => (s??'').toString().replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;
 const fmtDate = d => d? new Date(d).toLocaleDateString('tr-TR'):'';
 const fmtDT = d => d? new Date(d).toLocaleString('tr-TR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'';
 const fmtTime = d => d? new Date(d).toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'}):'';
+const commaFmt = v => (v==null||v==='')?'' : String(v).replace('.',',');   // ondalık GÖSTER: nokta→virgül
+const parseNum = v => Number(String(v==null?'':v).replace(',','.'));        // sayıya ÇEVİR: virgül→nokta (kıyas/saklama)
 function toast(msg, type='ok'){
   const t = el('div',{class:'msg '+type, html:msg});
   Object.assign(t.style,{position:'fixed',bottom:'20px',left:'50%',transform:'translateX(-50%)',zIndex:999,boxShadow:'0 6px 20px rgba(0,0,0,.4)',maxWidth:'90%'});
@@ -1729,7 +1731,7 @@ async function openControl(p, forceStage, suggestTime){
         if(qual) tgl.onclick=()=>{st.cur.ok=!st.cur.ok;paintTgl();}; else tgl.disabled=true;  // ölçümde toggle görsel
         const meas=el('input',{class:'cell-inp',style:'width:96px',value:st.cur.value,oninput:e=>{
           st.cur.value=e.target.value;
-          const v=Number(e.target.value),lo=Number(it.lower_limit),hi=Number(it.upper_limit);
+          const v=parseNum(e.target.value),lo=parseNum(it.lower_limit),hi=parseNum(it.upper_limit);
           if(e.target.value!==''&&!isNaN(v)){let ok=true; if(it.lower_limit&&!isNaN(lo)&&v<lo)ok=false; if(it.upper_limit&&!isNaN(hi)&&v>hi)ok=false; st.cur.ok=ok;} else st.cur.ok=false;
           paintTgl();
         },onkeydown:e=>{if(e.key==='Enter'){e.preventDefault();addSample();}}});
@@ -1742,7 +1744,7 @@ async function openControl(p, forceStage, suggestTime){
           prog.textContent=`${st.samples.length}/${n}`;
           prog.className='pill '+(st.samples.some(s=>s.ok===false)?'ret':(full?'ok':'gray'));
           chips.innerHTML='';
-          st.samples.forEach((s,i)=>chips.append(el('span',{class:'pill '+(s.ok?'ok':'ret'),style:'font-size:10px'},`${i+1}${qual?'':':'+(s.value??'')}${s.ok?'✓':'✗'}`)));
+          st.samples.forEach((s,i)=>chips.append(el('span',{class:'pill '+(s.ok?'ok':'ret'),style:'font-size:10px'},`${i+1}${qual?'':':'+commaFmt(s.value??'')}${s.ok?'✓':'✗'}`)));
           ekleBtn.disabled=full; ekleBtn.textContent=full?'Tamam ✓':'+ Ekle';
         }
         function addSample(){
@@ -1759,9 +1761,9 @@ async function openControl(p, forceStage, suggestTime){
           el('td',{style:'min-width:130px;font-weight:600'},it.measure_name),
           el('td',{style:'max-width:210px;color:var(--muted);font-size:12px'},it.nitel_hedef||'-'),
           el('td',{},it.method||'-'),
-          el('td',{},((it.target||'')+(it.unit?' '+it.unit:''))||'-'),
-          el('td',{},it.lower_limit||'-'),
-          el('td',{},it.upper_limit||'-'),
+          el('td',{},((commaFmt(it.target)||'')+(it.unit?' '+it.unit:''))||'-'),
+          el('td',{},commaFmt(it.lower_limit)||'-'),
+          el('td',{},commaFmt(it.upper_limit)||'-'),
           el('td',{style:'text-align:center'},String(n)),
           el('td',{},tgl),
           el('td',{},qual?el('span',{style:'color:var(--muted)'},'—'):meas),
@@ -1795,7 +1797,7 @@ async function saveControl(p,items,state,stage,sampleFor){
   const vals=items.map(it=>{
     const n=sampleFor(it,stage);
     const st=state[stage+'|'+it.id]||{samples:[]};
-    const samples=(st.samples||[]).slice(0,n).map(s=>({value:(s.value==null?null:String(s.value).trim()||null), ok:s.ok===true, note:s.note||null, by:oper}));
+    const samples=(st.samples||[]).slice(0,n).map(s=>({value:(s.value==null?null:String(s.value).trim().replace(',','.')||null), ok:s.ok===true, note:s.note||null, by:oper}));
     return {plan_item_id:it.id,measure_name:it.measure_name,target:it.target,unit:it.unit,nitel_hedef:it.nitel_hedef,
       lower_limit:it.lower_limit,upper_limit:it.upper_limit,method:it.method,sampling_frequency:it.sampling_frequency,
       is_qualitative:it.is_qualitative,sample_size:n,samples};
