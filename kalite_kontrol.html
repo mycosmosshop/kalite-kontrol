@@ -709,8 +709,7 @@ async function _renderDueControls(root){
   PRODS.forEach(p=>{
     if(!p.start_time) return;
     const start=new Date(p.start_time).getTime(), end=p.end_time?new Date(p.end_time).getTime():null, finished=!!end;
-    if(!finished && (now-start)>3*24*60*60000) return;     // 3 günden eski "açık" üretimi unutulmuş say
-    if(finished && (now-end)>14*24*60*60000) return;        // çok eski bitmişi listeleme
+    if(finished && (now-end)>14*24*60*60000) return;        // çok eski bitmişi listeleme — DEVAM EDENLER üretim sürdükçe hep listelenir (proses gelmeye devam eder)
     const elapsed=Math.max(0,Math.round(((end||now)-start)/60000));
     const o=byProd[p.id]||{seri:false,proses:0,son:false};
     const freq=freqByStock[p.stock_code]||60;
@@ -724,16 +723,19 @@ async function _renderDueControls(root){
   let active = (STG.find(([k])=>groups[k].length)||STG[0])[0];
   function renderSeg(){ seg.innerHTML='';
     STG.forEach(([k,lab])=>{ const n=groups[k].length;
-      seg.append(el('button',{class:'btn '+(active===k?'':'sec'),style:'flex:0',onclick:()=>{active=k;renderSeg();renderList();}},`${lab} (${n})`)); }); }
+      seg.append(el('button',{class:'btn '+(active===k?'':'sec'),style:'flex:0;min-width:128px;padding:11px 20px;font-size:14px',onclick:()=>{active=k;renderSeg();renderList();}},`${lab} (${n})`)); }); }
   function renderList(){ listWrap.innerHTML='';
     const arr=groups[active];
     if(!arr.length){ listWrap.innerHTML='<div class="empty" style="padding:16px;color:var(--ok)">Bu aşamada bekleyen kontrol yok 👍</div>'; return; }
     arr.slice(0,100).forEach(({p,finished,extra})=>{
-      const row=el('div',{style:'display:flex;align-items:center;gap:10px;padding:9px 4px;border-bottom:1px solid var(--border);flex-wrap:wrap'});
-      row.append(el('div',{class:'grow',style:'min-width:240px'},
-        el('div',{style:'font-weight:600;font-size:13.5px',html:`${esc(p.machine_name||'')}${p.machine_code?` (${esc(p.machine_code)})`:''}${finished?'':' <span style="color:var(--ok);font-weight:700">● devam</span>'}`}),
-        el('div',{style:'font-size:12px;color:var(--muted)',html:`${esc(p.stock_code||'')} ${esc((p.stock_name||'').slice(0,28))} · ${fmtDate(p.prod_date)} ${fmtTime(p.start_time)}${p.end_time?'–'+fmtTime(p.end_time):''} · İş ${esc(p.work_order||'-')} · ${p.quantity??''} ${esc(p.unit||'')}`})));
-      row.append(el('button',{class:'btn sm',style:'flex:0',onclick:()=>openControl(p,active)}, `➕ Gir${extra?' ('+extra+')':''}`));
+      const row=el('div',{title:'Giriş için tıkla',style:'display:flex;align-items:center;gap:10px;padding:13px 12px;border-bottom:1px solid var(--border);flex-wrap:wrap;cursor:pointer;border-radius:8px;transition:background .12s',
+        onclick:()=>openControl(p,active),
+        onmouseenter:e=>e.currentTarget.style.background='rgba(125,125,125,.10)',
+        onmouseleave:e=>e.currentTarget.style.background=''});
+      row.append(el('div',{class:'grow',style:'min-width:240px;pointer-events:none'},
+        el('div',{style:'font-weight:600;font-size:14px',html:`${esc(p.machine_name||'')}${p.machine_code?` (${esc(p.machine_code)})`:''}${finished?'':' <span style="color:var(--ok);font-weight:700">● devam</span>'}`}),
+        el('div',{style:'font-size:12.5px;color:var(--muted)',html:`${esc(p.stock_code||'')} ${esc((p.stock_name||'').slice(0,28))} · ${fmtDate(p.prod_date)} ${fmtTime(p.start_time)}${p.end_time?'–'+fmtTime(p.end_time):''} · İş ${esc(p.work_order||'-')} · ${p.quantity??''} ${esc(p.unit||'')}`})));
+      row.append(el('button',{class:'btn',style:'flex:0;min-width:150px;padding:12px 24px;font-size:15px;font-weight:600',onclick:e=>{e.stopPropagation();openControl(p,active);}}, `➕ Gir${extra?' ('+extra+')':''}`));
       listWrap.append(row);
     });
     if(arr.length>100) listWrap.append(el('div',{style:'color:var(--muted);font-size:12px;text-align:center;padding:6px'},`… ${arr.length-100} üretim daha`));
@@ -800,7 +802,7 @@ function buildProdTable(rows){
   const tb=el('table');
   tb.append(el('thead',{},el('tr',{},
     el('th',{},el('input',{type:'checkbox',title:'Görünenleri seç',onchange:e=>{document.querySelectorAll('#prodBody .prodChk').forEach(c=>{const tr=c.closest('tr'); if(tr.style.display!=='none')c.checked=e.target.checked;});}})),
-    ...['Tarih','Makine','Cari','Ürün','İş Emri','Miktar','Başlama','Bitiş','Operatör','Op','Kontroller',''].map(h=>el('th',{},h))
+    ...['Tarih','Makine','Cari','Ürün','İş Emri','Miktar','Başlama','Bitiş','Operatör','Op','Kontroller'].map(h=>el('th',{},h))
   )));
   const body=el('tbody',{id:'prodBody'});
   if(!rows.length) body.append(el('tr',{},el('td',{colspan:13},el('div',{class:'empty'},'Henüz üretim yok. Yukarıdan Excel içe aktar.'))));
@@ -820,10 +822,7 @@ function prodRow(p){
     el('td',{},fmtTime(p.end_time)),
     el('td',{},p.operator||''),
     el('td',{},String(p.op_no??'')),
-    el('td',{id:'cc-'+p.id,style:'white-space:nowrap'},'…'),
-    el('td',{}, can('enter')
-      ? el('button',{class:'btn sm',onclick:()=>openControl(p)},'Kontrol Gir')
-      : el('span',{style:'color:var(--muted);font-size:12px'},'—'))
+    el('td',{id:'cc-'+p.id,style:'white-space:nowrap'},'…')
   );
 }
 function filterProdRows(){
