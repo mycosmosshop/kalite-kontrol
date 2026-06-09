@@ -669,6 +669,58 @@ async function openManualProd(existing){
     toast(existing?'Üretim güncellendi.':'Üretim eklendi.','ok'); root.innerHTML=''; renderUretimler();
   }
 }
+// ⏰ Girilmesi Gereken Kontroller — aktif üretimlerde vadesi gelen seri başı / proses / son kontroller
+async function _renderDueControls(root){
+  const card=el('div',{class:'card'});
+  const head=el('h3',{style:'margin:0;margin-right:auto'},'⏰ Girilmesi Gereken Kontroller');
+  card.append(el('div',{class:'toolbar',style:'margin-bottom:6px'}, head,
+    el('span',{style:'font-size:12px;color:var(--muted)'},'aktif üretimlerde vadesi gelen kontroller')));
+  const listWrap=el('div',{}); card.append(listWrap);
+  root.append(card);
+  const prodIds=PRODS.map(p=>p.id).filter(x=>x!=null);
+  if(!prodIds.length){ listWrap.innerHTML='<div class="empty" style="padding:10px">Üretim yok.</div>'; return; }
+  // yapılmış kontroller (aşama bazında)
+  const byProd={};
+  { const {data:rr}=await sb.from('control_records').select('production_id,stage').in('production_id',prodIds);
+    (rr||[]).forEach(r=>{ const o=byProd[r.production_id]||(byProd[r.production_id]={seri:false,proses:0,son:false});
+      if(r.stage==='seri_basi')o.seri=true; else if(r.stage==='proses')o.proses++; else if(r.stage==='son')o.son=true; }); }
+  // plan proses örnekleme sıklığı (stok bazında, en sık olan)
+  const stocks=[...new Set(PRODS.map(p=>p.stock_code).filter(Boolean))];
+  const freqByStock={};
+  if(stocks.length){ const {data:pl}=await sb.from('control_plan_items').select('stock_code,sampling_frequency,process_control,active').in('stock_code',stocks);
+    (pl||[]).forEach(it=>{ if(it.active!==false && it.process_control!==false){ const f=Number(it.sampling_frequency);
+      if(f>0&&f<=1440){ const cur=freqByStock[it.stock_code]; if(cur==null||f<cur)freqByStock[it.stock_code]=f; } } }); }
+  const now=Date.now();
+  const dueRows=[];
+  PRODS.forEach(p=>{
+    if(!p.start_time) return;
+    const start=new Date(p.start_time).getTime(), end=p.end_time?new Date(p.end_time).getTime():null, finished=!!end;
+    if(!finished && (now-start)>3*24*60*60000) return;     // 3 günden eski "açık" üretimi unutulmuş say, listeleme
+    if(finished && (now-end)>14*24*60*60000) return;        // çok eski bitmişi listeleme
+    const elapsed=Math.max(0,Math.round(((end||now)-start)/60000));
+    const o=byProd[p.id]||{seri:false,proses:0,son:false};
+    const freq=freqByStock[p.stock_code]||60;
+    const prosesExp=elapsed>=freq?Math.min(Math.floor(elapsed/freq),200):0;
+    const due=[];
+    if(!o.seri) due.push({stage:'seri_basi',label:'Seri Başı'});
+    if(prosesExp>o.proses) due.push({stage:'proses',label:`Proses ${o.proses}/${prosesExp}`});
+    if(finished && !o.son) due.push({stage:'son',label:'Son Kontrol'});
+    if(due.length) dueRows.push({p,due,finished,start});
+  });
+  dueRows.sort((a,b)=> (a.finished?1:0)-(b.finished?1:0) || (b.start-a.start));
+  head.textContent=`⏰ Girilmesi Gereken Kontroller (${dueRows.length})`;
+  if(!dueRows.length){ listWrap.innerHTML='<div class="empty" style="padding:12px;color:var(--ok)">Şu an girilmesi gereken kontrol yok 👍</div>'; return; }
+  listWrap.innerHTML='';
+  dueRows.slice(0,60).forEach(({p,due,finished})=>{
+    const row=el('div',{style:'display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid var(--border);flex-wrap:wrap'});
+    row.append(el('div',{class:'grow',style:'min-width:240px'},
+      el('div',{style:'font-weight:600;font-size:13.5px',html:`${esc(p.machine_name||'')}${p.machine_code?` (${esc(p.machine_code)})`:''}${finished?'':' <span style="color:var(--ok);font-weight:700">● devam</span>'}`}),
+      el('div',{style:'font-size:12px;color:var(--muted)',html:`${esc(p.stock_code||'')} ${esc((p.stock_name||'').slice(0,28))} · ${fmtDate(p.prod_date)} ${fmtTime(p.start_time)}${p.end_time?'–'+fmtTime(p.end_time):''} · İş ${esc(p.work_order||'-')} · ${p.quantity??''} ${esc(p.unit||'')}`})));
+    due.forEach(d=> row.append(el('button',{class:'btn sm',style:'flex:0',onclick:()=>openControl(p,d.stage)}, '➕ '+d.label)) );
+    listWrap.append(row);
+  });
+  if(dueRows.length>60) listWrap.append(el('div',{style:'color:var(--muted);font-size:12px;text-align:center;padding:6px'},`… ${dueRows.length-60} üretim daha`));
+}
 async function renderUretimler(){
   const root=$('#tab-uretimler');
   root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
@@ -693,6 +745,8 @@ async function renderUretimler(){
     card.append(el('div',{style:'display:flex;justify-content:flex-end;align-items:center;gap:10px'+(collapsed?'':';margin-bottom:8px')}, title, tgl), body);
     root.append(card);
   }
+  // ⏰ Girilmesi Gereken Kontroller (aktif üretimlerde vadesi gelen kontroller buraya düşer)
+  if(can('auto')) await _renderDueControls(root);
   // stats + filtreler (tarih + stok kodu)
   const stockSet=[...new Set(PRODS.map(p=>p.stock_code).filter(Boolean))];
   const filtered=PRODS.filter(matchesUF);
@@ -1520,7 +1574,7 @@ async function importPlan(){
 }
 
 // ====================== KONTROL GİRİŞİ (MODAL) ======================
-async function openControl(p){
+async function openControl(p, forceStage){
   const {data:plan}=await sb.from('control_plan_items').select('*').eq('stock_code',p.stock_code).eq('active',true).order('op_no',{nullsFirst:true}).order('seq');
   const OLCU=olcuNoMap(plan||[]);   // Ölçü No (tüm plan kanonik sırası)
   let allItems=plan||[];
@@ -1570,11 +1624,8 @@ async function openControl(p){
   const _seriDone = existing.some(r=>r.stage==='seri_basi');
   const _prosesDoneN = existing.filter(r=>r.stage==='proses').length;
   const _sonDoneN = existing.filter(r=>r.stage==='son').length;
-  let stage;
-  if(!_seriDone) stage='seri_basi';                  // önce Seri Başı
-  else if(_prosesDue>_prosesDoneN) stage='proses';   // proses zamanı geldi, eksik var
-  else if(_finished && _sonDoneN===0) stage='son';   // üretim bitti → son kontrol
-  else stage='seri_basi';
+  const _dueStage = !_seriDone ? 'seri_basi' : (_prosesDue>_prosesDoneN ? 'proses' : (_finished&&_sonDoneN===0 ? 'son' : null));
+  let stage = forceStage || _dueStage;   // null → şu an girilmesi gereken kontrol yok (seri/proses re-entry açma)
 
   function lastProsesInfo(){
     const ps=existing.filter(r=>r.stage==='proses'||r.stage==='seri_basi').sort((a,b)=>new Date(b.checked_at)-new Date(a.checked_at));
@@ -1586,7 +1637,7 @@ async function openControl(p){
 
   function render(){
     root.innerHTML='';
-    const items=itemsForStage(stage);
+    const items = stage ? itemsForStage(stage) : [];
     const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
     const m=el('div',{class:'modal',style:'position:relative;max-width:1500px'});
     m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
@@ -1610,10 +1661,10 @@ async function openControl(p){
       const cnt=itemsForStage(k).length;
       const done=existing.filter(r=>r.stage===k).length;
       let disabled=false, tip='';
-      if(k==='proses' && _startMs){
+      if(k==='proses' && _startMs && forceStage!=='proses'){
         if(!_seriDone){ disabled=true; tip='Önce Seri Başı kontrolünü yap.'; }
         else if(_elapsedMin<prosesFreq){ disabled=true; tip=`Proses için ${prosesFreq} dk geçmeli — şu an ${_elapsedMin} dk (≈ ${Math.max(0,prosesFreq-_elapsedMin)} dk sonra).`; }
-      } else if(k==='son' && _startMs && !_finished){
+      } else if(k==='son' && _startMs && !_finished && forceStage!=='son'){
         disabled=true; tip='Üretim bitince (bitiş saati girilince) açılır.';
       }
       const tail = (k==='proses'&&_startMs) ? ` · ${_prosesDoneN}/${_prosesDue}` : (done?' · '+done+'✔':'');
@@ -1633,7 +1684,9 @@ async function openControl(p){
         el('input',{class:'inp',type:'datetime-local',id:'m_checkedat',value:_ds(p.start_time)})));
     }
 
-    if(!items.length){
+    if(!stage){
+      m.append(el('div',{class:'msg info'},`✅ Şu an <b>girilmesi gereken</b> kontrol yok.${(_startMs&&!_finished)?` Sonraki proses ≈ ${Math.max(0,prosesFreq-_elapsedMin)} dk sonra (plan: her ${prosesFreq} dk).`:''}${!_finished?' Üretim bitince Son Kontrol açılır.':''}<br>Gerekirse yukarıdan aşamayı elle seçebilirsin.`));
+    }else if(!items.length){
       m.append(el('div',{class:'msg info'},`<b>${STAGES[stage]}</b> için bu üründe (<b>${esc(p.stock_code)}</b>, Op ${p.op_no??'-'}) kontrol planı maddesi yok. «Kontrol Planı» sekmesinden ekle.`));
     }else{
       const freq=(items.find(it=>it.sampling_frequency)||{}).sampling_frequency;
@@ -1739,6 +1792,7 @@ async function saveControl(p,items,state,stage,sampleFor){
   $('#modalRoot').innerHTML='';
   if(!$('#tab-kayitlar').classList.contains('hidden'))renderKayitlar();
   loadControlCounts();
+  if($('#tab-uretimler') && !$('#tab-uretimler').classList.contains('hidden'))renderUretimler();   // bekleyen kontroller listesi güncellensin (girilen kalksın)
 }
 
 // ====================== OTOMATİK (RASTGELE UYGUN) ÖLÇÜ ======================
