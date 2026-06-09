@@ -691,18 +691,12 @@ async function renderLeanSys(){
   ));
   // 2) MANUEL (eski yöntem) — korunuyor
   root.append(el('div',{class:'card'},
-    el('h4',{style:'margin:0 0 8px'},'📁 Manuel aktarım (eski yöntem — korunuyor)'),
-    el('div',{class:'msg info',style:'margin-top:0',html:'LeanSys → «Excel’e Aktar» ile aldığın Excel (.xlsx) dosyalarını seç (çoklu olabilir), ya da bir klasörü bağlayıp tek tuşla senkronla. Tekrar yüklesen kopya olmaz.'}),
+    el('h4',{style:'margin:0 0 8px'},'📁 Yedek yöntem — Excel’den İçe Aktar'),
+    el('div',{class:'msg info',style:'margin-top:0',html:'<b>Ne olur ne olmaz, yedek:</b> LeanSys → «Excel’e Aktar» ile aldığın Excel (.xlsx) dosyalarını seç (çoklu olabilir) → İçe Aktar. Tekrar yüklesen kopya olmaz. Normalde <b>LeanSys_Aktar</b> penceresi (📥 LeanSys Güncelle) yeterli.'}),
     el('div',{class:'row',style:'margin-top:10px'},
       el('input',{type:'file',accept:'.xlsx,.xls',multiple:'true',class:'inp grow',id:'prodFile'}),
       el('button',{class:'btn',style:'flex:0',onclick:importProds},'📄 İçe Aktar')
-    ),
-    el('div',{class:'row',style:'margin-top:10px'},
-      el('button',{class:'btn',style:'flex:0;min-width:210px',onclick:()=>syncLeanSysFolder(false)},'🔄 Klasörden Senkronize Et'),
-      el('button',{class:'btn sec',style:'flex:0',onclick:()=>syncLeanSysFolder(true)},'🔗 Klasör Seç / Değiştir'),
-      el('span',{style:'color:var(--muted);font-size:12px;align-self:center'},dirName?('📁 '+dirName):'Henüz klasör bağlı değil')
-    ),
-    el('p',{class:'det',style:'color:var(--muted);font-size:12px;margin-top:10px'},'Not: Klasör Senkron yalnızca Chrome/Edge’de çalışır.')
+    )
   ));
 }
 async function renderBekleyen(){
