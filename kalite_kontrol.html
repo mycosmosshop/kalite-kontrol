@@ -289,6 +289,7 @@
     <button data-tab="ncr" id="ncrTab">🚫 Uygunsuzluk</button>
     <button data-tab="eightd" id="eightdTab">🔧 8D</button>
     <button data-tab="cert" id="certTab">📄 Sertifika</button>
+    <button data-tab="leansys" id="leansysTab">🏭 LeanSys</button>
     <button data-tab="admin" id="adminTab">👤 Kullanıcılar</button>
   </nav>
   <main>
@@ -298,6 +299,7 @@
     </div>
 
     <div id="tab-uretimler"></div>
+    <div id="tab-leansys" class="hidden"></div>
     <div id="tab-bekleyen" class="hidden"></div>
     <div id="tab-kayitlar" class="hidden"></div>
     <div id="tab-plan" class="hidden"></div>
@@ -494,6 +496,7 @@ async function afterLogin(){
   $('#whoEmail').textContent=ME.email;
   $('#whoRole').textContent=PROFILE.is_admin?'Yönetici':(PROFILE.approved?'Onaylı':'Onay bekliyor');
   $('#adminTab').classList.toggle('hidden', !PROFILE.is_admin);
+  $('#leansysTab').classList.toggle('hidden', !PROFILE.is_admin);   // LeanSys sekmesi sadece admin
   $('#dashTab').classList.toggle('hidden', !can('dashboard'));   // admin + yetkili görür
   $('#ncrTab').classList.toggle('hidden', !can('ncr'));
   $('#eightdTab').classList.toggle('hidden', !can('ncr'));
@@ -514,8 +517,9 @@ async function afterLogin(){
 // ====================== TABS ======================
 function switchTab(name){
   document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
-  ['uretimler','bekleyen','kayitlar','plan','istatistik','dashboard','ncr','eightd','cert','admin'].forEach(t=>$('#tab-'+t).classList.toggle('hidden',t!==name));
+  ['uretimler','leansys','bekleyen','kayitlar','plan','istatistik','dashboard','ncr','eightd','cert','admin'].forEach(t=>$('#tab-'+t).classList.toggle('hidden',t!==name));
   if(name==='uretimler')renderUretimler();
+  if(name==='leansys')renderLeanSys();
   if(name==='bekleyen')renderBekleyen();
   if(name==='kayitlar')renderKayitlar();
   if(name==='plan')renderPlan();
@@ -674,6 +678,23 @@ async function openManualProd(existing){
   }
 }
 // ⏰ Girilecek Kontroller sekmesi
+// 🏭 LeanSys (admin) — masaüstü makrosu + klasör senkron
+async function renderLeanSys(){
+  const root=$('#tab-leansys');
+  root.innerHTML='';
+  if(!(PROFILE&&PROFILE.is_admin)){ root.innerHTML='<div class="card"><div class="msg err" style="margin:0">Bu bölüm yalnızca admin içindir.</div></div>'; return; }
+  const dirName=localStorage.getItem('leansys_dir_name');
+  root.append(el('div',{class:'card'},
+    el('h3',{},'🏭 LeanSys Üretim Verisi → Kalite Kontrol'),
+    el('div',{class:'msg info',style:'margin-top:6px',html:'<b>Otomatik akış:</b><br>1) LeanSys masaüstü <b>açık + giriş yapılmış</b> olsun.<br>2) Masaüstündeki <b>LeanSys_Export.bat</b>’a çift tıkla → <b>stok kodu</b> + <b>başlangıç/bitiş tarihi</b> gir. (>30 gün otomatik <b>aylık</b> bölünür.) Makro, Üretim Raporu (0071)’i kendisi açar, filtreler ve Excel’e aktarır.<br>3) Dosyalar <b>Masaüstü\\LeanSysExport</b> klasörüne düşer.<br>4) Aşağıdan o klasörü <b>bağla</b> → <b>Senkronize Et</b> → üretimler (başlama/bitiş saatleri dahil) içeri gelir. Kopya olmaz.'}),
+    el('div',{class:'row',style:'margin-top:12px'},
+      el('button',{class:'btn',style:'flex:0;min-width:210px',onclick:()=>syncLeanSysFolder(false)},'🔄 Klasörden Senkronize Et'),
+      el('button',{class:'btn sec',style:'flex:0',onclick:()=>syncLeanSysFolder(true)},'🔗 Klasör Seç / Değiştir'),
+      el('span',{style:'color:var(--muted);font-size:12px;align-self:center'},dirName?('📁 '+dirName):'Henüz klasör bağlı değil')
+    ),
+    el('p',{class:'det',style:'color:var(--muted);font-size:12px;margin-top:10px'},'Not: Klasör Senkron yalnızca Chrome/Edge’de çalışır. Manuel “İçe Aktar” (dosya seç) Üretimler sekmesinde de durmaya devam ediyor.')
+  ));
+}
 async function renderBekleyen(){
   const root=$('#tab-bekleyen');
   root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
