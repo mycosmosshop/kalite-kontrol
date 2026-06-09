@@ -736,7 +736,7 @@ async function _renderDueControls(root){
       const headHtml=`${active==='proses'?`<span class="pill gray" style="margin-right:6px">⚙️ ${prosesNo}. proses · hedef ~${fmtTime(dueMs)}</span>`:''}${esc(p.machine_name||'')}${p.machine_code?` (${esc(p.machine_code)})`:''}${finished?'':' <span style="color:var(--ok);font-weight:700">● devam</span>'}`;
       row.append(el('div',{class:'grow',style:'min-width:240px;pointer-events:none'},
         el('div',{style:'font-weight:600;font-size:14px',html:headHtml}),
-        el('div',{style:'font-size:12.5px;color:var(--muted)',html:`${esc(p.stock_code||'')} ${esc((p.stock_name||'').slice(0,28))} · ${fmtDate(p.prod_date)} ${fmtTime(p.start_time)}${p.end_time?'–'+fmtTime(p.end_time):''} · İş ${esc(p.work_order||'-')} · ${p.quantity??''} ${esc(p.unit||'')}`})));
+        el('div',{style:'font-size:12.5px;color:var(--muted)',html:`${esc(p.stock_code||'')} ${esc((p.stock_name||'').slice(0,28))}${p.customer?' · 🏢 '+esc(p.customer):''} · ${fmtDate(p.prod_date)} ${fmtTime(p.start_time)}${p.end_time?'–'+fmtTime(p.end_time):''} · İş ${esc(p.work_order||'-')} · ${p.quantity??''} ${esc(p.unit||'')}`})));
       row.append(el('button',{class:'btn',style:'flex:0;min-width:150px;padding:12px 24px;font-size:15px;font-weight:600',onclick:e=>{e.stopPropagation();openIt();}}, '➕ Gir'));
       listWrap.append(row);
     });
