@@ -685,14 +685,12 @@ async function renderBekleyen(){
     el('button',{class:'btn sm sec',style:'flex:0',onclick:renderBekleyen},'🔄 Yenile')));
   await _renderDueControls(root);
 }
-// ⏰ Girilmesi Gereken Kontroller — aktif üretimlerde vadesi gelen seri başı / proses / son kontroller
+// ⏰ Girilecek Kontroller — vadesi gelenler aşamaya göre alt-sekmelere (Seri Başı / Proses / Son) düşer
 async function _renderDueControls(root){
   const card=el('div',{class:'card'});
-  const head=el('h3',{style:'margin:0;margin-right:auto'},'⏰ Girilmesi Gereken Kontroller');
-  card.append(el('div',{class:'toolbar',style:'margin-bottom:6px'}, head,
-    el('span',{style:'font-size:12px;color:var(--muted)'},'aktif üretimlerde vadesi gelen kontroller')));
-  const listWrap=el('div',{}); card.append(listWrap);
-  root.append(card);
+  const seg=el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px'});
+  const listWrap=el('div',{});
+  card.append(seg, listWrap); root.append(card);
   const prodIds=PRODS.map(p=>p.id).filter(x=>x!=null);
   if(!prodIds.length){ listWrap.innerHTML='<div class="empty" style="padding:10px">Üretim yok.</div>'; return; }
   // yapılmış kontroller (aşama bazında)
@@ -707,35 +705,40 @@ async function _renderDueControls(root){
     (pl||[]).forEach(it=>{ if(it.active!==false && it.process_control!==false){ const f=Number(it.sampling_frequency);
       if(f>0&&f<=1440){ const cur=freqByStock[it.stock_code]; if(cur==null||f<cur)freqByStock[it.stock_code]=f; } } }); }
   const now=Date.now();
-  const dueRows=[];
+  const groups={seri_basi:[], proses:[], son:[]};
   PRODS.forEach(p=>{
     if(!p.start_time) return;
     const start=new Date(p.start_time).getTime(), end=p.end_time?new Date(p.end_time).getTime():null, finished=!!end;
-    if(!finished && (now-start)>3*24*60*60000) return;     // 3 günden eski "açık" üretimi unutulmuş say, listeleme
+    if(!finished && (now-start)>3*24*60*60000) return;     // 3 günden eski "açık" üretimi unutulmuş say
     if(finished && (now-end)>14*24*60*60000) return;        // çok eski bitmişi listeleme
     const elapsed=Math.max(0,Math.round(((end||now)-start)/60000));
     const o=byProd[p.id]||{seri:false,proses:0,son:false};
     const freq=freqByStock[p.stock_code]||60;
     const prosesExp=elapsed>=freq?Math.min(Math.floor(elapsed/freq),200):0;
-    const due=[];
-    if(!o.seri) due.push({stage:'seri_basi',label:'Seri Başı'});
-    if(prosesExp>o.proses) due.push({stage:'proses',label:`Proses ${o.proses}/${prosesExp}`});
-    if(finished && !o.son) due.push({stage:'son',label:'Son Kontrol'});
-    if(due.length) dueRows.push({p,due,finished,start});
+    if(!o.seri) groups.seri_basi.push({p,finished,start,extra:''});
+    if(prosesExp>o.proses) groups.proses.push({p,finished,start,extra:`${o.proses}/${prosesExp}`});
+    if(finished && !o.son) groups.son.push({p,finished,start,extra:''});
   });
-  dueRows.sort((a,b)=> (a.finished?1:0)-(b.finished?1:0) || (b.start-a.start));
-  head.textContent=`⏰ Girilmesi Gereken Kontroller (${dueRows.length})`;
-  if(!dueRows.length){ listWrap.innerHTML='<div class="empty" style="padding:12px;color:var(--ok)">Şu an girilmesi gereken kontrol yok 👍</div>'; return; }
-  listWrap.innerHTML='';
-  dueRows.slice(0,60).forEach(({p,due,finished})=>{
-    const row=el('div',{style:'display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid var(--border);flex-wrap:wrap'});
-    row.append(el('div',{class:'grow',style:'min-width:240px'},
-      el('div',{style:'font-weight:600;font-size:13.5px',html:`${esc(p.machine_name||'')}${p.machine_code?` (${esc(p.machine_code)})`:''}${finished?'':' <span style="color:var(--ok);font-weight:700">● devam</span>'}`}),
-      el('div',{style:'font-size:12px;color:var(--muted)',html:`${esc(p.stock_code||'')} ${esc((p.stock_name||'').slice(0,28))} · ${fmtDate(p.prod_date)} ${fmtTime(p.start_time)}${p.end_time?'–'+fmtTime(p.end_time):''} · İş ${esc(p.work_order||'-')} · ${p.quantity??''} ${esc(p.unit||'')}`})));
-    due.forEach(d=> row.append(el('button',{class:'btn sm',style:'flex:0',onclick:()=>openControl(p,d.stage)}, '➕ '+d.label)) );
-    listWrap.append(row);
-  });
-  if(dueRows.length>60) listWrap.append(el('div',{style:'color:var(--muted);font-size:12px;text-align:center;padding:6px'},`… ${dueRows.length-60} üretim daha`));
+  Object.values(groups).forEach(g=> g.sort((a,b)=> (a.finished?1:0)-(b.finished?1:0) || (b.start-a.start)) );
+  const STG=[['seri_basi','🏁 Seri Başı'],['proses','⚙️ Proses'],['son','🏆 Son Kontrol']];
+  let active = (STG.find(([k])=>groups[k].length)||STG[0])[0];
+  function renderSeg(){ seg.innerHTML='';
+    STG.forEach(([k,lab])=>{ const n=groups[k].length;
+      seg.append(el('button',{class:'btn '+(active===k?'':'sec'),style:'flex:0',onclick:()=>{active=k;renderSeg();renderList();}},`${lab} (${n})`)); }); }
+  function renderList(){ listWrap.innerHTML='';
+    const arr=groups[active];
+    if(!arr.length){ listWrap.innerHTML='<div class="empty" style="padding:16px;color:var(--ok)">Bu aşamada bekleyen kontrol yok 👍</div>'; return; }
+    arr.slice(0,100).forEach(({p,finished,extra})=>{
+      const row=el('div',{style:'display:flex;align-items:center;gap:10px;padding:9px 4px;border-bottom:1px solid var(--border);flex-wrap:wrap'});
+      row.append(el('div',{class:'grow',style:'min-width:240px'},
+        el('div',{style:'font-weight:600;font-size:13.5px',html:`${esc(p.machine_name||'')}${p.machine_code?` (${esc(p.machine_code)})`:''}${finished?'':' <span style="color:var(--ok);font-weight:700">● devam</span>'}`}),
+        el('div',{style:'font-size:12px;color:var(--muted)',html:`${esc(p.stock_code||'')} ${esc((p.stock_name||'').slice(0,28))} · ${fmtDate(p.prod_date)} ${fmtTime(p.start_time)}${p.end_time?'–'+fmtTime(p.end_time):''} · İş ${esc(p.work_order||'-')} · ${p.quantity??''} ${esc(p.unit||'')}`})));
+      row.append(el('button',{class:'btn sm',style:'flex:0',onclick:()=>openControl(p,active)}, `➕ Gir${extra?' ('+extra+')':''}`));
+      listWrap.append(row);
+    });
+    if(arr.length>100) listWrap.append(el('div',{style:'color:var(--muted);font-size:12px;text-align:center;padding:6px'},`… ${arr.length-100} üretim daha`));
+  }
+  renderSeg(); renderList();
 }
 async function renderUretimler(){
   const root=$('#tab-uretimler');
@@ -1699,7 +1702,7 @@ async function openControl(p, forceStage){
     }
 
     if(!stage){
-      m.append(el('div',{class:'msg info'},`✅ Şu an <b>girilmesi gereken</b> kontrol yok.${(_startMs&&!_finished)?` Sonraki proses ≈ ${Math.max(0,prosesFreq-_elapsedMin)} dk sonra (plan: her ${prosesFreq} dk).`:''}${!_finished?' Üretim bitince Son Kontrol açılır.':''}<br>Gerekirse yukarıdan aşamayı elle seçebilirsin.`));
+      m.append(el('div',{class:'msg info',html:`✅ Şu an <b>girilmesi gereken</b> kontrol yok.${(_startMs&&!_finished)?` Sonraki proses ≈ ${Math.max(0,prosesFreq-_elapsedMin)} dk sonra (plan: her ${prosesFreq} dk).`:''}${!_finished?' Üretim bitince Son Kontrol açılır.':''}<br>Gerekirse yukarıdan aşamayı elle seçebilirsin.`}));
     }else if(!items.length){
       m.append(el('div',{class:'msg info'},`<b>${STAGES[stage]}</b> için bu üründe (<b>${esc(p.stock_code)}</b>, Op ${p.op_no??'-'}) kontrol planı maddesi yok. «Kontrol Planı» sekmesinden ekle.`));
     }else{
@@ -1764,16 +1767,18 @@ async function openControl(p, forceStage){
       });
       tb.append(body); m.append(el('div',{class:'tbl-wrap'},tb));
     }
-    m.append(el('div',{class:'field',style:'margin-top:8px'},el('label',{class:'lab'},'Not (opsiyonel)'),el('textarea',{class:'inp',id:'m_note',rows:'2',oninput:e=>noteVal=e.target.value},noteVal)));
-    const btnRow=el('div',{style:'display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center'});
-    if(items.length && can('auto')) btnRow.append(el('div',{class:'autozone'},
-      el('button',{class:'autozone-handle',title:'Otomatik doldur araçları',onclick:e=>{e.stopPropagation();e.currentTarget.parentElement.classList.toggle('open');}},'▾'),
-      el('button',{class:'btn sm auto-btn',onclick:e=>{e.stopPropagation();autoFillStage();}},'🎲 Otomatik doldur')
-    ));
-    const saveBtn=el('button',{class:'btn',onclick:()=>saveControl(p,items,state,stage,sampleFor)},`💾 Kaydet — ${STAGES[stage]}`);
-    if(!items.length)saveBtn.disabled=true;
-    btnRow.append(saveBtn);
-    m.append(btnRow);
+    if(stage){
+      m.append(el('div',{class:'field',style:'margin-top:8px'},el('label',{class:'lab'},'Not (opsiyonel)'),el('textarea',{class:'inp',id:'m_note',rows:'2',oninput:e=>noteVal=e.target.value},noteVal)));
+      const btnRow=el('div',{style:'display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center'});
+      if(items.length && can('auto')) btnRow.append(el('div',{class:'autozone'},
+        el('button',{class:'autozone-handle',title:'Otomatik doldur araçları',onclick:e=>{e.stopPropagation();e.currentTarget.parentElement.classList.toggle('open');}},'▾'),
+        el('button',{class:'btn sm auto-btn',onclick:e=>{e.stopPropagation();autoFillStage();}},'🎲 Otomatik doldur')
+      ));
+      const saveBtn=el('button',{class:'btn',onclick:()=>saveControl(p,items,state,stage,sampleFor)},`💾 Kaydet — ${STAGES[stage]}`);
+      if(!items.length)saveBtn.disabled=true;
+      btnRow.append(saveBtn);
+      m.append(btnRow);
+    }
     bg.append(m); root.append(bg);
   }
   render();
