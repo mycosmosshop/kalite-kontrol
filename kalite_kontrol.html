@@ -1009,7 +1009,7 @@ function planHeaderCard(sc,stockName){
     logoSrc?el('img',{src:logoSrc,style:'height:36px;border-radius:4px'}):'',
     el('div',{style:'flex:1;min-width:160px'},
       el('div',{style:'font-size:15px;font-weight:800'},(PLAN_HDR.doc_title||'KONTROL PLANI')+(PLAN_HDR.doc_no?(' · '+PLAN_HDR.doc_no):'')),
-      el('div',{style:'font-size:12px;color:var(--muted)'},`${sc} — ${esc(stockName||'')}`)),
+      el('div',{style:'font-size:12px;color:var(--muted)'},`${sc}${stockName?' — '+esc(stockName):''}`)),
     el('button',{class:'btn sm',onclick:()=>exportPlanExcel(sc,stockName)},'⬇ Excel'),
     el('button',{class:'btn sm sec',onclick:()=>printPlan(sc,stockName,'tr')},'🖨 PDF / Yazdır'),
     el('button',{class:'btn sm sec',onclick:()=>printPlan(sc,stockName,'en')},'🖨 PDF (EN)')
@@ -1167,9 +1167,14 @@ async function renderPlan(){
   const byStock={}; PLAN.forEach(p=>{(byStock[p.stock_code]=byStock[p.stock_code]||[]).push(p);});
   const stockKeys=Object.keys(byStock).sort();
   if(!PLAN_SEL || !byStock[PLAN_SEL]) PLAN_SEL=stockKeys[0];
+  // stok adı çözümleyici: plan maddesi → üretimler(PRODS) → DB (üretim silinmiş olsa bile addan vazgeçme)
+  let prodNameMap=new Map(PRODS.filter(p=>p.stock_code&&p.stock_name).map(p=>[p.stock_code,p.stock_name]));
+  if(!prodNameMap.size){ const {data:pn}=await sb.from('productions').select('stock_code,stock_name').not('stock_name','is',null).limit(1000);
+    (pn||[]).forEach(p=>{ if(p.stock_code&&p.stock_name&&!prodNameMap.has(p.stock_code))prodNameMap.set(p.stock_code,p.stock_name); }); }
+  const stockNameOf=sc=>{ const it=(byStock[sc]||[]).find(x=>x.stock_name&&String(x.stock_name).trim()); return ((it&&it.stock_name)||prodNameMap.get(sc)||'').toString().trim(); };
   // plan seçici (birden fazla plan olunca buradan seç)
   const planSel=el('select',{class:'inp',onchange:e=>{PLAN_SEL=e.target.value;renderPlan();}});
-  stockKeys.forEach(k=>{const o=el('option',{value:k},`${k} — ${(byStock[k][0].stock_name||'').slice(0,45)} (${byStock[k].length} madde)`); if(k===PLAN_SEL)o.selected=true; planSel.append(o);});
+  stockKeys.forEach(k=>{const nm=stockNameOf(k); const o=el('option',{value:k},`${k}${nm?' — '+nm.slice(0,45):''} (${byStock[k].length} madde)`); if(k===PLAN_SEL)o.selected=true; planSel.append(o);});
   root.append(el('div',{class:'card'},el('div',{class:'row'},
     el('div',{class:'field grow'},el('label',{class:'lab'},`Görüntülenecek Kontrol Planı — ${stockKeys.length} plan kayıtlı`),planSel)
   )));
@@ -1178,15 +1183,16 @@ async function renderPlan(){
   PLAN_HDR=_hdr||{stock_code:PLAN_SEL,form_no:'PL41',doc_title:'KONTROL PLANI'};
   // sadece seçili planı göster
   [[PLAN_SEL, byStock[PLAN_SEL]]].forEach(([sc,items])=>{
-    root.append(planHeaderCard(sc, items[0].stock_name||''));   // antet + Excel/PDF
+    const snm=stockNameOf(sc);
+    root.append(planHeaderCard(sc, snm));   // antet + Excel/PDF
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px'},
-      el('h3',{style:'margin:0'},`${sc} — ${esc(items[0].stock_name||'')} (${items.length} madde)`),
+      el('h3',{style:'margin:0'},`${sc}${snm?' — '+esc(snm):''} (${items.length} madde)`),
       el('div',{style:'display:flex;gap:8px;flex-wrap:wrap'},
         canPlan?el('button',{class:'btn sm',id:'planSaveBtn',disabled:!Object.keys(PLAN_PENDING).length,style:'background:'+(Object.keys(PLAN_PENDING).length?'var(--ret)':'var(--ok)')+';cursor:'+(Object.keys(PLAN_PENDING).length?'pointer':'default'),title:'Yaptığın hücre değişikliklerini kaydet',onclick:savePlanChanges},Object.keys(PLAN_PENDING).length?('💾 Kaydet ('+Object.keys(PLAN_PENDING).length+')'):'💾 Kaydedildi'):'',
         canPlan?el('button',{class:'btn sm sec',title:'Maddeleri Op No’ya göre sıralayıp Ölçü No (1..N) yeniden atar',onclick:()=>renumberByOp(sc)},'🔢 Op No’ya göre sırala'):'',
-        canPlan?el('button',{class:'btn sm sec',title:'Versiyonla / arşivle / geri yükle',onclick:()=>openPlanArchive(sc, items[0].stock_name||'')},'🗂 Versiyonlar'):'',
-        canPlan?el('button',{class:'btn sm sec',title:'Bu planı başka bir ürün koduna kopyala',onclick:()=>openCopyPlan(sc, items[0].stock_name||'')},'📋 Başka Koda Kopyala'):'',
+        canPlan?el('button',{class:'btn sm sec',title:'Versiyonla / arşivle / geri yükle',onclick:()=>openPlanArchive(sc, snm)},'🗂 Versiyonlar'):'',
+        canPlan?el('button',{class:'btn sm sec',title:'Bu planı başka bir ürün koduna kopyala',onclick:()=>openCopyPlan(sc, snm)},'📋 Başka Koda Kopyala'):'',
         canPlan?el('button',{class:'btn sm danger',onclick:()=>delPlanStock(sc)},'Bu planı sil'):el('span',{class:'pill gray'},'salt görünüm')
       )
     ));
