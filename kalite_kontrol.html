@@ -542,6 +542,14 @@ function matchesUF(p){
   return true;
 }
 function closeAutozones(){ document.querySelectorAll('.autozone.open').forEach(z=>z.classList.remove('open')); }
+async function editSelectedProd(){
+  const ids=[...document.querySelectorAll('#prodBody .prodChk:checked')].map(c=>Number(c.dataset.id));
+  if(ids.length!==1){ toast('Düzenlemek için TEK üretim seç (sol kutucuk).','err'); return; }
+  let pr=PRODS.find(p=>p.id===ids[0]);
+  if(!pr){ const {data}=await sb.from('productions').select('*').eq('id',ids[0]).maybeSingle(); pr=data; }
+  if(!pr){ toast('Üretim bulunamadı.','err'); return; }
+  openManualProd(pr);
+}
 async function finishSelectedProds(){
   if(!(can('auto')||PROFILE.is_admin)){ toast('Bunun için yetkin yok.','err'); return; }
   const ids=[...document.querySelectorAll('#prodBody .prodChk:checked')].map(c=>Number(c.dataset.id));
@@ -609,14 +617,14 @@ async function deleteSelectedRecs(){
   if(error){ toast('Kontrol kayıtları silinemedi: '+esc(error.message),'err'); return; }
   toast(`${count} kontrol kaydı silindi (üretimler korundu).`,'ok'); renderUretimler();
 }
-async function openManualProd(){
+async function openManualProd(existing){
   const root=$('#modalRoot');
   const stocks=[...new Set(PRODS.map(p=>p.stock_code).filter(Boolean))];
   const machineCodes=[...new Set(PRODS.map(p=>p.machine_code).filter(Boolean))];
   const bg=el('div',{class:'modal-bg'});   // dışına tıklayınca KAPANMASIN — sadece × ile kapanır
   const m=el('div',{class:'modal',style:'position:relative;max-width:840px'});
   m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
-  m.append(el('h3',{},'➕ Manuel Üretim Ekle'));
+  m.append(el('h3',{},existing?'✏️ Üretim Düzenle':'➕ Manuel Üretim Ekle'));
   const sm=(label,id,attrs)=>el('div',{class:'field',style:'flex:0;min-width:110px'},el('label',{class:'lab'},label),el('input',Object.assign({class:'inp',id},attrs||{})));
   m.append(el('div',{class:'row',style:'margin-bottom:10px'},
     sm('Tarih','mp_date',{type:'date'}), sm('Vardiya','mp_shift',{placeholder:'1'}), sm('Op No','mp_op',{placeholder:'3'}),
@@ -629,8 +637,18 @@ async function openManualProd(){
     sm('Miktar','mp_qty',{type:'number',step:'any'}), sm('Birim','mp_unit',{placeholder:'Ad'}),
     sm('Başlama','mp_start',{type:'time'}), sm('Bitiş','mp_end',{type:'time'}), field('Operatör','mp_oper','')
   ));
-  m.append(el('button',{class:'btn',style:'margin-top:6px',onclick:saveManual},'💾 Üretimi Ekle'));
+  m.append(el('button',{class:'btn',style:'margin-top:6px',onclick:saveManual},existing?'💾 Üretimi Güncelle':'💾 Üretimi Ekle'));
   bg.append(m); root.append(bg);
+  if(existing){
+    const setv=(id,v)=>{const e=$('#'+id); if(e)e.value=(v==null?'':v);};
+    const _t=iso=>{ if(!iso)return''; const d=new Date(iso),pd=n=>String(n).padStart(2,'0'); return pd(d.getHours())+':'+pd(d.getMinutes()); };
+    setv('mp_date', existing.prod_date||(existing.start_time?existing.start_time.slice(0,10):''));
+    setv('mp_shift', existing.shift); setv('mp_op', existing.op_no);
+    setv('mp_mc', existing.machine_code); setv('mp_mn', existing.machine_name);
+    setv('mp_sc', existing.stock_code); setv('mp_sn', existing.stock_name); setv('mp_cari', existing.customer);
+    setv('mp_wo', existing.work_order); setv('mp_qty', existing.quantity); setv('mp_unit', existing.unit);
+    setv('mp_start', _t(existing.start_time)); setv('mp_end', _t(existing.end_time)); setv('mp_oper', existing.operator);
+  }
   $('#mp_mc').addEventListener('change',()=>{ const pr=PRODS.find(p=>p.machine_code===$('#mp_mc').value.trim()); if(pr&&!$('#mp_mn').value)$('#mp_mn').value=pr.machine_name||''; });
   $('#mp_sc').addEventListener('change',()=>{ const pr=PRODS.find(p=>p.stock_code===$('#mp_sc').value.trim()); if(pr){ if(!$('#mp_sn').value)$('#mp_sn').value=pr.stock_name||''; if(!$('#mp_cari').value)$('#mp_cari').value=pr.customer||''; } });
   async function saveManual(){
@@ -644,9 +662,11 @@ async function openManualProd(){
       work_order:$('#mp_wo').value.trim()||null, quantity:Number($('#mp_qty').value)||null, unit:$('#mp_unit').value.trim()||null,
       start_time:start, end_time:end, operator:$('#mp_oper').value.trim()||null,
       fingerprint:`${mc}|${start||''}|${sc}|${op??''}` };
-    const {error}=await sb.from('productions').upsert(rec,{onConflict:'fingerprint'});
+    let error;
+    if(existing&&existing.id){ ({error}=await sb.from('productions').update(rec).eq('id',existing.id)); }
+    else { ({error}=await sb.from('productions').upsert(rec,{onConflict:'fingerprint'})); }
     if(error){ toast(esc(error.message),'err'); return; }
-    toast('Üretim eklendi.','ok'); root.innerHTML=''; renderUretimler();
+    toast(existing?'Üretim güncellendi.':'Üretim eklendi.','ok'); root.innerHTML=''; renderUretimler();
   }
 }
 async function renderUretimler(){
@@ -693,6 +713,7 @@ async function renderUretimler(){
         el('div',{class:'auto-menu',onclick:e=>e.stopPropagation()},
           can('auto')?el('button',{class:'btn sm',onclick:()=>{closeAutozones();openBulkAuto();}},'🎲 Otomatik Kontrol Üret'):'',
           can('import')?el('button',{class:'btn sm',onclick:()=>{closeAutozones();openManualProd();}},'➕ Manuel Üretim Ekle'):'',
+          can('import')?el('button',{class:'btn sm',onclick:()=>{closeAutozones();editSelectedProd();}},'✏️ Seçileni Düzenle'):'',
           can('auto')?el('button',{class:'btn sm',onclick:()=>{closeAutozones();finishSelectedProds();}},'🏁 Seçilenleri Bitir + Kontrol Üret'):'',
           (can('delete')||PROFILE.is_admin)?el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteSelectedRecs();}},'🧹 Seçilenlerin Kontrollerini Sil'):'',
           PROFILE.is_admin?el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteSelectedProds();}},'🗑 Seçilenleri Sil (üretim+kontrol)'):''
@@ -1540,7 +1561,20 @@ async function openControl(p){
   let operVal=p.operator||'', noteVal='';
 
   const prosesFreq = Number((allItems.find(it=>it.sampling_frequency)||{}).sampling_frequency)||60;
-  let stage = existing.some(r=>r.stage==='seri_basi') ? 'proses' : 'seri_basi';
+  // manuel akış: üretim zaman çizelgesine göre aşama durumu
+  const _startMs = p.start_time?new Date(p.start_time).getTime():null;
+  const _endMs = p.end_time?new Date(p.end_time).getTime():null;
+  const _finished = !!_endMs;
+  const _elapsedMin = _startMs ? Math.max(0, Math.round(((_endMs||Date.now())-_startMs)/60000)) : 0;
+  const _prosesDue = (_startMs && _elapsedMin>=prosesFreq) ? Math.floor(_elapsedMin/prosesFreq) : 0;   // şu ana kadar GEREKEN proses sayısı
+  const _seriDone = existing.some(r=>r.stage==='seri_basi');
+  const _prosesDoneN = existing.filter(r=>r.stage==='proses').length;
+  const _sonDoneN = existing.filter(r=>r.stage==='son').length;
+  let stage;
+  if(!_seriDone) stage='seri_basi';                  // önce Seri Başı
+  else if(_prosesDue>_prosesDoneN) stage='proses';   // proses zamanı geldi, eksik var
+  else if(_finished && _sonDoneN===0) stage='son';   // üretim bitti → son kontrol
+  else stage='seri_basi';
 
   function lastProsesInfo(){
     const ps=existing.filter(r=>r.stage==='proses'||r.stage==='seri_basi').sort((a,b)=>new Date(b.checked_at)-new Date(a.checked_at));
@@ -1575,8 +1609,19 @@ async function openControl(p){
     Object.entries(STAGES).forEach(([k,label])=>{
       const cnt=itemsForStage(k).length;
       const done=existing.filter(r=>r.stage===k).length;
-      seg.append(el('button',{class:'btn sm '+(stage===k?'':'sec'),onclick:()=>{stage=k;render();}},
-        `${label} (${cnt})${done?' · '+done+'✔':''}`));
+      let disabled=false, tip='';
+      if(k==='proses' && _startMs){
+        if(!_seriDone){ disabled=true; tip='Önce Seri Başı kontrolünü yap.'; }
+        else if(_elapsedMin<prosesFreq){ disabled=true; tip=`Proses için ${prosesFreq} dk geçmeli — şu an ${_elapsedMin} dk (≈ ${Math.max(0,prosesFreq-_elapsedMin)} dk sonra).`; }
+      } else if(k==='son' && _startMs && !_finished){
+        disabled=true; tip='Üretim bitince (bitiş saati girilince) açılır.';
+      }
+      const tail = (k==='proses'&&_startMs) ? ` · ${_prosesDoneN}/${_prosesDue}` : (done?' · '+done+'✔':'');
+      const b=el('button',{class:'btn sm '+(stage===k?'':'sec'),title:tip||undefined,
+        onclick: disabled ? (()=>toast(tip,'err')) : (()=>{stage=k;render();})},
+        `${label} (${cnt})${tail}`);
+      if(disabled) b.style.opacity='.5';
+      seg.append(b);
     });
     m.append(el('label',{class:'lab'},'Kontrol Aşaması (her aşama plandan kendi maddelerini çeker)'));
     m.append(seg);
