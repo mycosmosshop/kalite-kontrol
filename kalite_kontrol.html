@@ -1015,6 +1015,17 @@ function planHeaderCard(sc,stockName){
     el('button',{class:'btn sm sec',onclick:()=>printPlan(sc,stockName,'en')},'🖨 PDF (EN)')
   ));
   const grid=el('div',{style:'display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px'});
+  // Stok Adı — plana KALICI yazılır (control_plan_items.stock_name); üretim olmasa da hep gösterilir
+  {
+    let inp;
+    if(canPlan) inp=el('input',{class:'inp',type:'text',value:stockName||'',style:'padding:6px 8px',placeholder:'örn. SES VE ISI YALITIM SÜNGERİ',
+      onchange:async e=>{ const v=e.target.value.trim()||null;
+        const {error}=await sb.from('control_plan_items').update({stock_name:v}).eq('stock_code',sc);
+        if(error){ toast(esc(error.message),'err'); return; }
+        toast('Stok adı kaydedildi (plana bağlandı).','ok'); renderPlan(); }});
+    else inp=el('div',{style:'padding:6px 9px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;min-height:32px;font-size:13px'},stockName||'—');
+    grid.append(el('div',{},el('label',{class:'lab'},'Stok Adı'),inp));
+  }
   HDR_FIELDS.forEach(([key,label,type])=>{
     const raw=PLAN_HDR[key]??'';
     let inp;
