@@ -709,11 +709,12 @@ async function _renderDueControls(root){
   PRODS.forEach(p=>{
     if(!p.start_time) return;
     const start=new Date(p.start_time).getTime(), end=p.end_time?new Date(p.end_time).getTime():null, finished=!!end;
-    if(finished && (now-end)>14*24*60*60000) return;        // çok eski bitmişi listeleme — DEVAM EDENLER üretim sürdükçe hep listelenir (proses gelmeye devam eder)
+    if(!finished && (now-start)>3*24*60*60000) return;      // 3 günden eski AÇIK üretim = unutulmuş/kapanmamış (gerçek koşu < birkaç gün), listeleme
+    if(finished && (now-end)>14*24*60*60000) return;        // çok eski bitmişi listeleme
     const elapsed=Math.max(0,Math.round(((end||now)-start)/60000));
     const o=byProd[p.id]||{seri:false,proses:0,son:false};
     const freq=freqByStock[p.stock_code]||60;
-    const prosesExp=elapsed>=freq?Math.min(Math.floor(elapsed/freq),200):0;
+    const prosesExp=elapsed>=freq?Math.min(Math.floor(elapsed/freq),100):0;
     if(!o.seri) groups.seri_basi.push({p,finished,start,extra:''});
     if(prosesExp>o.proses) groups.proses.push({p,finished,start,extra:`${o.proses}/${prosesExp}`});
     if(finished && !o.son) groups.son.push({p,finished,start,extra:''});
@@ -1636,7 +1637,7 @@ async function openControl(p, forceStage){
   const _endMs = p.end_time?new Date(p.end_time).getTime():null;
   const _finished = !!_endMs;
   const _elapsedMin = _startMs ? Math.max(0, Math.round(((_endMs||Date.now())-_startMs)/60000)) : 0;
-  const _prosesDue = (_startMs && _elapsedMin>=prosesFreq) ? Math.floor(_elapsedMin/prosesFreq) : 0;   // şu ana kadar GEREKEN proses sayısı
+  const _prosesDue = (_startMs && _elapsedMin>=prosesFreq) ? Math.min(Math.floor(_elapsedMin/prosesFreq),100) : 0;   // şu ana kadar GEREKEN proses sayısı (üst sınır 100)
   const _seriDone = existing.some(r=>r.stage==='seri_basi');
   const _prosesDoneN = existing.filter(r=>r.stage==='proses').length;
   const _sonDoneN = existing.filter(r=>r.stage==='son').length;
@@ -1669,29 +1670,35 @@ async function openControl(p, forceStage){
         `${STAGES[r.stage]} ${fmtTime(r.checked_at)} ${r.overall_result==='RET'?'⛔':'✔'}`)));
       m.append(sumr);
     }
-    m.append(el('div',{style:'margin-bottom:12px'},el('span',{html:lastProsesInfo()})));
+    if(stage==='proses') m.append(el('div',{style:'margin-bottom:12px'},el('span',{html:lastProsesInfo()})));
 
-    // aşama seçimi — ayrı butonlar (Seri Başı / Proses / Son), her biri kendi maddelerini çeker
-    const seg=el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px'});
-    Object.entries(STAGES).forEach(([k,label])=>{
-      const cnt=itemsForStage(k).length;
-      const done=existing.filter(r=>r.stage===k).length;
-      let disabled=false, tip='';
-      if(k==='proses' && _startMs && forceStage!=='proses'){
-        if(!_seriDone){ disabled=true; tip='Önce Seri Başı kontrolünü yap.'; }
-        else if(_elapsedMin<prosesFreq){ disabled=true; tip=`Proses için ${prosesFreq} dk geçmeli — şu an ${_elapsedMin} dk (≈ ${Math.max(0,prosesFreq-_elapsedMin)} dk sonra).`; }
-      } else if(k==='son' && _startMs && !_finished && forceStage!=='son'){
-        disabled=true; tip='Üretim bitince (bitiş saati girilince) açılır.';
-      }
-      const tail = (k==='proses'&&_startMs) ? ` · ${_prosesDoneN}/${_prosesDue}` : (done?' · '+done+'✔':'');
-      const b=el('button',{class:'btn sm '+(stage===k?'':'sec'),title:tip||undefined,
-        onclick: disabled ? (()=>toast(tip,'err')) : (()=>{stage=k;render();})},
-        `${label} (${cnt})${tail}`);
-      if(disabled) b.style.opacity='.5';
-      seg.append(b);
-    });
-    m.append(el('label',{class:'lab'},'Kontrol Aşaması (her aşama plandan kendi maddelerini çeker)'));
-    m.append(seg);
+    // aşama: queue'dan tek aşama gelir (forceStage) → sekme YOK, sadece o aşama odaklı (kafa karışmasın)
+    if(forceStage){
+      const lbl={seri_basi:'🏁 Seri Başı',proses:'⚙️ Proses',son:'🏆 Son Kontrol',giris:'📥 Giriş Kalite'}[stage]||STAGES[stage]||'';
+      m.append(el('div',{style:'margin-bottom:10px'},
+        el('span',{class:'btn sm',style:'cursor:default;font-weight:600;pointer-events:none'},`${lbl} — ${itemsForStage(stage).length} madde`)));
+    } else {
+      const seg=el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px'});
+      Object.entries(STAGES).forEach(([k,label])=>{
+        const cnt=itemsForStage(k).length;
+        const done=existing.filter(r=>r.stage===k).length;
+        let disabled=false, tip='';
+        if(k==='proses' && _startMs){
+          if(!_seriDone){ disabled=true; tip='Önce Seri Başı kontrolünü yap.'; }
+          else if(_elapsedMin<prosesFreq){ disabled=true; tip=`Proses için ${prosesFreq} dk geçmeli — şu an ${_elapsedMin} dk (≈ ${Math.max(0,prosesFreq-_elapsedMin)} dk sonra).`; }
+        } else if(k==='son' && _startMs && !_finished){
+          disabled=true; tip='Üretim bitince (bitiş saati girilince) açılır.';
+        }
+        const tail = (k==='proses'&&_startMs) ? ` · ${_prosesDoneN}/${_prosesDue}` : (done?' · '+done+'✔':'');
+        const b=el('button',{class:'btn sm '+(stage===k?'':'sec'),title:tip||undefined,
+          onclick: disabled ? (()=>toast(tip,'err')) : (()=>{stage=k;render();})},
+          `${label} (${cnt})${tail}`);
+        if(disabled) b.style.opacity='.5';
+        seg.append(b);
+      });
+      m.append(el('label',{class:'lab'},'Kontrol Aşaması (her aşama plandan kendi maddelerini çeker)'));
+      m.append(seg);
+    }
     m.append(el('div',{class:'field',style:'margin:8px 0 14px'},el('label',{class:'lab'},'Operatör / Kontrol eden'),
       el('input',{class:'inp',id:'m_oper',value:operVal,oninput:e=>operVal=e.target.value})));
     if(PROFILE.is_admin){
