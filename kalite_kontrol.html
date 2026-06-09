@@ -692,7 +692,11 @@ async function renderLeanSys(){
   // 2) MANUEL (eski yöntem) — korunuyor
   root.append(el('div',{class:'card'},
     el('h4',{style:'margin:0 0 8px'},'📁 Manuel aktarım (eski yöntem — korunuyor)'),
-    el('div',{class:'msg info',style:'margin-top:0',html:'Excel dosyalarından içe aktarma: aşağıdan <b>klasör senkron</b>, ya da Üretimler sekmesindeki <b>“İçe Aktar”</b>.'}),
+    el('div',{class:'msg info',style:'margin-top:0',html:'LeanSys → «Excel’e Aktar» ile aldığın Excel (.xlsx) dosyalarını seç (çoklu olabilir), ya da bir klasörü bağlayıp tek tuşla senkronla. Tekrar yüklesen kopya olmaz.'}),
+    el('div',{class:'row',style:'margin-top:10px'},
+      el('input',{type:'file',accept:'.xlsx,.xls',multiple:'true',class:'inp grow',id:'prodFile'}),
+      el('button',{class:'btn',style:'flex:0',onclick:importProds},'📄 İçe Aktar')
+    ),
     el('div',{class:'row',style:'margin-top:10px'},
       el('button',{class:'btn',style:'flex:0;min-width:210px',onclick:()=>syncLeanSysFolder(false)},'🔄 Klasörden Senkronize Et'),
       el('button',{class:'btn sec',style:'flex:0',onclick:()=>syncLeanSysFolder(true)},'🔗 Klasör Seç / Değiştir'),
@@ -780,30 +784,7 @@ async function renderUretimler(){
   if(error){root.innerHTML=`<div class="card"><div class="msg err">${esc(error.message)}</div></div>`;return;}
   PRODS=data||[];
   root.innerHTML='';
-  // import card (yetki: can_import)
-  if(can('import')){
-    const collapsed=localStorage.getItem('kk_imp_collapse')==='1';
-    const body=el('div',{class:collapsed?'hidden':''},
-      el('p',{class:'det',style:'color:var(--muted);margin:-2px 0 14px;font-size:13px',html:'LeanSys → Dışa Aktar ile aldığın Excel (.xlsx) dosyalarını seç. <b>Birden fazla dosya seçip topluca</b> aktarabilirsin (Ctrl/Shift ile çoklu seçim). Tekrar yüklesen de aynı üretim iki kez eklenmez.'}),
-      el('div',{class:'row'},
-        el('input',{type:'file',accept:'.xlsx,.xls',multiple:'true',class:'inp grow',id:'prodFile'}),
-        el('button',{class:'btn sm',style:'flex:0',onclick:importProds},'İçe Aktar')
-      ),
-      el('div',{style:'border-top:1px solid var(--border);margin:12px 0 10px'}),
-      el('p',{class:'det',style:'color:var(--muted);margin:0 0 8px;font-size:13px',html:'⚡ <b>Klasör Senkron (API gibi):</b> Bir klasörü <b>bir kez</b> bağla; LeanSys’te <b>«Excel’e Aktar»</b> ile dosyaları o klasöre indir. Sonra <b>tek tuş</b> — klasördeki tüm üretimler otomatik içeri çekilir/güncellenir (kopya olmaz). LeanSys’e dokunmadan, sunucusuz.'}),
-      el('div',{class:'row'},
-        el('button',{class:'btn sm',style:'flex:0',onclick:()=>syncLeanSysFolder(false)},'🔄 Klasörden Senkronize Et'),
-        el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>syncLeanSysFolder(true)},'🔗 Klasör Seç / Değiştir'),
-        el('span',{id:'leansysFolderInfo',style:'color:var(--muted);font-size:12px;align-self:center'},localStorage.getItem('leansys_dir_name')?('📁 '+localStorage.getItem('leansys_dir_name')):'Henüz klasör bağlı değil')
-      )
-    );
-    const title=el('h3',{class:collapsed?'hidden':'',style:'margin:0;margin-right:auto'},'LeanSys Üretim Verisi İçe Aktar');
-    const card=el('div',{class:'card'+(collapsed?' collapsed':'')});
-    const tgl=el('button',{class:'autozone-handle',style:'flex:0',title:'İçe aktarmayı gizle/göster',
-      onclick:e=>{ const c=body.classList.toggle('hidden'); title.classList.toggle('hidden',c); card.classList.toggle('collapsed',c); localStorage.setItem('kk_imp_collapse',c?'1':'0'); e.currentTarget.textContent=c?'▸':'▾'; }}, collapsed?'▸':'▾');
-    card.append(el('div',{style:'display:flex;justify-content:flex-end;align-items:center;gap:10px'+(collapsed?'':';margin-bottom:8px')}, title, tgl), body);
-    root.append(card);
-  }
+  // İçe aktarma kartı Üretimler'den kaldırıldı → manuel için 🏭 LeanSys sekmesi, otomatik için "📥 LeanSys Güncelle" / LeanSys_Aktar penceresi
   // stats + filtreler (tarih + stok kodu)
   const stockSet=[...new Set(PRODS.map(p=>p.stock_code).filter(Boolean))];
   const filtered=PRODS.filter(matchesUF);
@@ -813,7 +794,7 @@ async function renderUretimler(){
       el('div',{class:'stat'},el('b',{},String(filtered.length)+(filtered.length!==PRODS.length?'/'+PRODS.length:'')),el('span',{},'Üretim')),
       el('div',{class:'stat'},el('b',{},String(stockSet.length)),el('span',{},'Farklı ürün')),
       el('button',{class:'btn sm',style:'flex:0',title:'Supabase’den yeniden çek (LeanSys aktarımından sonra)',onclick:()=>renderUretimler()},'🔄 Yenile'),
-      el('button',{class:'btn sm',style:'flex:0',title:'LeanSys aktarım penceresini açar (üretimi güncelle). İlk seferde tarayıcı “Aç” diye sorar.',onclick:()=>{location.href='leansysaktar:';setTimeout(()=>toast('LeanSys penceresi açılıyor… aktarımdan sonra 🔄 Yenile.','ok'),200);}},'📥 LeanSys Güncelle'),
+      el('button',{class:'btn sm',style:'flex:0',title:'LeanSys aktarım penceresini açar (üretimi güncelle). İlk seferde tarayıcı “Aç” diye sorar.',onclick:()=>{location.href='leansysaktar://open';setTimeout(()=>toast('LeanSys penceresi açılıyor… (tarayıcı sorarsa “Aç”/“Always allow”). Aktarımdan sonra 🔄 Yenile.','ok'),300);}},'📥 LeanSys Güncelle'),
       el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Başlangıç'),el('input',{type:'date',class:'inp',value:URETIM_FILT.start,onchange:e=>{URETIM_FILT.start=e.target.value;renderUretimler();}})),
       el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),el('input',{type:'date',class:'inp',value:URETIM_FILT.end,onchange:e=>{URETIM_FILT.end=e.target.value;renderUretimler();}})),
       el('div',{class:'field',style:'flex:0;min-width:180px'},el('label',{class:'lab'},'Stok Kodu'),
