@@ -544,11 +544,44 @@ document.querySelectorAll('nav.tabs button').forEach(b=>b.onclick=async()=>{
 
 // ====================== ÜRETİMLER ======================
 let PRODS=[];
-let URETIM_FILT={start:'',end:'',stock:''};
+let URETIM_FILT={start:'',end:'',stock:'',group:''};
+// LeanSys MAKİNE GRUBU (şube) eşlemesi: makine kodu -> grup adı (URETIMRAPORU_VW.MAKINEGRUP_ADI, 155 makine 1:1).
+// productions zaten machine_code içerdiği için grup satır bazında BURADAN türetilir (Supabase kolonu gerekmez).
+// Yeni makine eklenirse buraya bir satır eklenir; bilinmeyen kod -> '' (Tümü dışında "(grupsuz)" olarak görünür).
+const MACHINE_GROUP_MAP = {
+  "910.5.001":"ESKISEHIR SUBESI", "910.5.002":"ESKISEHIR SUBESI", "910.5.003":"ANKARA SUBESI", "910.5.004":"VELIKÖY SUBESI", "910.5.005":"ÇERKEZKÖY TEKNIK", "910.5.012":"ÇERKEZKÖY TEKNIK",
+  "910.5.014":"ÇERKEZKÖY TEKNIK", "910.5.015":"ESKISEHIR SUBESI", "910.5.020":"PAKETLEME PROSESI", "910.5.021":"PAKETLEME PROSESI", "910.5.025":"VELIKÖY SUBESI", "910.5.026":"VELIKÖY SUBESI",
+  "910.5.027":"VELIKÖY SUBESI", "910.5.028":"ÇERKEZKÖY TEKNIK", "910.5.029":"VELIKÖY SUBESI", "910.5.030":"ÇERKEZKÖY TEKNIK", "910.5.033":"FIREX", "910.5.034":"ÇERKEZKÖY -1 LAMINASYON",
+  "910.5.035":"VELIKÖY SUBESI", "910.5.039":"VELIKÖY SUBESI", "910.5.043":"ADANA SUBESI", "910.5.046":"ÇERKEZKÖY TEKNIK", "910.5.051":"FIREX", "910.5.052":"ÇERKEZKÖY TEKNIK",
+  "910.5.053":"ESKISEHIR SUBESI", "910.5.054":"VELIKÖY SUBESI", "910.5.055":"ÇERKEZKÖY TEKNIK", "910.5.058":"VELIKÖY SUBESI", "910.5.059":"VELIKÖY SUBESI", "910.5.060":"VELIKÖY SUBESI",
+  "910.5.066":"VELIKÖY SUBESI", "910.5.067":"VELIKÖY SUBESI", "910.5.074":"VELIKÖY SUBESI", "910.5.075":"FIREX", "910.5.076":"PAKETLEME PROSESI", "910.5.079":"FIREX",
+  "910.5.080":"VELIKÖY SUBESI", "910.5.081":"VELIKÖY SUBESI", "910.5.084":"MUAYENE, ÖLÇME,DENEY VE KONROL PROSESI", "910.5.085":"ADANA SUBESI", "910.5.086":"ÇERKEZKÖY TEKNIK", "910.5.087":"ÇERKEZKÖY TEKNIK",
+  "910.5.089":"ESKISEHIR SUBESI", "910.5.090":"ESKISEHIR SUBESI", "910.5.091":"ESKISEHIR SUBESI", "910.5.093":"BURSA NON WOVEN PROSESI", "910.5.094":"VELIKÖY SUBESI", "910.5.096":"VELIKÖY SUBESI",
+  "910.5.097":"VELIKÖY SUBESI", "910.5.100":"PAKETLEME PROSESI", "910.5.104":"ÇERKEZKÖY -1 LAMINASYON", "910.5.107":"FIREX", "910.5.113":"VELIKÖY SUBESI", "910.5.115":"VELIKÖY SUBESI",
+  "910.5.116":"VELIKÖY SUBESI", "910.5.117":"VELIKÖY SUBESI", "910.5.118":"VELIKÖY SUBESI", "910.5.119":"ÇERKEZKÖY TEKNIK", "910.5.121":"VELIKÖY SUBESI", "910.5.123":"VELIKÖY SUBESI",
+  "910.5.126":"BURSA NON WOVEN PROSESI", "910.5.127":"VELIKÖY SUBESI", "910.5.128":"ESKISEHIR SUBESI", "910.5.129":"VELIKÖY SUBESI", "910.5.133":"VELIKÖY SUBESI", "910.5.135":"FIREX",
+  "910.5.136":"ÇERKEZKÖY -1 LAMINASYON", "910.5.137":"VELIKÖY SUBESI", "910.5.138":"VELIKÖY SUBESI", "910.5.139":"VELIKÖY SUBESI", "910.5.140":"PAKETLEME PROSESI", "910.5.141":"ESKISEHIR SUBESI",
+  "910.5.142":"BURSA NON WOVEN PROSESI", "910.5.143":"BURSA NON WOVEN PROSESI", "910.5.144":"BURSA NON WOVEN PROSESI", "910.5.145":"BURSA NON WOVEN PROSESI", "910.5.146":"ESKISEHIR SUBESI", "910.5.147":"ESKISEHIR SUBESI",
+  "910.5.149":"YAPISTRMA PROSESI", "910.5.150":"ESKISEHIR SUBESI", "910.5.152":"ESKISEHIR SUBESI", "910.5.153":"ESKISEHIR SUBESI", "910.5.154":"ESKISEHIR SUBESI", "910.5.155":"VELIKÖY SUBESI",
+  "910.5.156":"ÇERKEZKÖY TEKNIK", "910.5.157":"ESKISEHIR SUBESI", "910.5.159":"ESKISEHIR SUBESI", "910.5.160":"VELIKÖY SUBESI", "910.5.161":"ÇERKEZKÖY TEKNIK", "910.5.162":"VELIKÖY SUBESI",
+  "910.5.164":"ESKISEHIR SUBESI", "910.5.165":"ÇERKEZKÖY TEKNIK", "910.5.166":"ÇERKEZKÖY -1 LAMINASYON", "910.5.167":"ESKISEHIR SUBESI", "910.5.168":"ESKISEHIR SUBESI", "910.5.169":"ESKISEHIR SUBESI",
+  "910.5.170":"ESKISEHIR SUBESI", "910.5.178":"BURSA NON WOVEN PROSESI", "910.5.200":"VELIKÖY SUBESI", "910.5.210":"VELIKÖY SUBESI", "910.5.212":"VELIKÖY SUBESI", "910.5.213":"VELIKÖY SUBESI",
+  "910.5.214":"MUAYENE, ÖLÇME,DENEY VE KONROL PROSESI", "910.5.300":"ADANA SUBESI", "910.5.302":"ADANA SUBESI", "910.5.303":"ADANA SUBESI", "910.5.306":"ADANA SUBESI", "910.5.310":"ADANA SUBESI",
+  "910.5.311":"ADANA SUBESI", "910.5.312":"ADANA SUBESI", "910.5.315":"ADANA SUBESI", "910.5.316":"ADANA SUBESI", "910.5.317":"ADANA SUBESI", "910.5.321":"ADANA SUBESI",
+  "910.5.322":"VELIKÖY SUBESI", "910.5.600":"ESKISEHIR SUBESI", "910.5.602":"ESKISEHIR SUBESI", "910.5.603":"ESKISEHIR SUBESI", "910.5.605":"ESKISEHIR SUBESI", "910.5.606":"ESKISEHIR SUBESI",
+  "910.5.607":"ESKISEHIR SUBESI", "910.5.608":"ESKISEHIR SUBESI", "910.5.609":"ESKISEHIR SUBESI", "910.5.610":"ESKISEHIR SUBESI", "910.5.611":"ADANA SUBESI", "910.5.612":"ADANA SUBESI",
+  "910.5.613":"ESKISEHIR SUBESI", "910.5.615":"ESKISEHIR SUBESI", "910.5.618":"ESKISEHIR SUBESI", "910.5.619":"ESKISEHIR SUBESI", "910.5.651":"ÇERKEZKÖY TEKNIK", "910.5.700":"ANKARA SUBESI",
+  "910.5.701":"ANKARA SUBESI", "910.5.702":"ANKARA SUBESI", "910.5.705":"ANKARA SUBESI", "910.5.706":"ÇERKEZKÖY TEKNIK", "910.5.707":"ANKARA SUBESI", "910.5.708":"ADANA SUBESI",
+  "910.5.719":"ÇERKEZKÖY TEKNIK", "910.5.751":"BURSA NON WOVEN PROSESI", "910.5.800":"DENETIM PROSESI", "910.5.801":"DENETIM PROSESI", "910.5.850":"K.Y.S.SÜREKLILIGI VE IYILESTIRMESI PROSE", "910.5.853":"K.Y.S.SÜREKLILIGI VE IYILESTIRMESI PROSE",
+  "910.5.879":"PROJE TASARIM PROSESI", "910.5.951":"ÇERKEZKÖY TEKNIK", "910.5.952":"ÇERKEZKÖY TEKNIK", "910.5.958":"ANKARA SUBESI", "910.5.961":"ANKARA SUBESI", "910.5.967":"VELIKÖY SUBESI",
+  "910.5.972":"BURSA NON WOVEN PROSESI", "910.5.978":"ADANA SUBESI", "910.5.979":"ADANA SUBESI", "910.5.980":"ADANA SUBESI", "910.55.702":"ANKARA SUBESI"
+};
+function machineGroupOf(code){ return MACHINE_GROUP_MAP[String(code||'').trim()] || ''; }
 function ufDate(p){ return p.prod_date || (p.start_time?String(p.start_time).slice(0,10):''); }
 function matchesUF(p){
   const d=ufDate(p);
   if(URETIM_FILT.stock && p.stock_code!==URETIM_FILT.stock) return false;
+  if(URETIM_FILT.group && machineGroupOf(p.machine_code)!==URETIM_FILT.group) return false;
   if(URETIM_FILT.start && d && d<URETIM_FILT.start) return false;
   if(URETIM_FILT.end && d && d>URETIM_FILT.end) return false;
   return true;
@@ -627,7 +660,7 @@ async function deleteAllProds(){
   const {error:e2}=await sb.from('productions').delete().neq('id',0);
   if(e2){ toast('Üretimler silinemedi: '+esc(e2.message),'err'); return; }
   toast('Tüm üretimler ve kontrol kayıtları silindi.','ok');
-  URETIM_FILT={start:'',end:'',stock:''}; renderUretimler();
+  URETIM_FILT={start:'',end:'',stock:'',group:''}; renderUretimler();
 }
 async function deleteSelectedRecs(){
   const ids=[...document.querySelectorAll('#prodBody .prodChk:checked')].map(c=>Number(c.dataset.id));
@@ -816,8 +849,9 @@ async function renderUretimler(){
   }
   // stats + filtreler (tarih + stok kodu)
   const stockSet=[...new Set(PRODS.map(p=>p.stock_code).filter(Boolean))];
+  const groupSet=[...new Set(PRODS.map(p=>machineGroupOf(p.machine_code)).filter(Boolean))].sort();
   const filtered=PRODS.filter(matchesUF);
-  const aktifFiltre=URETIM_FILT.start||URETIM_FILT.end||URETIM_FILT.stock;
+  const aktifFiltre=URETIM_FILT.start||URETIM_FILT.end||URETIM_FILT.stock||URETIM_FILT.group;
   const filt=el('div',{class:'card'},
     el('div',{class:'toolbar'},
       el('div',{class:'stat'},el('b',{},String(filtered.length)+(filtered.length!==PRODS.length?'/'+PRODS.length:'')),el('span',{},'Üretim')),
@@ -829,7 +863,10 @@ async function renderUretimler(){
       el('div',{class:'field',style:'flex:0;min-width:180px'},el('label',{class:'lab'},'Stok Kodu'),
         (()=>{ const s=el('select',{class:'inp',onchange:e=>{URETIM_FILT.stock=e.target.value;renderUretimler();}});
           s.append(el('option',{value:''},'Tümü')); stockSet.forEach(k=>{const o=el('option',{value:k},k); if(k===URETIM_FILT.stock)o.selected=true; s.append(o);}); return s; })()),
-      aktifFiltre?el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{URETIM_FILT={start:'',end:'',stock:''};renderUretimler();}},'Temizle'):'',
+      el('div',{class:'field',style:'flex:0;min-width:190px'},el('label',{class:'lab'},'Makine Grubu'),
+        (()=>{ const s=el('select',{class:'inp',onchange:e=>{URETIM_FILT.group=e.target.value;renderUretimler();}});
+          s.append(el('option',{value:''},'Tümü')); groupSet.forEach(g=>{const o=el('option',{value:g},g); if(g===URETIM_FILT.group)o.selected=true; s.append(o);}); return s; })()),
+      aktifFiltre?el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{URETIM_FILT={start:'',end:'',stock:'',group:''};renderUretimler();}},'Temizle'):'',
       el('div',{class:'grow'}),
       (can('auto')||can('import')||PROFILE.is_admin)?el('div',{class:'autozone'},
         el('button',{class:'autozone-handle',title:'Üretim araçları',onclick:e=>{e.stopPropagation();e.currentTarget.parentElement.classList.toggle('open');}},'▾'),
@@ -853,18 +890,20 @@ function buildProdTable(rows){
   const tb=el('table');
   tb.append(el('thead',{},el('tr',{},
     el('th',{},el('input',{type:'checkbox',title:'Görünenleri seç',onchange:e=>{document.querySelectorAll('#prodBody .prodChk').forEach(c=>{const tr=c.closest('tr'); if(tr.style.display!=='none')c.checked=e.target.checked;});}})),
-    ...['Tarih','Makine','Cari','Ürün','İş Emri','Miktar','Başlama','Bitiş','Operatör','Op','Kontroller'].map(h=>el('th',{},h))
+    ...['Tarih','Makine','Grup','Cari','Ürün','İş Emri','Miktar','Başlama','Bitiş','Operatör','Op','Kontroller'].map(h=>el('th',{},h))
   )));
   const body=el('tbody',{id:'prodBody'});
-  if(!rows.length) body.append(el('tr',{},el('td',{colspan:13},el('div',{class:'empty'},'Henüz üretim yok. Yukarıdan Excel içe aktar.'))));
+  if(!rows.length) body.append(el('tr',{},el('td',{colspan:14},el('div',{class:'empty'},'Henüz üretim yok. Yukarıdan Excel içe aktar.'))));
   rows.forEach(p=>body.append(prodRow(p)));
   tb.append(body); return tb;
 }
 function prodRow(p){
-  return el('tr',{'data-s':(`${p.machine_name} ${p.stock_code} ${p.stock_name} ${p.operator} ${p.customer||''} ${p.work_order||''}`).toLowerCase()},
+  const _grp=machineGroupOf(p.machine_code);
+  return el('tr',{'data-s':(`${p.machine_name} ${p.stock_code} ${p.stock_name} ${p.operator} ${p.customer||''} ${p.work_order||''} ${_grp}`).toLowerCase()},
     el('td',{},el('input',{type:'checkbox',class:'prodChk','data-id':p.id})),
     el('td',{},fmtDate(p.prod_date)),
     el('td',{},el('div',{},p.machine_name||''),el('div',{class:'det',style:'color:var(--muted);font-size:11px'},p.machine_code||'')),
+    el('td',{style:'font-size:12px'},_grp||el('span',{style:'color:var(--muted)'},'—')),
     el('td',{style:'font-size:12px'},p.customer||''),
     el('td',{},el('div',{},p.stock_code||''),el('div',{class:'det',style:'color:var(--muted);font-size:11px'},(p.stock_name||'').slice(0,32))),
     el('td',{style:'font-size:12px'},p.work_order||''),
