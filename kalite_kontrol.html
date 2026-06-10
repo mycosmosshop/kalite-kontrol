@@ -357,6 +357,9 @@ const esc = s => (s??'').toString().replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;
 const fmtDate = d => { if(!d) return ''; const m=String(d).match(/^(\d{4})-(\d{2})-(\d{2})/); return m? `${m[3]}.${m[2]}.${m[1]}` : new Date(d).toLocaleDateString('tr-TR'); };  // tarih metnini saat-dilimi BAĞIMSIZ göster
 const fmtDT = d => d? new Date(d).toLocaleString('tr-TR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'';
 const fmtTime = d => d? new Date(d).toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'}):'';
+// LeanSys üretim saatleri (start_time/end_time) Supabase'e saat-dilimsiz (naive) yazılıp UTC sanıldığı için
+// yerel gösterimde +3 kayıyordu. Bu fonksiyon değeri UTC olarak okur = orijinal Türkiye duvar-saati (kayma yok).
+const fmtTimeWall = d => d? new Date(d).toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit',timeZone:'UTC'}):'';
 const commaFmt = v => (v==null||v==='')?'' : String(v).replace('.',',');   // ondalık GÖSTER: nokta→virgül
 const parseNum = v => Number(String(v==null?'':v).replace(',','.'));        // sayıya ÇEVİR: virgül→nokta (kıyas/saklama)
 function toast(msg, type='ok'){
@@ -769,7 +772,7 @@ async function _renderDueControls(root){
       const headHtml=`${active==='proses'?`<span class="pill gray" style="margin-right:6px">⚙️ ${prosesNo}. proses · hedef ~${fmtTime(dueMs)}</span>`:''}${esc(p.machine_name||'')}${p.machine_code?` (${esc(p.machine_code)})`:''}${finished?'':' <span style="color:var(--ok);font-weight:700">● devam</span>'}`;
       row.append(el('div',{class:'grow',style:'min-width:240px;pointer-events:none'},
         el('div',{style:'font-weight:600;font-size:14px',html:headHtml}),
-        el('div',{style:'font-size:12.5px;color:var(--muted)',html:`${esc(p.stock_code||'')} ${esc((p.stock_name||'').slice(0,28))}${p.customer?' · 🏢 '+esc(p.customer):''} · ${fmtDate(p.prod_date)} ${fmtTime(p.start_time)}${p.end_time?'–'+fmtTime(p.end_time):''} · İş ${esc(p.work_order||'-')} · ${p.quantity??''} ${esc(p.unit||'')}`})));
+        el('div',{style:'font-size:12.5px;color:var(--muted)',html:`${esc(p.stock_code||'')} ${esc((p.stock_name||'').slice(0,28))}${p.customer?' · 🏢 '+esc(p.customer):''} · ${fmtDate(p.prod_date)} ${fmtTimeWall(p.start_time)}${p.end_time?'–'+fmtTimeWall(p.end_time):''} · İş ${esc(p.work_order||'-')} · ${p.quantity??''} ${esc(p.unit||'')}`})));
       row.append(el('button',{class:'btn',style:'flex:0;min-width:150px;padding:12px 24px;font-size:15px;font-weight:600',onclick:e=>{e.stopPropagation();openIt();}}, '➕ Gir'));
       listWrap.append(row);
     });
@@ -866,8 +869,8 @@ function prodRow(p){
     el('td',{},el('div',{},p.stock_code||''),el('div',{class:'det',style:'color:var(--muted);font-size:11px'},(p.stock_name||'').slice(0,32))),
     el('td',{style:'font-size:12px'},p.work_order||''),
     el('td',{},`${p.quantity??''} ${p.unit||''}`),
-    el('td',{},fmtTime(p.start_time)),
-    el('td',{},fmtTime(p.end_time)),
+    el('td',{},fmtTimeWall(p.start_time)),
+    el('td',{},fmtTimeWall(p.end_time)),
     el('td',{},p.operator||''),
     el('td',{},String(p.op_no??'')),
     el('td',{id:'cc-'+p.id,style:'white-space:nowrap'},'…')
@@ -2211,7 +2214,7 @@ async function renderKayitlar(){
     const pr=pmap[r.production_id]||{};
     body.append(el('tr',{style:'cursor:pointer','data-s':`${r.stock_code} ${r.stock_name} ${r.machine_code} ${pr.customer||''} ${r.work_order||''}`.toLowerCase(),onclick:()=>editRecord(r,pr)},
       flagCell(r),
-      el('td',{},fmtDate(r.checked_at||pr.prod_date||pr.start_time)),
+      el('td',{},fmtDate(pr.prod_date||pr.start_time||r.checked_at)),
       el('td',{style:'font-weight:600'},fmtTime(r.checked_at)),
       el('td',{},String((r.checked_at?shiftForTime(r.checked_at):null)??r.shift??pr.shift??'')),
       el('td',{},pr.customer||''),
@@ -2309,7 +2312,7 @@ async function editRecord(r,prod){
     m.append(el('h3',{},`${STAGES[stage]} Kontrol Kaydı`));
     const P=prod||{};
     const wo=r.work_order||P.work_order||'';
-    const dtTxt = P.start_time ? (fmtDate(P.prod_date||P.start_time)+' '+fmtTime(P.start_time)+(P.end_time?'–'+fmtTime(P.end_time):'')) : fmtDate(P.prod_date||r.checked_at);
+    const dtTxt = P.start_time ? (fmtDate(P.prod_date||P.start_time)+' '+fmtTimeWall(P.start_time)+(P.end_time?'–'+fmtTimeWall(P.end_time):'')) : fmtDate(P.prod_date||r.checked_at);
     const metaFields=[
       ['Ürün Kodu', r.stock_code||P.stock_code],
       ['Müşteri', P.customer],
