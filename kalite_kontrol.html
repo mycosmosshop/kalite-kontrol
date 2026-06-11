@@ -1310,6 +1310,16 @@ async function renderPlan(){
     )
   );
   root.append(impCard);
+  // ---- LeanSys'ten kontrol planı çek ----
+  const lkpCard=el('div',{class:'card'},
+    el('h3',{},'🏭 LeanSys’ten Kontrol Planı Çek'),
+    el('p',{style:'color:var(--muted);margin:-6px 0 14px;font-size:13px'},'LeanSys’teki kontrol planını bu sayfadaki yapıya kopyalar. <b>Stok kodu yaz</b> → sadece o planı; <b>boş bırak</b> → LeanSys’teki <b>TÜM</b> planları çeker. İlgili stokların buradaki planının üzerine yazılır. <b>LeanSys’e hiçbir şey yazılmaz</b> (salt-okuma). Veriyi tazelemek için sunucuda <code>_kontrolplani_guncelle.bat</code> çalıştırılır.'),
+    el('div',{class:'row'},
+      el('div',{class:'field grow'},el('label',{class:'lab'},'Stok Kodu (boş = tümü)'),el('input',{class:'inp',id:'lkp_code',placeholder:'örn. 700.0.454 — boş bırakırsan hepsi'})),
+      el('button',{class:'btn sm',id:'lkp_btn',style:'flex:0',onclick:cekFromLeansys},'📥 LeanSys’ten Çek')
+    )
+  );
+  root.append(lkpCard);
   } // /canPlan
 
   // mevcut maddeler — stok bazlı grup
@@ -1781,6 +1791,81 @@ async function importPlan(){
     if(error)throw error;
     toast(`${items.length} kontrol maddesi yüklendi.`,'ok'); renderPlan();
   }catch(e){ toast('İçe aktarma hatası: '+esc(e.message),'err'); }
+}
+
+// ====================== LeanSys'ten KONTROL PLANI ÇEK ======================
+// LeanSys (salt-okuma) -> Supabase ara tablo (leansys_kontrol_plani) -> bu app'in control_plan_items/headers'ina KOPYALA.
+// LeanSys'e ASLA yazılmaz; yalnız app'in KENDİ tablolarına yazılır.
+function lkpToItems(sc, stokAdi, lines){
+  const ls=[...lines].sort((a,b)=> (Number(a.op_no)||0)-(Number(b.op_no)||0) || (Number(a.sira_no)||0)-(Number(b.sira_no)||0));
+  return ls.filter(r=>r.olculecek && String(r.olculecek).trim()).map((r,i)=>{
+    const isNum = r.hedef_nicel!=null;
+    return {
+      stock_code:sc, stock_name:stokAdi||null, active:true, seq:i+1,
+      op_no: r.op_no!=null?Number(r.op_no):null, operasyon_karti:null,
+      measure_name:r.olculecek, is_qualitative:!isNum,
+      target: isNum ? r.hedef_nicel : null,
+      unit: isNum ? (r.hedef_nitel||null) : null,
+      nitel_hedef: isNum ? null : (r.hedef_nitel||null),
+      lower_limit: isNum ? r.alt_limit : null,
+      upper_limit: isNum ? r.ust_limit : null,
+      sample_size: (r.ornekleme_buyuklugu && r.ornekleme_buyuklugu>0) ? Math.round(r.ornekleme_buyuklugu) : 1,
+      sampling_frequency: r.ornekleme_sikligi!=null ? Number(r.ornekleme_sikligi) : null,
+      son_kontrol_ornekleme: r.son_ornekleme!=null ? Number(r.son_ornekleme) : null,
+      production_equipment:r.uretim_ekipman||null, fmea_number:r.fmea_no||null, special_characteristic:r.ozel_kar||null,
+      method:r.yontem||null, emergency_action_plan:r.acil_eylem||null, capa_plan:r.dof_plan||null,
+      process_control: r.proses_kontrol===1, final_control: r.son_kontrol===1, giris_kalite:false
+    };
+  });
+}
+function lkpToHeader(sc, r){
+  return { stock_code:sc, doc_no:'PL41', doc_title:'KONTROL PLANI',
+    plan_no:r.plan_no||null, rev_no:r.rev_no||null, control_type:r.tip||null,
+    contact:r.ilgili_kisi||null, core_team:r.cekirdek_takim||null, customer:r.cari_adi||null,
+    eng_approve_date:r.muh_onay||null, quality_approve_date:r.klt_onay||null,
+    plan_approve_date:r.plan_onay||null, other_approve_date:r.diger_onay||null,
+    tech_rev_no:r.tr_revno||null, tech_rev_date:r.tr_revtarih||null };
+}
+async function _lkpFlush(list){   // list:[{sc,lines}] → app'in kendi tablolarina yaz
+  const codes=list.map(x=>x.sc);
+  for(let i=0;i<codes.length;i+=100){ const {error}=await sb.from('control_plan_items').delete().in('stock_code',codes.slice(i,i+100)); if(error) throw error; }
+  let items=[]; const headers=[];
+  list.forEach(({sc,lines})=>{ const ad=(lines[0]&&lines[0].stok_adi)||null; items=items.concat(lkpToItems(sc,ad,lines)); if(lines[0]) headers.push(lkpToHeader(sc,lines[0])); });
+  for(let i=0;i<items.length;i+=1000){ const {error}=await sb.from('control_plan_items').insert(items.slice(i,i+1000)); if(error) throw error; }
+  for(let i=0;i<headers.length;i+=500){ const {error}=await sb.from('control_plan_headers').upsert(headers.slice(i,i+500),{onConflict:'stock_code'}); if(error) throw error; }
+}
+async function cekFromLeansys(){
+  if(!can('plan')){ toast('Bu işlem için yetkin yok (plan).','err'); return; }
+  const code=($('#lkp_code')&&$('#lkp_code').value.trim())||'';
+  const tek=!!code;
+  if(tek){ if(!confirm(`"${code}" kontrol planı LeanSys'ten çekilip buradaki planın ÜZERİNE YAZILACAK.\n(LeanSys'e dokunulmaz; yalnız buradaki tablo değişir.)\nDevam?`)) return; }
+  else { if(!confirm("LeanSys'teki TÜM kontrol planları (binlerce) çekilip ilgili stokların buradaki planlarının ÜZERİNE YAZILACAK.\nBu birkaç dakika sürebilir.\n(LeanSys'e dokunulmaz; yalnız buradaki tablolar değişir.)\nDevam?")) return; }
+  const btn=$('#lkp_btn'); if(btn){btn.disabled=true; btn.textContent='⏳ Çekiliyor…';}
+  try{
+    let processed=0, stoks=0;
+    if(tek){
+      const {data,error}=await sb.from('leansys_kontrol_plani').select('*').eq('stok_kodu',code);
+      if(error) throw error;
+      if(!data||!data.length){ toast(`Ara tabloda "${code}" için plan yok. Önce _kontrolplani_guncelle.bat ile tazele.`,'err'); return; }
+      await _lkpFlush([{sc:code,lines:data}]); stoks=1; processed=data.length; PLAN_SEL=code;
+    } else {
+      let offset=0, page=1000, buf=[], curCode=null, pending=[];
+      while(true){
+        const {data,error}=await sb.from('leansys_kontrol_plani').select('*').order('stok_kodu').order('op_no').range(offset,offset+page-1);
+        if(error) throw error;
+        if(!data.length) break;
+        for(const r of data){ if(r.stok_kodu!==curCode){ if(curCode!==null && buf.length) pending.push({sc:curCode,lines:buf}); curCode=r.stok_kodu; buf=[]; } buf.push(r); }
+        if(pending.length>=80){ await _lkpFlush(pending); stoks+=pending.length; processed+=pending.reduce((a,b)=>a+b.lines.length,0); pending=[]; if(btn)btn.textContent=`⏳ ${stoks} plan…`; }
+        if(data.length<page) break;
+        offset+=page;
+      }
+      if(buf.length && curCode!==null) pending.push({sc:curCode,lines:buf});
+      if(pending.length){ await _lkpFlush(pending); stoks+=pending.length; processed+=pending.reduce((a,b)=>a+b.lines.length,0); }
+    }
+    toast(`✅ ${stoks} plan, ${processed} madde LeanSys'ten çekildi.`,'ok');
+    await renderPlan();
+  }catch(e){ toast('LeanSys çekme hatası: '+esc(e.message||String(e)),'err'); }
+  finally{ const b=$('#lkp_btn'); if(b){b.disabled=false; b.textContent='📥 LeanSys’ten Çek';} }
 }
 
 // ====================== KONTROL GİRİŞİ (MODAL) ======================
