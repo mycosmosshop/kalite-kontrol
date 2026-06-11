@@ -1108,7 +1108,20 @@ async function savePlanChanges(){
   const ids=Object.keys(PLAN_PENDING); if(!ids.length){ toast('Kaydedilecek değişiklik yok.','ok'); return; }
   const res=await Promise.all(ids.map(id=> sb.from('control_plan_items').update(PLAN_PENDING[id]).eq('id',Number(id))));
   const err=res.find(r=>r&&r.error); if(err){toast(esc(err.error.message),'err');return;}
-  PLAN_PENDING={}; PLAN_DIRTY=false; updateSaveBtn(); toast(ids.length+' madde kaydedildi.','ok');
+  PLAN_PENDING={}; PLAN_DIRTY=false; updateSaveBtn();
+  markPlanEdited(PLAN_SEL,'değer');   // elle değer değişti → bu plan korunur
+  toast(ids.length+' madde kaydedildi.','ok');
+}
+// Elle düzenleme İŞARETİ: bir plana elle dokununca "kilitli" yap → LeanSys çekiminde KORUNUR (üzerine yazılmaz).
+// Değişiklik zaten control_plan_items'ta (paylaşımlı) → tüm kullanıcılar görür; kilit yalnız çekimde korur.
+async function markPlanEdited(sc, kind){
+  if(!sc) return;
+  try{ await sb.from('control_plan_locks').upsert({stock_code:sc, locked:true, kinds:kind||null, updated_at:new Date().toISOString(), updated_by:(ME&&ME.id)||null},{onConflict:'stock_code'}); }catch(e){}
+}
+async function unlockPlan(sc){
+  if(!confirm(`"${sc}" planının elle-değişiklik KORUMASI kaldırılsın mı?\nBundan sonra LeanSys'ten çekince bu planın üzerine yazılabilir.`)) return;
+  try{ await sb.from('control_plan_locks').delete().eq('stock_code',sc); toast('Koruma kaldırıldı.','ok'); renderPlan(); }
+  catch(e){ toast(esc(e.message||String(e)),'err'); }
 }
 window.addEventListener('beforeunload', e=>{ if(PLAN_DIRTY){ e.preventDefault(); e.returnValue=''; } });
 // kontrol planı antet (başlık) alanları — kalıcı: control_plan_headers (stok başına)
@@ -1138,6 +1151,7 @@ async function reorderPlan(sc, orderedIds, msg){
   const sy=window.scrollY;   // odak/scroll konumunu koru (yeniden çizimde başa kaymasın)
   const res=await Promise.all(orderedIds.map((id,i)=> sb.from('control_plan_items').update({seq:i+1}).eq('id',id)));
   const err=res.find(r=>r&&r.error); if(err){toast(esc(err.error.message),'err');return;}
+  markPlanEdited(sc,'sıralama/ekle/sil');   // ekleme/sıralama/Ölçü No/sürükleme → bu plan korunur
   toast(msg||'Sıralama güncellendi.','ok'); await renderPlan(); window.scrollTo(0,sy);
 }
 function planHeaderCard(sc,stockName){
@@ -1409,21 +1423,26 @@ async function renderPlan(){
       el('label',{class:'lab'},`Görüntülenecek Kontrol Planı — ${planList.length} plan kayıtlı (tıkla → ara/seç)`),
       curBtn, search, listDiv));
   }
-  // seçili planın antet (başlık) bilgisini yükle
+  // seçili planın antet (başlık) bilgisini yükle + elle-değişiklik kilidi
   const {data:_hdr}=await sb.from('control_plan_headers').select('*').eq('stock_code',PLAN_SEL).maybeSingle();
   PLAN_HDR=_hdr||{stock_code:PLAN_SEL,form_no:'PL41',doc_title:'KONTROL PLANI'};
+  let planLocked=false; try{ const {data:_lk}=await sb.from('control_plan_locks').select('locked').eq('stock_code',PLAN_SEL).maybeSingle(); planLocked=!!(_lk&&_lk.locked); }catch(e){}
   // sadece seçili planı göster
   [[PLAN_SEL, byStock[PLAN_SEL]]].forEach(([sc,items])=>{
     const snm=stockNameOf(sc);
     root.append(planHeaderCard(sc, snm));   // antet + Excel/PDF
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px'},
-      el('h3',{style:'margin:0'},`${sc}${snm?' — '+esc(snm):''} (${items.length} madde)`),
+      el('div',{style:'display:flex;align-items:center;gap:10px;flex-wrap:wrap'},
+        el('h3',{style:'margin:0'},`${sc}${snm?' — '+esc(snm):''} (${items.length} madde)`),
+        planLocked?el('span',{class:'pill',style:'background:#f59e0b;color:#fff',title:'Bu planda elle değişiklik var; LeanSys’ten çekince KORUNUR (üzerine yazılmaz). Diğer kullanıcılar da bu hâli görür.'},'✏️ Elle değiştirildi — korunur'):''
+      ),
       el('div',{style:'display:flex;gap:8px;flex-wrap:wrap'},
         canPlan?el('button',{class:'btn sm',id:'planSaveBtn',disabled:!Object.keys(PLAN_PENDING).length,style:'background:'+(Object.keys(PLAN_PENDING).length?'var(--ret)':'var(--ok)')+';cursor:'+(Object.keys(PLAN_PENDING).length?'pointer':'default'),title:'Yaptığın hücre değişikliklerini kaydet',onclick:savePlanChanges},Object.keys(PLAN_PENDING).length?('💾 Kaydet ('+Object.keys(PLAN_PENDING).length+')'):'💾 Kaydedildi'):'',
         canPlan?el('button',{class:'btn sm sec',title:'Maddeleri Op No’ya göre sıralayıp Ölçü No (1..N) yeniden atar',onclick:()=>renumberByOp(sc)},'🔢 Op No’ya göre sırala'):'',
         canPlan?el('button',{class:'btn sm sec',title:'Versiyonla / arşivle / geri yükle',onclick:()=>openPlanArchive(sc, snm)},'🗂 Versiyonlar'):'',
         canPlan?el('button',{class:'btn sm sec',title:'Bu planı başka bir ürün koduna kopyala',onclick:()=>openCopyPlan(sc, snm)},'📋 Başka Koda Kopyala'):'',
+        (canPlan&&planLocked)?el('button',{class:'btn sm sec',title:'Elle-değişiklik korumasını kaldır → LeanSys çekiminde bu plan da güncellenebilir',onclick:()=>unlockPlan(sc)},'🔓 Korumayı Kaldır'):'',
         canPlan?el('button',{class:'btn sm danger',onclick:()=>delPlanStock(sc)},'Bu planı sil'):el('span',{class:'pill gray'},'salt görünüm')
       )
     ));
@@ -1620,6 +1639,7 @@ async function delPlanItem(id){
   if(!confirm('Bu kontrol maddesi silinsin mi?'))return;
   const {error}=await sb.from('control_plan_items').delete().eq('id',id);
   if(error){toast(esc(error.message),'err');return;}
+  markPlanEdited(PLAN_SEL,'madde sil');   // madde silindi → bu plan korunur
   renderPlan();
 }
 async function delPlanStock(sc){
@@ -1949,31 +1969,44 @@ async function cekFromLeansys(){
   if(!can('plan')){ toast('Bu işlem için yetkin yok (plan).','err'); return; }
   const code=($('#lkp_code')&&$('#lkp_code').value.trim())||'';
   const tek=!!code;
-  if(tek){ if(!confirm(`"${code}" kontrol planı LeanSys'ten çekilip buradaki planın ÜZERİNE YAZILACAK.\n(LeanSys'e dokunulmaz; yalnız buradaki tablo değişir.)\nDevam?`)) return; }
-  else { if(!confirm("LeanSys'teki TÜM kontrol planları (binlerce) çekilip ilgili stokların buradaki planlarının ÜZERİNE YAZILACAK.\nBu birkaç dakika sürebilir.\n(LeanSys'e dokunulmaz; yalnız buradaki tablolar değişir.)\nDevam?")) return; }
+  // ELLE DEĞİŞTİRİLMİŞ (kilitli) planlar — LeanSys çekiminde KORUNUR (üzerine yazılmaz)
+  let lockedSet=new Set();
+  try{ const {data:lk}=await sb.from('control_plan_locks').select('stock_code').eq('locked',true); lockedSet=new Set((lk||[]).map(x=>x.stock_code)); }catch(e){}
+  let overwriteLocked=false;
+  if(tek){
+    if(lockedSet.has(code)){
+      if(!confirm(`"${code}" planında ELLE DEĞİŞİKLİK var (korunuyor).\nLeanSys'ten çekersen elle değişikliklerin SİLİNİR, LeanSys hâli yazılır.\nYine de üzerine yazılsın mı?`)) return;
+      overwriteLocked=true;
+    } else if(!confirm(`"${code}" kontrol planı LeanSys'ten çekilip buradaki planın ÜZERİNE YAZILACAK.\n(LeanSys'e dokunulmaz; yalnız buradaki tablo değişir.)\nDevam?`)) return;
+  } else {
+    if(!confirm("LeanSys'teki TÜM kontrol planları çekilip ilgili stokların buradaki planlarının ÜZERİNE YAZILACAK.\nELLE DEĞİŞTİRDİĞİN planlar KORUNUR (atlanır).\nBu birkaç dakika sürebilir.\n(LeanSys'e dokunulmaz.)\nDevam?")) return;
+  }
   const btn=$('#lkp_btn'); if(btn){btn.disabled=true; btn.textContent='⏳ Çekiliyor…';}
   try{
-    let processed=0, stoks=0;
+    let processed=0, stoks=0, skipped=0;
     if(tek){
       const {data,error}=await sb.from('leansys_kontrol_plani').select('*').eq('stok_kodu',code);
       if(error) throw error;
       if(!data||!data.length){ toast(`Ara tabloda "${code}" için plan yok. Önce _kontrolplani_guncelle.bat ile tazele.`,'err'); return; }
       await _lkpFlush([{sc:code,lines:data}]); stoks=1; processed=data.length; PLAN_SEL=code;
+      if(overwriteLocked){ try{ await sb.from('control_plan_locks').delete().eq('stock_code',code); }catch(e){} }  // artık LeanSys hâli → koruma kalktı
     } else {
+      // kilitli planları ATLA (koru)
+      const flushSafe=async(list)=>{ const keep=list.filter(x=>!lockedSet.has(x.sc)); skipped+=(list.length-keep.length); if(keep.length){ await _lkpFlush(keep); stoks+=keep.length; processed+=keep.reduce((a,b)=>a+b.lines.length,0); } };
       let offset=0, page=1000, buf=[], curCode=null, pending=[];
       while(true){
         const {data,error}=await sb.from('leansys_kontrol_plani').select('*').order('stok_kodu').order('op_no').range(offset,offset+page-1);
         if(error) throw error;
         if(!data.length) break;
         for(const r of data){ if(r.stok_kodu!==curCode){ if(curCode!==null && buf.length) pending.push({sc:curCode,lines:buf}); curCode=r.stok_kodu; buf=[]; } buf.push(r); }
-        if(pending.length>=80){ await _lkpFlush(pending); stoks+=pending.length; processed+=pending.reduce((a,b)=>a+b.lines.length,0); pending=[]; if(btn)btn.textContent=`⏳ ${stoks} plan…`; }
+        if(pending.length>=80){ await flushSafe(pending); pending=[]; if(btn)btn.textContent=`⏳ ${stoks} plan…`; }
         if(data.length<page) break;
         offset+=page;
       }
       if(buf.length && curCode!==null) pending.push({sc:curCode,lines:buf});
-      if(pending.length){ await _lkpFlush(pending); stoks+=pending.length; processed+=pending.reduce((a,b)=>a+b.lines.length,0); }
+      if(pending.length){ await flushSafe(pending); }
     }
-    toast(`✅ ${stoks} plan, ${processed} madde LeanSys'ten çekildi.`,'ok');
+    toast(`✅ ${stoks} plan, ${processed} madde çekildi.${skipped?` · ${skipped} plan elle değişiklik içerdiği için KORUNDU (atlandı).`:''}`,'ok');
     await renderPlan();
   }catch(e){ toast('LeanSys çekme hatası: '+esc(e.message||String(e)),'err'); }
   finally{ const b=$('#lkp_btn'); if(b){b.disabled=false; b.textContent='📥 LeanSys’ten Çek';} }
