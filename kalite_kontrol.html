@@ -2216,11 +2216,11 @@ async function renderStokDokumanlari(root){
   root.append(kayitTabRow());
   root.append(el('div',{class:'msg info',html:'📄 LeanSys <b>Stok Dokümanları</b> (kod bazlı). <b>Stok kodu</b>, stok adı veya doküman adı ile ara. Dosyalar ağ paylaşımında (<code>\\\\10.11.11.11\\dokumanlar\\stokgorsel</code>) — <b>linki kopyalayıp</b> Dosya Gezgini adres çubuğuna yapıştır.'}));
   const q0=(KAYIT_FILT&&KAYIT_FILT.stock)?KAYIT_FILT.stock:'';
-  const search=el('input',{class:'inp',id:'stokDokSearch',placeholder:'🔍 stok kodu, stok adı veya doküman adı…',style:'max-width:340px',value:q0,
+  const search=el('input',{class:'inp',id:'stokDokSearch',placeholder:'🔍 stok kodu, stok adı veya doküman adı…',style:'width:100%',value:q0,
     oninput:e=>{ clearTimeout(_stokDokDeb); const v=e.target.value; _stokDokDeb=setTimeout(()=>doSearch(v),450); }});
   const countEl=el('div',{class:'stat'},el('b',{id:'sdCount'},'—'),el('span',{},'doküman'));
   root.append(el('div',{class:'card'},el('div',{class:'toolbar'},
-    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Ara'),search),
+    el('div',{class:'field',style:'flex:1;min-width:260px;max-width:440px'},el('label',{class:'lab'},'Ara'),search),
     el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{search.value='';doSearch('');}},'Temizle'),
     el('div',{class:'grow'}), countEl
   )));
@@ -2247,8 +2247,9 @@ async function renderStokDokumanlari(root){
       const g=groups[code]; const card=el('div',{class:'card'});
       card.append(el('div',{style:'font-weight:700;margin-bottom:8px;font-size:14px'},`${code} `,
         el('span',{style:'font-weight:400;color:var(--muted)'},'— '+(g.adi||''))));
-      const tb=el('table');
-      tb.append(el('thead',{},el('tr',{},...['Doküman Adı','Açıklama','Rev','Yayın','Son Rev','Link'].map(h=>el('th',{},h)))));
+      const tb=el('table',{style:'table-layout:fixed;width:100%'});
+      const cols=[['Doküman Adı','26%'],['Açıklama','22%'],['Rev','8%'],['Yayın','11%'],['Son Rev','11%'],['Link','22%']];
+      tb.append(el('thead',{},el('tr',{},...cols.map(c=>el('th',{style:'width:'+c[1]},c[0])))));
       const body=el('tbody');
       g.items.forEach(r=>{
         const act=el('td',{style:'white-space:nowrap'});
@@ -2257,8 +2258,8 @@ async function renderStokDokumanlari(root){
           act.append(el('button',{class:'btn sm sec',style:'margin-left:6px',title:'Tarayıcı ağ yolunu açamayabilir; kopyalama daha güvenli',onclick:()=>{ try{ window.open('file:'+r.link.replace(/\\/g,'/'),'_blank'); }catch(_){} }},'🔗 Aç'));
         } else { act.append(el('span',{style:'color:var(--muted)'},'link yok')); }
         body.append(el('tr',{},
-          el('td',{style:'font-weight:600'},r.doc_adi||'—'),
-          el('td',{style:'font-size:11px;color:var(--muted)',title:r.aciklama||''},(r.aciklama||'').slice(0,60)),
+          el('td',{style:'font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:r.doc_adi||''},r.doc_adi||'—'),
+          el('td',{style:'font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:r.aciklama||''},r.aciklama||''),
           el('td',{},r.rev_no||''),
           el('td',{},r.yayin_tarihi?fmtDate(r.yayin_tarihi):''),
           el('td',{},r.son_rev?fmtDate(r.son_rev):''),
