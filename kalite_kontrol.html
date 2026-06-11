@@ -1396,6 +1396,23 @@ async function renderPlan(){
     renderList();
     root.append(mgmt);
   }
+  // ---- ADMIN: elle değiştirilen planlar (ne değişti / ne zaman) ----
+  if(canPlan && PROFILE && PROFILE.is_admin){
+    let locks=[]; try{ const {data}=await sb.from('control_plan_locks').select('*').eq('locked',true).order('updated_at',{ascending:false}); locks=data||[]; }catch(e){}
+    if(locks.length){
+      const box=el('div',{style:'max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:4px;margin-top:6px'});
+      locks.forEach(l=>{ const nm=stockNameOf(l.stock_code);
+        box.append(el('div',{style:'display:flex;align-items:center;gap:10px;padding:4px 6px;border-bottom:1px solid var(--line);cursor:pointer',title:'Bu planı aç',onclick:()=>{PLAN_SEL=l.stock_code;renderPlan();}},
+          el('span',{style:'font-weight:600;min-width:120px'},l.stock_code),
+          el('span',{style:'flex:1;color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'},nm?('— '+nm):''),
+          el('span',{class:'pill',style:'background:#0288d1;color:#fff;font-size:11px'},l.kinds||'değişiklik'),
+          el('span',{style:'color:var(--muted);font-size:11px;white-space:nowrap'},l.updated_at?fmtDT(l.updated_at):'')));
+      });
+      root.append(collapseBar(`✏️ Elle Değiştirilen Planlar (admin) — ${locks.length}`,
+        el('p',{style:'color:var(--muted);margin:0 0 8px;font-size:12px'},'Elle değişiklik yapılan planlar (LeanSys çekiminde korunur). Tür + tarih gösterilir; satıra tıkla → planı aç.'),
+        box));
+    }
+  }
   // ---- Plan seçici — ARANABİLİR (plan görünümünün hemen üstünde) ----
   { const curNm=stockNameOf(PLAN_SEL);
     const curBtn=el('button',{type:'button',class:'inp',style:'text-align:left;cursor:pointer;width:100%;font-weight:600'},
@@ -1433,10 +1450,7 @@ async function renderPlan(){
     root.append(planHeaderCard(sc, snm));   // antet + Excel/PDF
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px'},
-      el('div',{style:'display:flex;align-items:center;gap:10px;flex-wrap:wrap'},
-        el('h3',{style:'margin:0'},`${sc}${snm?' — '+esc(snm):''} (${items.length} madde)`),
-        planLocked?el('span',{class:'pill',style:'background:#f59e0b;color:#fff',title:'Bu planda elle değişiklik var; LeanSys’ten çekince KORUNUR (üzerine yazılmaz). Diğer kullanıcılar da bu hâli görür.'},'✏️ Elle değiştirildi — korunur'):''
-      ),
+      el('h3',{style:'margin:0'},`${sc}${snm?' — '+esc(snm):''} (${items.length} madde)`),
       el('div',{style:'display:flex;gap:8px;flex-wrap:wrap'},
         canPlan?el('button',{class:'btn sm',id:'planSaveBtn',disabled:!Object.keys(PLAN_PENDING).length,style:'background:'+(Object.keys(PLAN_PENDING).length?'var(--ret)':'var(--ok)')+';cursor:'+(Object.keys(PLAN_PENDING).length?'pointer':'default'),title:'Yaptığın hücre değişikliklerini kaydet',onclick:savePlanChanges},Object.keys(PLAN_PENDING).length?('💾 Kaydet ('+Object.keys(PLAN_PENDING).length+')'):'💾 Kaydedildi'):'',
         canPlan?el('button',{class:'btn sm sec',title:'Maddeleri Op No’ya göre sıralayıp Ölçü No (1..N) yeniden atar',onclick:()=>renumberByOp(sc)},'🔢 Op No’ya göre sırala'):'',
