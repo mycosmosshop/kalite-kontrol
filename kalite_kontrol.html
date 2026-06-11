@@ -1338,6 +1338,44 @@ async function renderPlan(){
   root.append(el('div',{class:'card'},el('div',{class:'row'},
     el('div',{class:'field grow'},el('label',{class:'lab'},`Görüntülenecek Kontrol Planı — ${stockKeys.length} plan kayıtlı`),planSel)
   )));
+  // ---- Plan Yönetimi: çoklu / toplu sil ----
+  if(canPlan && stockKeys.length){
+    const selSet=new Set();
+    const filt=el('input',{class:'inp',placeholder:'🔍 koda/ada göre filtrele…',oninput:()=>renderList()});
+    const countBadge=el('span',{class:'pill gray'},'');
+    const listBox=el('div',{style:'max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:4px;margin:10px 0'});
+    const matchKeys=()=>{ const q=(filt.value||'').toLowerCase().trim(); return stockKeys.filter(k=> !q || k.toLowerCase().includes(q) || (stockNameOf(k)||'').toLowerCase().includes(q)); };
+    function renderList(){
+      listBox.innerHTML='';
+      const keys=matchKeys(); const shown=keys.slice(0,800);
+      shown.forEach(k=>{
+        const nm=stockNameOf(k);
+        const cb=el('input',{type:'checkbox'}); cb.checked=selSet.has(k);
+        cb.onchange=()=>{ cb.checked?selSet.add(k):selSet.delete(k); countBadge.textContent=`${keys.length} plan · ${selSet.size} seçili`; };
+        listBox.append(el('label',{style:'display:flex;align-items:center;gap:8px;padding:3px 5px;cursor:pointer;border-bottom:1px solid var(--line)'},
+          cb, el('span',{style:'font-weight:600;min-width:120px'},k),
+          el('span',{style:'color:var(--muted);font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'},nm?('— '+nm):''),
+          el('span',{style:'color:var(--muted);font-size:11px'},(byStock[k]||[]).length+' madde')));
+      });
+      if(keys.length>shown.length) listBox.append(el('div',{style:'padding:6px;color:var(--muted);font-size:12px'},`… ${keys.length-shown.length} plan daha — filtreyle daralt (hepsini silmek için "TÜM Planları Sil")`));
+      countBadge.textContent=`${keys.length} plan · ${selSet.size} seçili`;
+    }
+    const mgmt=el('div',{class:'card'},
+      el('h3',{},'🗑 Plan Yönetimi — Çoklu / Toplu Sil'),
+      el('p',{style:'color:var(--muted);margin:-6px 0 10px;font-size:13px'},'Planları seçip <b>Seçilenleri Sil</b> ya da <b>TÜM Planları Sil</b>. Sadece <b>buradaki</b> planı (maddeler + antet) siler; <b>LeanSys’e dokunmaz</b>. Geri alınamaz.'),
+      el('div',{class:'row'},el('div',{class:'field grow'},el('label',{class:'lab'},'Planlarda ara'),filt),countBadge),
+      listBox,
+      el('div',{class:'row',style:'gap:8px;flex-wrap:wrap'},
+        el('button',{class:'btn sm sec',onclick:()=>{ matchKeys().forEach(k=>selSet.add(k)); renderList(); }},'☑ Görünenleri Seç'),
+        el('button',{class:'btn sm sec',onclick:()=>{ selSet.clear(); renderList(); }},'Seçimi Temizle'),
+        el('button',{class:'btn sm danger',onclick:()=>bulkDeletePlans([...selSet],false)},'🗑 Seçilenleri Sil'),
+        el('div',{class:'grow'}),
+        el('button',{class:'btn sm danger',onclick:()=>bulkDeletePlans(stockKeys.slice(),true)},'🗑 TÜM Planları Sil')
+      )
+    );
+    renderList();
+    root.append(mgmt);
+  }
   // seçili planın antet (başlık) bilgisini yükle
   const {data:_hdr}=await sb.from('control_plan_headers').select('*').eq('stock_code',PLAN_SEL).maybeSingle();
   PLAN_HDR=_hdr||{stock_code:PLAN_SEL,form_no:'PL41',doc_title:'KONTROL PLANI'};
@@ -1556,6 +1594,30 @@ async function delPlanStock(sc){
   const {error}=await sb.from('control_plan_items').delete().eq('stock_code',sc);
   if(error){toast(esc(error.message),'err');return;}
   toast('Plan silindi.','ok'); renderPlan();
+}
+// Çoklu / toplu plan silme — app'in KENDİ tablolarından (control_plan_items + headers). LeanSys'e dokunmaz.
+async function bulkDeletePlans(codes, isAll){
+  if(!can('plan')){ toast('Bu işlem için yetkin yok (plan).','err'); return; }
+  codes=[...new Set((codes||[]).filter(Boolean))];
+  if(!codes.length){ toast('Önce plan seç.','err'); return; }
+  const msg = isAll
+    ? `DİKKAT: ${codes.length} planın TAMAMI (maddeler + antet) SİLİNECEK. Geri ALINAMAZ!\n(Yalnız buradaki planlar; LeanSys'e dokunulmaz.)\n\nDevam?`
+    : `Seçilen ${codes.length} plan (maddeler + antet) silinecek. Geri alınamaz.\n(Yalnız buradaki planlar; LeanSys'e dokunulmaz.)\n\nDevam?`;
+  if(!confirm(msg)) return;
+  if(isAll && !confirm('SON ONAY: Tüm kontrol planlarını silmek istediğine emin misin? Bu işlem geri alınamaz.')) return;
+  try{
+    let done=0;
+    for(let i=0;i<codes.length;i+=100){
+      const chunk=codes.slice(i,i+100);
+      const {error}=await sb.from('control_plan_items').delete().in('stock_code',chunk);
+      if(error) throw error;
+      await sb.from('control_plan_headers').delete().in('stock_code',chunk);   // anteti de temizle
+      done+=chunk.length;
+    }
+    PLAN_SEL=null; PLAN_PENDING={};
+    toast(`✅ ${done} plan silindi.`,'ok');
+    await renderPlan();
+  }catch(e){ toast('Silme hatası: '+esc(e.message||String(e)),'err'); }
 }
 async function renumberByOp(sc){
   if(!confirm('Maddeler Op No’ya göre yeniden sıralanıp Ölçü No (1..N) atanacak. Mevcut elle sıralaman değişir. Devam?'))return;
