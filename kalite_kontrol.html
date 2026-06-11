@@ -785,13 +785,15 @@ async function renderMalKabul(){
     el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:13px',html:'Tedarikçiden mal kabulden gelen ürünler (salt görünüm). Tazelemek: sunucuda <code>_malkabul_guncelle.bat</code>. <b>Giriş kalite kontrolü</b>, <b>Girilecek Kontroller → Giriş Kalite</b>’den girilir.'})));
   const fSearch=el('input',{class:'inp',placeholder:'🔍 stok kodu / ad / tedarikçi…',style:'min-width:240px',oninput:()=>{clearTimeout(_mkDeb);_mkDeb=setTimeout(load,400);}});
   const fFrom=el('input',{type:'date',class:'inp',onchange:load});
+  const fTo=el('input',{type:'date',class:'inp',onchange:load});
   const fTur=el('select',{class:'inp',onchange:load}); [['0','Mal Kabul'],['1','İade'],['','Hepsi']].forEach(([v,t])=>fTur.append(el('option',{value:v},t)));
   const cnt=el('div',{class:'stat'},el('b',{id:'mkCount'},'—'),el('span',{},'kayıt'));
   root.append(el('div',{class:'card'},el('div',{class:'toolbar'},
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Ara'),fSearch),
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Tür'),fTur),
-    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'İrsaliye Tarihinden'),fFrom),
-    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{fSearch.value='';fFrom.value='';fTur.value='0';load();}},'Temizle'),
+    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'İrsaliye Tarihi — Başlangıç'),fFrom),
+    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),fTo),
+    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{fSearch.value='';fFrom.value='';fTo.value='';fTur.value='0';load();}},'Temizle'),
     el('div',{class:'grow'}), cnt)));
   const out=el('div'); root.append(out);
   let _mkSeq=0;
@@ -801,6 +803,7 @@ async function renderMalKabul(){
     let q=sb.from('mal_kabul').select('*').order('tarih',{ascending:false}).limit(500);
     const t=(fSearch.value||'').trim(); if(t){ const s=t.replace(/[,()%]/g,' ').trim(); q=q.or(`stok_kodu.ilike.%${s}%,stok_adi.ilike.%${s}%,cari_adi.ilike.%${s}%`); }
     if(fFrom.value) q=q.gte('tarih',fFrom.value);
+    if(fTo.value) q=q.lte('tarih',fTo.value);
     if(fTur.value!=='') q=q.eq('iade',Number(fTur.value));
     const {data,error}=await q;
     if(my!==_mkSeq) return;   // bu çağrı bayatladı → render etme
@@ -838,10 +841,12 @@ async function _renderGirisKalite(root){
   card.append(el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:13px',html:'Tedarikçiden mal kabulden gelen ürünler. Tazelemek için sunucuda <code>_malkabul_guncelle.bat</code>. Bir kayda <b>Kontrol Gir</b> → giriş kalite planına göre <b>random kontrol</b> oluşturulur (seri başı gibi).'}));
   const fCode=el('input',{class:'inp',placeholder:'🔍 stok kodu / ad / tedarikçi…',style:'min-width:240px',oninput:()=>{clearTimeout(_gkDeb);_gkDeb=setTimeout(load,400);}});
   const fFrom=el('input',{type:'date',class:'inp',onchange:load});
+  const fTo=el('input',{type:'date',class:'inp',onchange:load});
   card.append(el('div',{class:'toolbar'},
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Ara'),fCode),
-    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Tarihten'),fFrom),
-    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{fCode.value='';fFrom.value='';load();}},'Temizle')));
+    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'İrsaliye Tarihi — Başlangıç'),fFrom),
+    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),fTo),
+    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{fCode.value='';fFrom.value='';fTo.value='';load();}},'Temizle')));
   const out=el('div'); card.append(out); root.append(card);
   let _gkSeq=0;
   async function load(){
@@ -850,6 +855,7 @@ async function _renderGirisKalite(root){
     let q=sb.from('mal_kabul').select('*').order('tarih',{ascending:false}).limit(300).or('iade.eq.0,iade.is.null');   // iade HARİÇ (giriş kalite kuyruğu)
     const t=(fCode.value||'').trim(); if(t){ const s=t.replace(/[,()%]/g,' ').trim(); q=q.or(`stok_kodu.ilike.%${s}%,stok_adi.ilike.%${s}%,cari_adi.ilike.%${s}%`); }
     if(fFrom.value) q=q.gte('tarih',fFrom.value);
+    if(fTo.value) q=q.lte('tarih',fTo.value);
     const {data,error}=await q;
     if(my!==_gkSeq) return;
     if(error){ out.innerHTML='<div class="msg err">'+esc(error.message)+'</div>'; return; }
