@@ -2227,7 +2227,7 @@ function kayitTabRow(){
 }
 
 // 📄 LeanSys Stok Dokümanları (SBT015) — kod bazlı arama; metadata Supabase'de, dosya ağ paylaşımında (link kopyala)
-let _stokDokDeb=null;
+let _stokDokDeb=null, _sdObserver=null;
 // UNC ağ yolunu HTTP URL'ine çevir — YALNIZCA HTTP'den doğrulanmış paylaşım: \\10.11.11.11\dokumanlar\... (%96 dosya).
 // Diğer host'lar (10.11.11.99 vb.) web'den servis etmiyor → null döner → kopyala-yapıştır fallback.
 function stokDocHttpUrl(unc){
@@ -2241,120 +2241,130 @@ async function renderStokDokumanlari(root){
   root.append(el('div',{class:'msg info',html:'📄 LeanSys <b>Stok Dokümanları</b> (kod bazlı). <b>Stok kodu</b>, stok adı veya doküman adı ile ara. Dosyalar ağ paylaşımında (<code>\\\\10.11.11.11\\dokumanlar\\stokgorsel</code>) — <b>linki kopyalayıp</b> Dosya Gezgini adres çubuğuna yapıştır.'}));
   const q0=(KAYIT_FILT&&KAYIT_FILT.stock)?KAYIT_FILT.stock:'';
   const search=el('input',{class:'inp',id:'stokDokSearch',placeholder:'🔍 stok kodu, stok adı veya doküman adı…',style:'width:100%',value:q0,
-    oninput:e=>{ clearTimeout(_stokDokDeb); const v=e.target.value; _stokDokDeb=setTimeout(()=>doSearch(v),450); }});
+    oninput:e=>{ clearTimeout(_stokDokDeb); _stokDokDeb=setTimeout(()=>load(true),450); }});
   const countEl=el('div',{class:'stat'},el('b',{id:'sdCount'},'—'),el('span',{},'doküman'));
   root.append(el('div',{class:'card'},el('div',{class:'toolbar'},
     el('div',{class:'field',style:'flex:1;min-width:260px;max-width:440px'},el('label',{class:'lab'},'Ara'),search),
-    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{search.value='';doSearch('');}},'Temizle'),
+    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{search.value='';load(true);}},'Temizle'),
     el('div',{class:'grow'}), countEl
   )));
   const out=el('div'); root.append(out);
-
-  async function doSearch(term){
-    term=(term||'').trim();
-    out.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
-    let qb=sb.from('stok_dokumanlari').select('*').order('stok_kodu',{ascending:true}).limit(500);
-    if(term){ const safe=term.replace(/[,()%]/g,' ').trim();
-      qb=qb.or(`stok_kodu.ilike.%${safe}%,stok_adi.ilike.%${safe}%,doc_adi.ilike.%${safe}%`); }
+  const sentinel=el('div',{style:'height:1px'}); root.append(sentinel);
+  const PAGE=200, COLS=[['Doküman Adı','26%'],['Açıklama','22%'],['Rev','8%'],['Yayın','11%'],['Son Rev','11%'],['Link','22%']];
+  const st={term:'',offset:0,loading:false,done:false,lastCode:null,lastBody:null};
+  function groupCard(code,adi){
+    const card=el('div',{class:'card'});
+    card.append(el('div',{style:'font-weight:700;margin-bottom:8px;font-size:14px'},`${code} `,
+      el('span',{style:'font-weight:400;color:var(--muted)'},'— '+(adi||''))));
+    const tb=el('table',{style:'table-layout:fixed;width:100%'});
+    tb.append(el('thead',{},el('tr',{},...COLS.map(c=>el('th',{style:'width:'+c[1]},c[0])))));
+    const body=el('tbody'); tb.append(body); card.append(tb); out.append(card); return body;
+  }
+  function rowEl(r){
+    const httpUrl=stokDocHttpUrl(r.link);
+    const copyUNC=()=>{ try{ navigator.clipboard.writeText(r.link); toast('📋 Link kopyalandı — Dosya Gezgini adres çubuğuna yapıştır.','ok'); }catch(_){ window.prompt('Linki kopyala:',r.link); } };
+    const nameCell=el('td',{style:'font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:r.doc_adi||''});
+    if(httpUrl) nameCell.append(el('a',{href:httpUrl,target:'_blank',rel:'noopener',style:'color:#2563eb;text-decoration:none'},r.doc_adi||'—'));
+    else nameCell.append(document.createTextNode(r.doc_adi||'—'));
+    const act=el('td',{style:'white-space:nowrap'});
+    if(r.link){
+      if(httpUrl) act.append(el('a',{class:'btn sm',href:httpUrl,target:'_blank',rel:'noopener',style:'text-decoration:none;display:inline-block',title:'Tarayıcıda aç'},'🔗 Aç'));
+      else act.append(el('button',{class:'btn sm',title:r.link,onclick:()=>{ try{navigator.clipboard.writeText(r.link);}catch(_){}; toast('Bu dosya farklı sunucuda — link kopyalandı, Dosya Gezgini’ne yapıştır.','ok'); }},'🔗 Aç'));
+      act.append(el('button',{class:'btn sm sec',style:'margin-left:6px',title:r.link,onclick:copyUNC},'📋 Kopyala'));
+    } else { act.append(el('span',{style:'color:var(--muted)'},'link yok')); }
+    return el('tr',{},
+      nameCell,
+      el('td',{style:'font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:r.aciklama||''},r.aciklama||''),
+      el('td',{},r.rev_no||''),
+      el('td',{},r.yayin_tarihi?fmtDate(r.yayin_tarihi):''),
+      el('td',{},r.son_rev?fmtDate(r.son_rev):''),
+      act
+    );
+  }
+  async function load(reset){
+    if(st.loading) return;
+    if(reset){ st.term=(search.value||'').trim(); st.offset=0; st.done=false; st.lastCode=null; st.lastBody=null; out.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>'; }
+    if(st.done) return;
+    st.loading=true;
+    let qb=sb.from('stok_dokumanlari').select('*').order('stok_kodu',{ascending:true}).order('doc_rec_id',{ascending:true}).range(st.offset,st.offset+PAGE-1);
+    if(st.term){ const safe=st.term.replace(/[,()%]/g,' ').trim(); qb=qb.or(`stok_kodu.ilike.%${safe}%,stok_adi.ilike.%${safe}%,doc_adi.ilike.%${safe}%`); }
     const {data,error}=await qb;
-    if(error){ out.innerHTML=''; out.append(el('div',{class:'card'},el('div',{class:'empty'},'Hata: '+(error.message||'sorgu')))); return; }
+    st.loading=false;
+    if(error){ out.innerHTML=''; out.append(el('div',{class:'card'},el('div',{class:'empty'},'Hata: '+(error.message||'sorgu')))); st.done=true; return; }
     const rows=data||[];
-    const cEl=$('#sdCount'); if(cEl) cEl.textContent=String(rows.length)+(rows.length>=500?'+':'');
-    renderRows(rows,term);
+    if(st.offset===0){ if(!rows.length){ out.innerHTML=''; out.append(el('div',{class:'card'},el('div',{class:'empty'}, st.term?'Eşleşen stok dokümanı yok.':'Kayıt yok.'))); st.done=true; const c=$('#sdCount'); if(c)c.textContent='0'; return; } out.innerHTML=''; }
+    rows.forEach(r=>{ const code=r.stok_kodu||'—'; if(code!==st.lastCode){ st.lastCode=code; st.lastBody=groupCard(code,r.stok_adi); } st.lastBody.append(rowEl(r)); });
+    st.offset+=rows.length;
+    if(rows.length<PAGE) st.done=true;
+    const c=$('#sdCount'); if(c) c.textContent=String(st.offset)+(st.done?'':'+');
+    if(!st.done){ const rc=sentinel.getBoundingClientRect(); if(rc.top < (window.innerHeight||document.documentElement.clientHeight)+400) requestAnimationFrame(()=>load(false)); }
   }
-  function renderRows(rows,term){
-    out.innerHTML='';
-    if(!rows.length){ out.append(el('div',{class:'card'},el('div',{class:'empty'}, term?'Eşleşen stok dokümanı yok.':'Aramak için stok kodu/adı veya doküman adı yaz.'))); return; }
-    const groups={};
-    rows.forEach(r=>{ const k=r.stok_kodu||'—'; (groups[k]=groups[k]||{adi:r.stok_adi,items:[]}).items.push(r); });
-    Object.keys(groups).forEach(code=>{
-      const g=groups[code]; const card=el('div',{class:'card'});
-      card.append(el('div',{style:'font-weight:700;margin-bottom:8px;font-size:14px'},`${code} `,
-        el('span',{style:'font-weight:400;color:var(--muted)'},'— '+(g.adi||''))));
-      const tb=el('table',{style:'table-layout:fixed;width:100%'});
-      const cols=[['Doküman Adı','26%'],['Açıklama','22%'],['Rev','8%'],['Yayın','11%'],['Son Rev','11%'],['Link','22%']];
-      tb.append(el('thead',{},el('tr',{},...cols.map(c=>el('th',{style:'width:'+c[1]},c[0])))));
-      const body=el('tbody');
-      g.items.forEach(r=>{
-        const httpUrl=stokDocHttpUrl(r.link);
-        const copyUNC=()=>{ try{ navigator.clipboard.writeText(r.link); toast('📋 Link kopyalandı — Dosya Gezgini adres çubuğuna yapıştır.','ok'); }catch(_){ window.prompt('Linki kopyala:',r.link); } };
-        // Doküman adı: HTTP'den açılabiliyorsa tıklanabilir link
-        const nameCell=el('td',{style:'font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:r.doc_adi||''});
-        if(httpUrl) nameCell.append(el('a',{href:httpUrl,target:'_blank',rel:'noopener',style:'color:#2563eb;text-decoration:none'},r.doc_adi||'—'));
-        else nameCell.append(document.createTextNode(r.doc_adi||'—'));
-        // İşlem: açılabilen → gerçek 🔗 Aç linki; açılamayan → kopyala fallback
-        const act=el('td',{style:'white-space:nowrap'});
-        if(r.link){
-          if(httpUrl) act.append(el('a',{class:'btn sm',href:httpUrl,target:'_blank',rel:'noopener',style:'text-decoration:none;display:inline-block',title:'Tarayıcıda aç'},'🔗 Aç'));
-          else act.append(el('button',{class:'btn sm',title:r.link,onclick:()=>{ try{navigator.clipboard.writeText(r.link);}catch(_){}; toast('Bu dosya farklı sunucuda — link kopyalandı, Dosya Gezgini’ne yapıştır.','ok'); }},'🔗 Aç'));
-          act.append(el('button',{class:'btn sm sec',style:'margin-left:6px',title:r.link,onclick:copyUNC},'📋 Kopyala'));
-        } else { act.append(el('span',{style:'color:var(--muted)'},'link yok')); }
-        body.append(el('tr',{},
-          nameCell,
-          el('td',{style:'font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:r.aciklama||''},r.aciklama||''),
-          el('td',{},r.rev_no||''),
-          el('td',{},r.yayin_tarihi?fmtDate(r.yayin_tarihi):''),
-          el('td',{},r.son_rev?fmtDate(r.son_rev):''),
-          act
-        ));
-      });
-      tb.append(body); card.append(tb); out.append(card);
-    });
-  }
-  doSearch(q0);
+  if(_sdObserver) _sdObserver.disconnect();
+  _sdObserver=new IntersectionObserver(es=>{ if(es.some(e=>e.isIntersecting)) load(false); },{root:null,rootMargin:'400px'});
+  _sdObserver.observe(sentinel);
+  load(true);
 }
 
 // 🗂 LeanSys Stok Kartları (st01 / STOKKARTI view) — kod bazlı arama; çözülmüş birim/cinsi/durum/döviz/sektör
-let _stokKartDeb=null;
+let _stokKartDeb=null, _skObserver=null;
 async function renderStokKartlari(root){
   root.innerHTML='';
   root.append(el('div',{class:'msg info',html:'🗂 LeanSys <b>Stok Kartları</b> (st01). <b>Stok kodu</b> veya adı (TR/İng) ile ara. Birim / cinsi / durum / döviz / sektör çözülmüş gelir.'}));
   const search=el('input',{class:'inp',id:'stokKartSearch',placeholder:'🔍 stok kodu veya stok adı…',style:'width:100%',
-    oninput:e=>{ clearTimeout(_stokKartDeb); const v=e.target.value; _stokKartDeb=setTimeout(()=>doSearch(v),450); }});
+    oninput:e=>{ clearTimeout(_stokKartDeb); _stokKartDeb=setTimeout(()=>load(true),450); }});
   const countEl=el('div',{class:'stat'},el('b',{id:'skCount'},'—'),el('span',{},'kart'));
   root.append(el('div',{class:'card'},el('div',{class:'toolbar'},
     el('div',{class:'field',style:'flex:1;min-width:260px;max-width:440px'},el('label',{class:'lab'},'Ara'),search),
-    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{search.value='';doSearch('');}},'Temizle'),
+    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{search.value='';load(true);}},'Temizle'),
     el('div',{class:'grow'}), countEl
   )));
   const out=el('div'); root.append(out);
-
-  async function doSearch(term){
-    term=(term||'').trim();
-    out.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
-    let qb=sb.from('stok_kartlari').select('*').order('stok_kodu',{ascending:true}).limit(500);
-    if(term){ const safe=term.replace(/[,()%]/g,' ').trim();
-      qb=qb.or(`stok_kodu.ilike.%${safe}%,stok_adi.ilike.%${safe}%,stok_adi_ing.ilike.%${safe}%`); }
-    const {data,error}=await qb;
-    if(error){ out.innerHTML=''; out.append(el('div',{class:'card'},el('div',{class:'empty'},'Hata: '+(error.message||'sorgu')))); return; }
-    const rows=data||[];
-    const c=$('#skCount'); if(c) c.textContent=String(rows.length)+(rows.length>=500?'+':'');
-    renderRows(rows,term);
-  }
-  function renderRows(rows,term){
+  const sentinel=el('div',{style:'height:1px'}); root.append(sentinel);
+  const PAGE=200;
+  const COLS=[['Stok Kodu','12%'],['Stok Adı','26%'],['Stok Adı (İng)','18%'],['Birim','7%'],['Raf Ömrü','8%'],['Cinsi','8%'],['Durum','7%'],['Döviz','5%'],['Sektör','9%']];
+  const st={term:'',offset:0,loading:false,done:false,body:null};
+  function newTable(){
     out.innerHTML='';
-    if(!rows.length){ out.append(el('div',{class:'card'},el('div',{class:'empty'}, term?'Eşleşen stok kartı yok.':'Aramak için stok kodu veya adı yaz.'))); return; }
     const card=el('div',{class:'card'});
     const tb=el('table',{style:'table-layout:fixed;width:100%'});
-    const cols=[['Stok Kodu','12%'],['Stok Adı','26%'],['Stok Adı (İng)','18%'],['Birim','7%'],['Raf Ömrü','8%'],['Cinsi','8%'],['Durum','7%'],['Döviz','5%'],['Sektör','9%']];
-    tb.append(el('thead',{},el('tr',{},...cols.map(c=>el('th',{style:'width:'+c[1]},c[0])))));
-    const body=el('tbody',{id:'skBody'});
-    rows.forEach(r=>{
-      body.append(el('tr',{'data-s':`${r.stok_kodu} ${r.stok_adi} ${r.stok_adi_ing}`.toLowerCase()},
-        el('td',{style:'font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis',title:r.stok_kodu||''},r.stok_kodu||''),
-        el('td',{style:'overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:r.stok_adi||''},r.stok_adi||''),
-        el('td',{style:'font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:r.stok_adi_ing||''},r.stok_adi_ing||''),
-        el('td',{},r.birim||''),
-        el('td',{style:'text-align:center'}, (r.raf_omru!=null && r.raf_omru>0)?String(r.raf_omru):''),
-        el('td',{style:'overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:r.cinsi||''},r.cinsi||''),
-        el('td',{},el('span',{class:'pill '+(/pasif/i.test(r.durum||'')?'ret':'ok')},r.durum||'—')),
-        el('td',{},r.doviz||''),
-        el('td',{style:'font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:r.sektor||''},r.sektor||'')
-      ));
-    });
-    tb.append(body); card.append(tb); out.append(card);
+    tb.append(el('thead',{},el('tr',{},...COLS.map(c=>el('th',{style:'width:'+c[1]},c[0])))));
+    st.body=el('tbody',{id:'skBody'}); tb.append(st.body); card.append(tb); out.append(card);
   }
-  doSearch('');
+  function rowEl(r){
+    return el('tr',{'data-s':`${r.stok_kodu} ${r.stok_adi} ${r.stok_adi_ing}`.toLowerCase()},
+      el('td',{style:'font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis',title:r.stok_kodu||''},r.stok_kodu||''),
+      el('td',{style:'overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:r.stok_adi||''},r.stok_adi||''),
+      el('td',{style:'font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:r.stok_adi_ing||''},r.stok_adi_ing||''),
+      el('td',{},r.birim||''),
+      el('td',{style:'text-align:center'}, (r.raf_omru!=null && r.raf_omru>0)?String(r.raf_omru):''),
+      el('td',{style:'overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:r.cinsi||''},r.cinsi||''),
+      el('td',{},el('span',{class:'pill '+(/pasif/i.test(r.durum||'')?'ret':'ok')},r.durum||'—')),
+      el('td',{},r.doviz||''),
+      el('td',{style:'font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:r.sektor||''},r.sektor||'')
+    );
+  }
+  async function load(reset){
+    if(st.loading) return;
+    if(reset){ st.term=(search.value||'').trim(); st.offset=0; st.done=false; st.body=null; out.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>'; }
+    if(st.done) return;
+    st.loading=true;
+    let qb=sb.from('stok_kartlari').select('*').order('stok_kodu',{ascending:true}).range(st.offset,st.offset+PAGE-1);
+    if(st.term){ const safe=st.term.replace(/[,()%]/g,' ').trim(); qb=qb.or(`stok_kodu.ilike.%${safe}%,stok_adi.ilike.%${safe}%,stok_adi_ing.ilike.%${safe}%`); }
+    const {data,error}=await qb;
+    st.loading=false;
+    if(error){ out.innerHTML=''; out.append(el('div',{class:'card'},el('div',{class:'empty'},'Hata: '+(error.message||'sorgu')))); st.done=true; return; }
+    const rows=data||[];
+    if(st.offset===0){ if(!rows.length){ out.innerHTML=''; out.append(el('div',{class:'card'},el('div',{class:'empty'}, st.term?'Eşleşen stok kartı yok.':'Kayıt yok.'))); st.done=true; const c=$('#skCount'); if(c)c.textContent='0'; return; } newTable(); }
+    rows.forEach(r=>st.body.append(rowEl(r)));
+    st.offset+=rows.length;
+    if(rows.length<PAGE) st.done=true;
+    const c=$('#skCount'); if(c) c.textContent=String(st.offset)+(st.done?'':'+');
+    if(!st.done){ const rc=sentinel.getBoundingClientRect(); if(rc.top < (window.innerHeight||document.documentElement.clientHeight)+400) requestAnimationFrame(()=>load(false)); }
+  }
+  if(_skObserver) _skObserver.disconnect();
+  _skObserver=new IntersectionObserver(es=>{ if(es.some(e=>e.isIntersecting)) load(false); },{root:null,rootMargin:'400px'});
+  _skObserver.observe(sentinel);
+  load(true);
 }
 
 async function renderKayitlar(){
