@@ -2211,6 +2211,14 @@ function kayitTabRow(){
 
 // 📄 LeanSys Stok Dokümanları (SBT015) — kod bazlı arama; metadata Supabase'de, dosya ağ paylaşımında (link kopyala)
 let _stokDokDeb=null;
+// UNC ağ yolunu HTTP URL'ine çevir — YALNIZCA HTTP'den doğrulanmış paylaşım: \\10.11.11.11\dokumanlar\... (%96 dosya).
+// Diğer host'lar (10.11.11.99 vb.) web'den servis etmiyor → null döner → kopyala-yapıştır fallback.
+function stokDocHttpUrl(unc){
+  if(!unc) return null;
+  const m=String(unc).trim().match(/^\\\\10\.11\.11\.11\\dokumanlar\\(.+)$/i);
+  if(!m) return null;
+  return 'http://10.11.11.11/dokumanlar/'+m[1].split('\\').map(p=>encodeURIComponent(p)).join('/');
+}
 async function renderStokDokumanlari(root){
   root.innerHTML='';
   root.append(kayitTabRow());
@@ -2252,13 +2260,21 @@ async function renderStokDokumanlari(root){
       tb.append(el('thead',{},el('tr',{},...cols.map(c=>el('th',{style:'width:'+c[1]},c[0])))));
       const body=el('tbody');
       g.items.forEach(r=>{
+        const httpUrl=stokDocHttpUrl(r.link);
+        const copyUNC=()=>{ try{ navigator.clipboard.writeText(r.link); toast('📋 Link kopyalandı — Dosya Gezgini adres çubuğuna yapıştır.','ok'); }catch(_){ window.prompt('Linki kopyala:',r.link); } };
+        // Doküman adı: HTTP'den açılabiliyorsa tıklanabilir link
+        const nameCell=el('td',{style:'font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:r.doc_adi||''});
+        if(httpUrl) nameCell.append(el('a',{href:httpUrl,target:'_blank',rel:'noopener',style:'color:#2563eb;text-decoration:none'},r.doc_adi||'—'));
+        else nameCell.append(document.createTextNode(r.doc_adi||'—'));
+        // İşlem: açılabilen → gerçek 🔗 Aç linki; açılamayan → kopyala fallback
         const act=el('td',{style:'white-space:nowrap'});
         if(r.link){
-          act.append(el('button',{class:'btn sm',title:r.link,onclick:()=>{ try{navigator.clipboard.writeText(r.link); toast('📋 Link kopyalandı — Dosya Gezgini adres çubuğuna yapıştır.','ok'); }catch(_){ window.prompt('Linki kopyala:',r.link); } }},'📋 Kopyala'));
-          act.append(el('button',{class:'btn sm sec',style:'margin-left:6px',title:'Tarayıcı ağ yolunu açamayabilir; kopyalama daha güvenli',onclick:()=>{ try{ window.open('file:'+r.link.replace(/\\/g,'/'),'_blank'); }catch(_){} }},'🔗 Aç'));
+          if(httpUrl) act.append(el('a',{class:'btn sm',href:httpUrl,target:'_blank',rel:'noopener',style:'text-decoration:none;display:inline-block',title:'Tarayıcıda aç'},'🔗 Aç'));
+          else act.append(el('button',{class:'btn sm',title:r.link,onclick:()=>{ try{navigator.clipboard.writeText(r.link);}catch(_){}; toast('Bu dosya farklı sunucuda — link kopyalandı, Dosya Gezgini’ne yapıştır.','ok'); }},'🔗 Aç'));
+          act.append(el('button',{class:'btn sm sec',style:'margin-left:6px',title:r.link,onclick:copyUNC},'📋 Kopyala'));
         } else { act.append(el('span',{style:'color:var(--muted)'},'link yok')); }
         body.append(el('tr',{},
-          el('td',{style:'font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:r.doc_adi||''},r.doc_adi||'—'),
+          nameCell,
           el('td',{style:'font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:r.aciklama||''},r.aciklama||''),
           el('td',{},r.rev_no||''),
           el('td',{},r.yayin_tarihi?fmtDate(r.yayin_tarihi):''),
