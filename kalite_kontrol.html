@@ -771,6 +771,126 @@ async function renderBekleyen(){
     el('div',{class:'grow',style:'font-size:13px;color:var(--muted)'},'Aktif üretimlerde vadesi gelen Seri Başı / Proses / Son kontroller burada listelenir. ➕ ile gir; girildikçe listeden kalkar ve kontrol kayıtlarına geçer.'),
     el('button',{class:'btn sm sec',style:'flex:0',onclick:renderBekleyen},'🔄 Yenile')));
   await _renderDueControls(root);
+  await _renderGirisKalite(root);
+}
+let _gkDeb=null;
+// 📥 Giriş Kalite — LeanSys mal kabulden gelen ürünler; her birine giriş planına göre random kontrol
+async function _renderGirisKalite(root){
+  const card=el('div',{class:'card'});
+  card.append(el('h3',{style:'margin-top:0'},'📥 Giriş Kalite — Mal Kabul (LeanSys)'));
+  card.append(el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:13px',html:'Tedarikçiden mal kabulden gelen ürünler. Tazelemek için sunucuda <code>_malkabul_guncelle.bat</code>. Bir kayda <b>Kontrol Gir</b> → giriş kalite planına göre <b>random kontrol</b> oluşturulur (seri başı gibi).'}));
+  const fCode=el('input',{class:'inp',placeholder:'🔍 stok kodu / ad / tedarikçi…',style:'min-width:240px',oninput:()=>{clearTimeout(_gkDeb);_gkDeb=setTimeout(load,400);}});
+  const fFrom=el('input',{type:'date',class:'inp',onchange:load});
+  card.append(el('div',{class:'toolbar'},
+    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Ara'),fCode),
+    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Tarihten'),fFrom),
+    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{fCode.value='';fFrom.value='';load();}},'Temizle')));
+  const out=el('div'); card.append(out); root.append(card);
+  async function load(){
+    out.innerHTML='<div class="empty" style="padding:10px">Yükleniyor…</div>';
+    let q=sb.from('mal_kabul').select('*').order('tarih',{ascending:false}).limit(300);
+    const t=(fCode.value||'').trim(); if(t){ const s=t.replace(/[,()%]/g,' ').trim(); q=q.or(`stok_kodu.ilike.%${s}%,stok_adi.ilike.%${s}%,cari_adi.ilike.%${s}%`); }
+    if(fFrom.value) q=q.gte('tarih',fFrom.value);
+    const {data,error}=await q;
+    if(error){ out.innerHTML='<div class="msg err">'+esc(error.message)+'</div>'; return; }
+    const rows=data||[];
+    out.innerHTML='';
+    if(!rows.length){ out.append(el('div',{class:'empty',style:'padding:10px'},'Mal kabul kaydı yok. (Önce sunucuda _malkabul_guncelle.bat çalıştır.)')); return; }
+    const ids=rows.map(r=>r.rec_id).filter(x=>x!=null);
+    const doneSet=new Set(); if(ids.length){ const {data:dr}=await sb.from('control_records').select('mal_kabul_rec_id').in('mal_kabul_rec_id',ids); (dr||[]).forEach(d=>{if(d.mal_kabul_rec_id!=null)doneSet.add(d.mal_kabul_rec_id);}); }
+    const codes=[...new Set(rows.map(r=>r.stok_kodu).filter(Boolean))];
+    const planSet=new Set(); if(codes.length){ const {data:pp}=await sb.from('control_plan_items').select('stock_code').in('stock_code',codes).eq('giris_kalite',true).eq('active',true); (pp||[]).forEach(p=>planSet.add(p.stock_code)); }
+    const tb=el('table');
+    tb.append(el('thead',{},el('tr',{},...['Tarih','Stok Kodu','Stok Adı','Tedarikçi','Miktar','İrsaliye','Plan','İşlem'].map(h=>el('th',{},h)))));
+    const body=el('tbody');
+    rows.forEach(r=>{
+      const done=doneSet.has(r.rec_id), hasPlan=planSet.has(r.stok_kodu);
+      body.append(el('tr',{style:done?'opacity:.5':''},
+        el('td',{style:'white-space:nowrap'},fmtDate(r.tarih)),
+        el('td',{style:'font-weight:600'},r.stok_kodu||''),
+        el('td',{style:'font-size:12px',title:r.stok_adi||''},(r.stok_adi||'').slice(0,40)),
+        el('td',{style:'font-size:12px',title:r.cari_adi||''},(r.cari_adi||'').slice(0,26)),
+        el('td',{style:'white-space:nowrap'},(r.miktar??'')+' '+(r.birim||'')),
+        el('td',{style:'font-size:11px;white-space:nowrap'},(r.seri||'')+(r.sira?(' / '+r.sira):'')),
+        el('td',{}, hasPlan?el('span',{class:'pill ok'},'var'):el('span',{class:'pill gray'},'yok')),
+        el('td',{}, done?el('span',{class:'pill ok'},'✓ girildi') : (hasPlan?el('button',{class:'btn sm',onclick:()=>openGirisKalite(r)},'Kontrol Gir'):el('span',{style:'color:var(--muted);font-size:11px'},'plan yok')))
+      ));
+    });
+    tb.append(body); out.append(el('div',{class:'tbl-wrap'},tb));
+  }
+  load();
+}
+// Giriş kalite kontrol giriş modalı — giriş planına göre random örnek üretir (seri başı mantığı), düzenlenebilir
+async function openGirisKalite(mk){
+  const {data:plan}=await sb.from('control_plan_items').select('*').eq('stock_code',mk.stok_kodu).eq('active',true).order('op_no',{nullsFirst:true}).order('seq');
+  const items=(plan||[]).filter(it=>it.giris_kalite===true);
+  const root=$('#modalRoot');
+  if(!items.length){ toast(`"${mk.stok_kodu}" için giriş kalite planı yok.`,'err'); return; }
+  const state={};
+  function regen(){ items.forEach(it=>{ const n=sampleCount(it,'giris'); state[it.id]={samples:genSamples(it,n)}; }); render(); }
+  function markOk(it,s){ if(it.is_qualitative) return; const v=parseNum(s.value); const lo=Number(it.lower_limit),hi=Number(it.upper_limit); let ok=true; if(isFinite(lo)&&v<lo)ok=false; if(isFinite(hi)&&v>hi)ok=false; s.ok=ok; }
+  items.forEach(it=>{ const n=sampleCount(it,'giris'); state[it.id]={samples:genSamples(it,n)}; });
+  function render(){
+    root.innerHTML='';
+    const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
+    const m=el('div',{class:'modal',style:'position:relative;max-width:1500px'});
+    m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
+    m.append(el('h3',{},'📥 Giriş Kalite Kontrolü'));
+    m.append(el('div',{class:'meta',html:`<b>${esc(mk.stok_kodu)}</b> — ${esc(mk.stok_adi||'')}<br>Tedarikçi: <b>${esc(mk.cari_adi||'-')}</b> · İrsaliye: ${esc((mk.seri||'')+(mk.sira?(' / '+mk.sira):''))} · Miktar: ${mk.miktar??''} ${esc(mk.birim||'')} · Tarih: ${fmtDate(mk.tarih)}`}));
+    const operInp=el('input',{class:'inp',id:'gk_oper',placeholder:'Ölçümü yapan',value:AUTO_MEASURER,style:'max-width:220px'});
+    m.append(el('div',{class:'row',style:'gap:10px;margin:6px 0;align-items:flex-end'},
+      el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Ölçümcü'),operInp),
+      el('button',{class:'btn sm sec',style:'flex:0',onclick:regen,title:'Tüm ölçümleri yeniden random üret'},'🎲 Yeniden Random'),
+      el('div',{class:'grow'}),
+      el('button',{class:'btn',style:'flex:0',onclick:save},'💾 Kaydet')));
+    const tb=el('table');
+    tb.append(el('thead',{},el('tr',{},...['Ölçülecek Değer','Nitel Hedef / Birim','Yöntem','Hedef','Alt','Üst','Örn.','Ölçümler / Sonuç'].map(h=>el('th',{},h)))));
+    const body=el('tbody');
+    items.forEach(it=>{
+      const st=state[it.id]; const sampCell=el('td',{});
+      st.samples.forEach(s=>{
+        if(it.is_qualitative){
+          const b=el('button',{class:'btn sm '+(s.ok?'':'danger'),style:'margin:1px'},s.ok?'OK':'RET');
+          b.onclick=()=>{ s.ok=!s.ok; b.className='btn sm '+(s.ok?'':'danger'); b.textContent=s.ok?'OK':'RET'; };
+          sampCell.append(b);
+        } else {
+          markOk(it,s);
+          const inp=el('input',{class:'inp',style:'width:64px;margin:1px;display:inline-block'+(s.ok?'':';border-color:var(--ret)'),value:s.value==null?'':s.value});
+          inp.oninput=e=>{ s.value=e.target.value; markOk(it,s); inp.style.borderColor=s.ok?'':'var(--ret)'; };
+          sampCell.append(inp);
+        }
+      });
+      body.append(el('tr',{},
+        el('td',{style:'font-weight:600'},it.measure_name||''),
+        el('td',{},it.is_qualitative?(it.nitel_hedef||''):(it.unit||'')),
+        el('td',{},it.method||''),
+        el('td',{},it.target??''),
+        el('td',{},it.lower_limit??''),
+        el('td',{},it.upper_limit??''),
+        el('td',{},sampleCount(it,'giris')),
+        sampCell));
+    });
+    tb.append(body); m.append(el('div',{class:'tbl-wrap'},tb));
+    bg.append(m); root.append(bg);
+  }
+  async function save(){
+    const oper=($('#gk_oper')&&$('#gk_oper').value.trim())||null;
+    const vals=items.map(it=>{ const n=sampleCount(it,'giris'); const st=state[it.id]||{samples:[]};
+      const samples=(st.samples||[]).slice(0,n).map(s=>({value:(s.value==null?null:String(s.value).trim().replace(',','.')||null),ok:s.ok===true,note:s.note||null,by:oper}));
+      return {plan_item_id:it.id,measure_name:it.measure_name,target:it.target,unit:it.unit,nitel_hedef:it.nitel_hedef,lower_limit:it.lower_limit,upper_limit:it.upper_limit,method:it.method,sampling_frequency:it.sampling_frequency,is_qualitative:it.is_qualitative,sample_size:n,samples}; });
+    const allS=vals.flatMap(v=>v.samples); if(!allS.length){toast('Ölçüm yok.','err');return;}
+    const overall=allS.some(s=>s.ok===false)?'RET':'OK';
+    const rec={production_id:null, stock_code:mk.stok_kodu, stock_name:mk.stok_adi, stage:'giris', operator:oper, shift:shiftForTime(new Date()), vals, overall_result:overall,
+      mal_kabul_rec_id:mk.rec_id, giris_cari:mk.cari_adi, giris_irsaliye:(mk.seri||'')+(mk.sira?(' / '+mk.sira):''), giris_miktar:mk.miktar, giris_birim:mk.birim};
+    const {data:ins,error}=await sb.from('control_records').insert(rec).select().maybeSingle();
+    if(error){toast(esc(error.message),'err');return;}
+    toast(`Giriş kalite kaydedildi (${overall}).`, overall==='RET'?'err':'ok');
+    if(overall==='RET'){ try{ await autoOpenNCR(ins||rec, {stock_code:mk.stok_kodu,stock_name:mk.stok_adi,customer:mk.cari_adi}); }catch(e){} }
+    root.innerHTML='';
+    if(!$('#tab-bekleyen').classList.contains('hidden')) renderBekleyen();
+    try{ loadControlCounts(); }catch(e){}
+  }
+  render();
 }
 // ⏰ Girilecek Kontroller — vadesi gelenler aşamaya göre alt-sekmelere (Seri Başı / Proses / Son) düşer
 async function _renderDueControls(root){
