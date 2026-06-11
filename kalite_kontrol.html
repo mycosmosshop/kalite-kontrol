@@ -794,20 +794,24 @@ async function renderMalKabul(){
     el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{fSearch.value='';fFrom.value='';fTur.value='0';load();}},'Temizle'),
     el('div',{class:'grow'}), cnt)));
   const out=el('div'); root.append(out);
+  let _mkSeq=0;
   async function load(){
+    const my=++_mkSeq;   // yarış koruması: yalnız EN SON çağrı render eder (eski filtresiz tablo kalmasın)
     out.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
     let q=sb.from('mal_kabul').select('*').order('tarih',{ascending:false}).limit(500);
     const t=(fSearch.value||'').trim(); if(t){ const s=t.replace(/[,()%]/g,' ').trim(); q=q.or(`stok_kodu.ilike.%${s}%,stok_adi.ilike.%${s}%,cari_adi.ilike.%${s}%`); }
     if(fFrom.value) q=q.gte('tarih',fFrom.value);
     if(fTur.value!=='') q=q.eq('iade',Number(fTur.value));
     const {data,error}=await q;
+    if(my!==_mkSeq) return;   // bu çağrı bayatladı → render etme
     if(error){ out.innerHTML='<div class="card"><div class="msg err">'+esc(error.message)+'</div></div>'; return; }
     const rows=data||[];
+    const codes=[...new Set(rows.map(r=>r.stok_kodu).filter(Boolean))];
+    const planSet=new Set(); if(codes.length){ const {data:pp}=await sb.from('control_plan_items').select('stock_code').in('stock_code',codes).eq('giris_kalite',true).eq('active',true); (pp||[]).forEach(p=>planSet.add(p.stock_code)); }
+    if(my!==_mkSeq) return;   // ikinci await sonrası tekrar kontrol
     const c=$('#mkCount'); if(c)c.textContent=String(rows.length)+(rows.length>=500?'+':'');
     out.innerHTML='';
     if(!rows.length){ out.append(el('div',{class:'card'},el('div',{class:'empty'},'Kayıt yok. (Önce sunucuda _malkabul_guncelle.bat çalıştır.)'))); return; }
-    const codes=[...new Set(rows.map(r=>r.stok_kodu).filter(Boolean))];
-    const planSet=new Set(); if(codes.length){ const {data:pp}=await sb.from('control_plan_items').select('stock_code').in('stock_code',codes).eq('giris_kalite',true).eq('active',true); (pp||[]).forEach(p=>planSet.add(p.stock_code)); }
     const card=el('div',{class:'card'}); const tb=el('table');
     tb.append(el('thead',{},el('tr',{},...['İrsaliye Tarih','Kayıt Tarihi','Stok Kodu','Stok Adı','Tedarikçi','Miktar','İrsaliye','Depo','Tür','Giriş Planı'].map(h=>el('th',{},h)))));
     const body=el('tbody');
@@ -839,20 +843,25 @@ async function _renderGirisKalite(root){
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Tarihten'),fFrom),
     el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{fCode.value='';fFrom.value='';load();}},'Temizle')));
   const out=el('div'); card.append(out); root.append(card);
+  let _gkSeq=0;
   async function load(){
+    const my=++_gkSeq;   // yarış koruması: yalnız EN SON çağrı render eder
     out.innerHTML='<div class="empty" style="padding:10px">Yükleniyor…</div>';
     let q=sb.from('mal_kabul').select('*').order('tarih',{ascending:false}).limit(300).or('iade.eq.0,iade.is.null');   // iade HARİÇ (giriş kalite kuyruğu)
     const t=(fCode.value||'').trim(); if(t){ const s=t.replace(/[,()%]/g,' ').trim(); q=q.or(`stok_kodu.ilike.%${s}%,stok_adi.ilike.%${s}%,cari_adi.ilike.%${s}%`); }
     if(fFrom.value) q=q.gte('tarih',fFrom.value);
     const {data,error}=await q;
+    if(my!==_gkSeq) return;
     if(error){ out.innerHTML='<div class="msg err">'+esc(error.message)+'</div>'; return; }
     const rows=data||[];
-    out.innerHTML='';
-    if(!rows.length){ out.append(el('div',{class:'empty',style:'padding:10px'},'Mal kabul kaydı yok. (Önce sunucuda _malkabul_guncelle.bat çalıştır.)')); return; }
     const ids=rows.map(r=>r.rec_id).filter(x=>x!=null);
     const doneSet=new Set(); if(ids.length){ const {data:dr}=await sb.from('control_records').select('mal_kabul_rec_id').in('mal_kabul_rec_id',ids); (dr||[]).forEach(d=>{if(d.mal_kabul_rec_id!=null)doneSet.add(d.mal_kabul_rec_id);}); }
+    if(my!==_gkSeq) return;
     const codes=[...new Set(rows.map(r=>r.stok_kodu).filter(Boolean))];
     const planSet=new Set(); if(codes.length){ const {data:pp}=await sb.from('control_plan_items').select('stock_code').in('stock_code',codes).eq('giris_kalite',true).eq('active',true); (pp||[]).forEach(p=>planSet.add(p.stock_code)); }
+    if(my!==_gkSeq) return;
+    out.innerHTML='';
+    if(!rows.length){ out.append(el('div',{class:'empty',style:'padding:10px'},'Mal kabul kaydı yok. (Önce sunucuda _malkabul_guncelle.bat çalıştır.)')); return; }
     const tb=el('table');
     tb.append(el('thead',{},el('tr',{},...['Tarih','Stok Kodu','Stok Adı','Tedarikçi','Miktar','İrsaliye','Plan','İşlem'].map(h=>el('th',{},h)))));
     const body=el('tbody');
