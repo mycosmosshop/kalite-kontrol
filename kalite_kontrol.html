@@ -1636,10 +1636,19 @@ async function bulkDeletePlans(codes, isAll){
     if(!confirm('DİKKAT: Supabase’deki BÜTÜN kontrol planları (tüm maddeler + tüm antetler) SİLİNECEK. Geri ALINAMAZ!\n(LeanSys’e dokunulmaz; yalnız buradaki veriler.)\n\nDevam?')) return;
     if(!confirm('SON ONAY: Gerçekten TÜM kontrol planlarını silmek istiyor musun? Bu işlem geri alınamaz.')) return;
     try{
-      const e1=(await sb.from('control_plan_items').delete().not('stock_code','is',null)).error; if(e1) throw e1;
+      toast('Tüm planlar siliniyor… (biraz sürebilir, bekle)','ok');
+      // Tüm kodları hafif view'den al (tek dev DELETE 100k satırda zaman aşımına uğruyordu)
+      let codes=[], off=0;
+      while(true){ const {data,error}=await sb.from('control_plan_list').select('stock_code').order('stock_code').range(off,off+999); if(error) throw error; if(!data||!data.length) break; codes=codes.concat(data.map(d=>d.stock_code)); if(data.length<1000) break; off+=1000; }
+      // 100'erli parçalarla sil → zaman aşımı yok
+      for(let i=0;i<codes.length;i+=100){ const chunk=codes.slice(i,i+100);
+        const {error}=await sb.from('control_plan_items').delete().in('stock_code',chunk); if(error) throw error;
+        await sb.from('control_plan_headers').delete().in('stock_code',chunk); }
+      // kalan (view'de olmayan, ör. pasif) varsa son süpürme — artık çok az kaldı, hızlı
+      await sb.from('control_plan_items').delete().not('stock_code','is',null);
       await sb.from('control_plan_headers').delete().not('stock_code','is',null);
       PLAN_SEL=null; PLAN_PENDING={};
-      toast('✅ Tüm kontrol planları silindi.','ok'); await renderPlan();
+      toast(`✅ Tüm kontrol planları silindi (${codes.length} plan).`,'ok'); await renderPlan();
     }catch(e){ toast('Silme hatası: '+esc(e.message||String(e)),'err'); }
     return;
   }
