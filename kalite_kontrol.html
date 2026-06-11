@@ -385,7 +385,20 @@ const _fsBtn=$('#fsBtn'); if(_fsBtn) _fsBtn.onclick=toggleFullscreen;
 document.addEventListener('fullscreenchange',()=>{ if(_fsBtn) _fsBtn.textContent=document.fullscreenElement?'🗗':'⛶'; });
 
 // ---- PWA: service worker + "Uygulamayı Yükle" (PC + tablet + telefon) ----
-if('serviceWorker' in navigator){ window.addEventListener('load',()=>{ navigator.serviceWorker.register('sw.js').catch(()=>{}); }); }
+if('serviceWorker' in navigator){
+  // OTOMATİK GÜNCELLEME: yeni SW aktive olup kontrolü alınca sayfayı BİR KEZ tazele → eski önbellek takılmaz.
+  const _hadController = !!navigator.serviceWorker.controller;   // ilk kurulumda reload etme, sadece GÜNCELLEMEde
+  let _swReloaded=false;
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{
+    if(_swReloaded || !_hadController) return; _swReloaded=true; location.reload();
+  });
+  window.addEventListener('load',()=>{
+    navigator.serviceWorker.register('sw.js').then(reg=>{
+      reg.update();                                  // her açılışta güncelleme kontrolü
+      setInterval(()=>{ try{reg.update();}catch(e){} }, 60*60*1000);  // saatte bir
+    }).catch(()=>{});
+  });
+}
 let _deferredInstall=null;
 const _installBtn=$('#installBtn');
 const _isStandalone=(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches)||window.navigator.standalone===true;
