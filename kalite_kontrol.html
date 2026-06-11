@@ -1285,6 +1285,14 @@ function printPlan(sc,stockName,lang){
 </body></html>`);
   win.document.close();
 }
+// Katlanır kart (dropdown gibi çubuk): başlığa tıkla → aç/kapa. Varsayılan kapalı.
+function collapseBar(title, ...body){
+  const d=el('details',{class:'card',style:'padding:0;overflow:hidden'});
+  d.append(el('summary',{style:'cursor:pointer;padding:13px 16px;font-weight:600;font-size:15px;list-style:none;user-select:none;display:flex;align-items:center;gap:8px'},
+    el('span',{style:'color:var(--muted);font-size:12px'},'▸'), title));
+  d.append(el('div',{style:'padding:2px 16px 16px'}, ...body.filter(Boolean)));
+  return d;
+}
 async function renderPlan(){
   const root=$('#tab-plan');
   root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
@@ -1306,27 +1314,23 @@ async function renderPlan(){
   const canPlan=can('plan');
 
   if(canPlan){
-  // ---- Excel içe aktarma kartı ----
-  const impCard=el('div',{class:'card'},
-    el('h3',{},'📄 Kontrol Planını Excel’den İçe Aktar'),
-    el('p',{style:'color:var(--muted);margin:-6px 0 14px;font-size:13px'},'Standart "Serial Control Plan" Excel dosyasını seç (operasyon no, hedef, limit, yöntem otomatik okunur). Plandaki kod (örn. 6FA.881.989) ile LeanSys stok kodu (örn. 700.0.454) farklı olduğu için, planın hangi stok koduna bağlanacağını seç.'),
+  // ---- Excel içe aktarma (katlanır) ----
+  root.append(collapseBar('📄 Kontrol Planını Excel’den İçe Aktar',
+    el('p',{style:'color:var(--muted);margin:0 0 12px;font-size:13px'},'Standart "Serial Control Plan" Excel dosyasını seç (operasyon no, hedef, limit, yöntem otomatik okunur). Plandaki kod (örn. 6FA.881.989) ile LeanSys stok kodu (örn. 700.0.454) farklı olduğu için, planın hangi stok koduna bağlanacağını seç.'),
     el('div',{class:'row'},
       el('div',{class:'field grow'},el('label',{class:'lab'},'Excel dosyası'),el('input',{type:'file',accept:'.xlsx,.xls',class:'inp',id:'planFile'})),
       field('Hedef Stok Kodu','plan_stock','örn. 700.0.454',prodStocks.map(x=>x[0])),
       el('button',{class:'btn sm',style:'flex:0',onclick:importPlan},'İçe Aktar')
     )
-  );
-  root.append(impCard);
-  // ---- LeanSys'ten kontrol planı çek ----
-  const lkpCard=el('div',{class:'card'},
-    el('h3',{},'🏭 LeanSys’ten Kontrol Planı Çek'),
-    el('p',{style:'color:var(--muted);margin:-6px 0 14px;font-size:13px'},'LeanSys’teki kontrol planını bu sayfadaki yapıya kopyalar. <b>Stok kodu yaz</b> → sadece o planı; <b>boş bırak</b> → LeanSys’teki <b>TÜM</b> planları çeker. İlgili stokların buradaki planının üzerine yazılır. <b>LeanSys’e hiçbir şey yazılmaz</b> (salt-okuma). Veriyi tazelemek için sunucuda <code>_kontrolplani_guncelle.bat</code> çalıştırılır.'),
+  ));
+  // ---- LeanSys'ten kontrol planı çek (katlanır) ----
+  root.append(collapseBar('🏭 LeanSys’ten Kontrol Planı Çek',
+    el('p',{style:'color:var(--muted);margin:0 0 12px;font-size:13px',html:'LeanSys’teki kontrol planını bu sayfadaki yapıya kopyalar. <b>Stok kodu yaz</b> → sadece o planı; <b>boş bırak</b> → LeanSys’teki <b>TÜM</b> planları çeker. İlgili stokların buradaki planının üzerine yazılır. <b>LeanSys’e hiçbir şey yazılmaz</b> (salt-okuma). Veriyi tazelemek için sunucuda <code>_kontrolplani_guncelle.bat</code> çalıştırılır.'}),
     el('div',{class:'row'},
       el('div',{class:'field grow'},el('label',{class:'lab'},'Stok Kodu (boş = tümü)'),el('input',{class:'inp',id:'lkp_code',placeholder:'örn. 700.0.454 — boş bırakırsan hepsi'})),
       el('button',{class:'btn sm',id:'lkp_btn',style:'flex:0',onclick:cekFromLeansys},'📥 LeanSys’ten Çek')
     )
-  );
-  root.append(lkpCard);
+  ));
   } // /canPlan
 
   // plan yoksa
@@ -1340,27 +1344,7 @@ async function renderPlan(){
   if(!prodNameMap.size){ const {data:pn}=await sb.from('productions').select('stock_code,stock_name').not('stock_name','is',null).limit(1000);
     (pn||[]).forEach(p=>{ if(p.stock_code&&p.stock_name&&!prodNameMap.has(p.stock_code))prodNameMap.set(p.stock_code,p.stock_name); }); }
   const stockNameOf=sc=>{ const it=(byStock[sc]||[]).find(x=>x.stock_name&&String(x.stock_name).trim()); return ((it&&it.stock_name)||planNameMap.get(sc)||prodNameMap.get(sc)||'').toString().trim(); };
-  // plan seçici — ARANABİLİR (stok kodu veya adı), 7000+ plan olsa da bul
-  { const curNm=stockNameOf(PLAN_SEL);
-    const curBtn=el('button',{type:'button',class:'inp',style:'text-align:left;cursor:pointer;width:100%'},
-      `${PLAN_SEL||'—'}${curNm?' — '+curNm:''}${PLAN_SEL?` (${countMap.get(PLAN_SEL)||PLAN.length} madde)`:''}   ▾`);
-    const search=el('input',{class:'inp',placeholder:'🔍 stok kodu veya stok adı ile ara…',style:'margin-top:8px;display:none'});
-    const listDiv=el('div',{style:'max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-top:8px;display:none'});
-    function renderOpts(){
-      const q=(search.value||'').toLowerCase().trim(); listDiv.innerHTML='';
-      const ms=planList.filter(p=> !q || (p.stock_code||'').toLowerCase().includes(q) || (p.stock_name||'').toLowerCase().includes(q));
-      ms.slice(0,600).forEach(p=>{ listDiv.append(el('div',{style:'padding:7px 9px;cursor:pointer;border-bottom:1px solid var(--line)'+(p.stock_code===PLAN_SEL?';background:rgba(37,99,235,.14);font-weight:600':''),
-        onclick:()=>{ PLAN_SEL=p.stock_code; renderPlan(); }}, `${p.stock_code}${p.stock_name?' — '+p.stock_name:''} (${p.n} madde)`)); });
-      if(ms.length>600) listDiv.append(el('div',{style:'padding:7px;color:var(--muted);font-size:12px'},`… ${ms.length-600} plan daha — aramayı daralt`));
-      if(!ms.length) listDiv.append(el('div',{style:'padding:9px;color:var(--muted)'},'Eşleşen plan yok.'));
-    }
-    let open=false;
-    curBtn.onclick=()=>{ open=!open; search.style.display=open?'block':'none'; listDiv.style.display=open?'block':'none'; if(open){ renderOpts(); search.focus(); } };
-    search.oninput=renderOpts;
-    root.append(el('div',{class:'card'},
-      el('label',{class:'lab'},`Görüntülenecek Kontrol Planı — ${planList.length} plan kayıtlı (tıkla → ara/seç)`),
-      curBtn, search, listDiv));
-  }
+  // (plan seçici aşağıya, Plan Yönetimi'nden sonra — plan görünümünün hemen üstüne taşındı)
   // ---- Plan Yönetimi: çoklu / toplu sil ----
   if(canPlan && stockKeys.length){
     const selSet=new Set();
@@ -1383,9 +1367,8 @@ async function renderPlan(){
       if(keys.length>shown.length) listBox.append(el('div',{style:'padding:6px;color:var(--muted);font-size:12px'},`… ${keys.length-shown.length} plan daha — filtreyle daralt (hepsini silmek için "TÜM Planları Sil")`));
       countBadge.textContent=`${keys.length} plan · ${selSet.size} seçili`;
     }
-    const mgmt=el('div',{class:'card'},
-      el('h3',{},'🗑 Plan Yönetimi — Çoklu / Toplu Sil'),
-      el('p',{style:'color:var(--muted);margin:-6px 0 10px;font-size:13px'},'Planları seçip <b>Seçilenleri Sil</b> ya da <b>TÜM Planları Sil</b>. Sadece <b>buradaki</b> planı (maddeler + antet) siler; <b>LeanSys’e dokunmaz</b>. Geri alınamaz.'),
+    const mgmt=collapseBar('🗑 Plan Yönetimi — Çoklu / Toplu Sil',
+      el('p',{style:'color:var(--muted);margin:0 0 10px;font-size:13px',html:'Planları seçip <b>Seçilenleri Sil</b> ya da <b>TÜM Planları Sil</b>. Sadece <b>buradaki</b> planı (maddeler + antet) siler; <b>LeanSys’e dokunmaz</b>. Geri alınamaz. <b>TÜM Planları Sil</b> listede görünmeyenler dahil HEPSİNİ siler.'}),
       el('div',{class:'row'},el('div',{class:'field grow'},el('label',{class:'lab'},'Planlarda ara'),filt),countBadge),
       listBox,
       el('div',{class:'row',style:'gap:8px;flex-wrap:wrap'},
@@ -1393,11 +1376,32 @@ async function renderPlan(){
         el('button',{class:'btn sm sec',onclick:()=>{ selSet.clear(); renderList(); }},'Seçimi Temizle'),
         el('button',{class:'btn sm danger',onclick:()=>bulkDeletePlans([...selSet],false)},'🗑 Seçilenleri Sil'),
         el('div',{class:'grow'}),
-        el('button',{class:'btn sm danger',onclick:()=>bulkDeletePlans(stockKeys.slice(),true)},'🗑 TÜM Planları Sil')
+        el('button',{class:'btn sm danger',onclick:()=>bulkDeletePlans([],true)},'🗑 TÜM Planları Sil')
       )
     );
     renderList();
     root.append(mgmt);
+  }
+  // ---- Plan seçici — ARANABİLİR (plan görünümünün hemen üstünde) ----
+  { const curNm=stockNameOf(PLAN_SEL);
+    const curBtn=el('button',{type:'button',class:'inp',style:'text-align:left;cursor:pointer;width:100%;font-weight:600'},
+      `${PLAN_SEL||'—'}${curNm?' — '+curNm:''}${PLAN_SEL?` (${countMap.get(PLAN_SEL)||PLAN.length} madde)`:''}   ▾`);
+    const search=el('input',{class:'inp',placeholder:'🔍 stok kodu veya stok adı ile ara…',style:'margin-top:8px;display:none'});
+    const listDiv=el('div',{style:'max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-top:8px;display:none'});
+    function renderOpts(){
+      const q=(search.value||'').toLowerCase().trim(); listDiv.innerHTML='';
+      const ms=planList.filter(p=> !q || (p.stock_code||'').toLowerCase().includes(q) || (p.stock_name||'').toLowerCase().includes(q));
+      ms.slice(0,600).forEach(p=>{ listDiv.append(el('div',{style:'padding:7px 9px;cursor:pointer;border-bottom:1px solid var(--line)'+(p.stock_code===PLAN_SEL?';background:rgba(37,99,235,.14);font-weight:600':''),
+        onclick:()=>{ PLAN_SEL=p.stock_code; renderPlan(); }}, `${p.stock_code}${p.stock_name?' — '+p.stock_name:''} (${p.n} madde)`)); });
+      if(ms.length>600) listDiv.append(el('div',{style:'padding:7px;color:var(--muted);font-size:12px'},`… ${ms.length-600} plan daha — aramayı daralt`));
+      if(!ms.length) listDiv.append(el('div',{style:'padding:9px;color:var(--muted)'},'Eşleşen plan yok.'));
+    }
+    let open=false;
+    curBtn.onclick=()=>{ open=!open; search.style.display=open?'block':'none'; listDiv.style.display=open?'block':'none'; if(open){ renderOpts(); search.focus(); } };
+    search.oninput=renderOpts;
+    root.append(el('div',{class:'card'},
+      el('label',{class:'lab'},`Görüntülenecek Kontrol Planı — ${planList.length} plan kayıtlı (tıkla → ara/seç)`),
+      curBtn, search, listDiv));
   }
   // seçili planın antet (başlık) bilgisini yükle
   const {data:_hdr}=await sb.from('control_plan_headers').select('*').eq('stock_code',PLAN_SEL).maybeSingle();
@@ -1621,25 +1625,32 @@ async function delPlanStock(sc){
 // Çoklu / toplu plan silme — app'in KENDİ tablolarından (control_plan_items + headers). LeanSys'e dokunmaz.
 async function bulkDeletePlans(codes, isAll){
   if(!can('plan')){ toast('Bu işlem için yetkin yok (plan).','err'); return; }
+  // TÜM Planları Sil: yüklenen/görünen listeyle SINIRLI DEĞİL — Supabase'deki TÜM plan satırlarını siler.
+  if(isAll){
+    if(!confirm('DİKKAT: Supabase’deki BÜTÜN kontrol planları (tüm maddeler + tüm antetler) SİLİNECEK. Geri ALINAMAZ!\n(LeanSys’e dokunulmaz; yalnız buradaki veriler.)\n\nDevam?')) return;
+    if(!confirm('SON ONAY: Gerçekten TÜM kontrol planlarını silmek istiyor musun? Bu işlem geri alınamaz.')) return;
+    try{
+      const e1=(await sb.from('control_plan_items').delete().not('stock_code','is',null)).error; if(e1) throw e1;
+      await sb.from('control_plan_headers').delete().not('stock_code','is',null);
+      PLAN_SEL=null; PLAN_PENDING={};
+      toast('✅ Tüm kontrol planları silindi.','ok'); await renderPlan();
+    }catch(e){ toast('Silme hatası: '+esc(e.message||String(e)),'err'); }
+    return;
+  }
   codes=[...new Set((codes||[]).filter(Boolean))];
   if(!codes.length){ toast('Önce plan seç.','err'); return; }
-  const msg = isAll
-    ? `DİKKAT: ${codes.length} planın TAMAMI (maddeler + antet) SİLİNECEK. Geri ALINAMAZ!\n(Yalnız buradaki planlar; LeanSys'e dokunulmaz.)\n\nDevam?`
-    : `Seçilen ${codes.length} plan (maddeler + antet) silinecek. Geri alınamaz.\n(Yalnız buradaki planlar; LeanSys'e dokunulmaz.)\n\nDevam?`;
-  if(!confirm(msg)) return;
-  if(isAll && !confirm('SON ONAY: Tüm kontrol planlarını silmek istediğine emin misin? Bu işlem geri alınamaz.')) return;
+  if(!confirm(`Seçilen ${codes.length} plan (maddeler + antet) silinecek. Geri alınamaz.\n(LeanSys’e dokunulmaz; yalnız buradaki veriler.)\n\nDevam?`)) return;
   try{
     let done=0;
     for(let i=0;i<codes.length;i+=100){
       const chunk=codes.slice(i,i+100);
       const {error}=await sb.from('control_plan_items').delete().in('stock_code',chunk);
       if(error) throw error;
-      await sb.from('control_plan_headers').delete().in('stock_code',chunk);   // anteti de temizle
+      await sb.from('control_plan_headers').delete().in('stock_code',chunk);
       done+=chunk.length;
     }
     PLAN_SEL=null; PLAN_PENDING={};
-    toast(`✅ ${done} plan silindi.`,'ok');
-    await renderPlan();
+    toast(`✅ ${done} plan silindi.`,'ok'); await renderPlan();
   }catch(e){ toast('Silme hatası: '+esc(e.message||String(e)),'err'); }
 }
 async function renumberByOp(sc){
