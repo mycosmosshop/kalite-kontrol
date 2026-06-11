@@ -1945,7 +1945,7 @@ function lkpToItems(sc, stokAdi, lines){
       son_kontrol_ornekleme: r.son_ornekleme!=null ? Number(r.son_ornekleme) : null,
       production_equipment:r.uretim_ekipman||null, fmea_number:r.fmea_no||null, special_characteristic:r.ozel_kar||null,
       method:r.yontem||null, emergency_action_plan:r.acil_eylem||null, capa_plan:r.dof_plan||null,
-      process_control: r.proses_kontrol===1, final_control: r.son_kontrol===1, giris_kalite:false
+      process_control: r.proses_kontrol===1, final_control: r.son_kontrol===1, giris_kalite: r.giris===1
     };
   });
 }
