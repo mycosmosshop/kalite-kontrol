@@ -281,6 +281,7 @@
   </header>
   <nav class="tabs">
     <button data-tab="uretimler" class="active">📋 Üretimler</button>
+    <button data-tab="malkabul">📦 Mal Kabul</button>
     <button data-tab="bekleyen">⏰ Girilecek Kontroller</button>
     <button data-tab="kayitlar">✅ Kontrol Kayıtları</button>
     <button data-tab="stokdok">📄 Stok Dokümanları</button>
@@ -301,6 +302,7 @@
     </div>
 
     <div id="tab-uretimler"></div>
+    <div id="tab-malkabul" class="hidden"></div>
     <div id="tab-leansys" class="hidden"></div>
     <div id="tab-bekleyen" class="hidden"></div>
     <div id="tab-kayitlar" class="hidden"></div>
@@ -537,8 +539,9 @@ async function afterLogin(){
 // ====================== TABS ======================
 function switchTab(name){
   document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
-  ['uretimler','leansys','bekleyen','kayitlar','stokdok','stokkart','plan','istatistik','dashboard','ncr','eightd','cert','admin'].forEach(t=>$('#tab-'+t).classList.toggle('hidden',t!==name));
+  ['uretimler','malkabul','leansys','bekleyen','kayitlar','stokdok','stokkart','plan','istatistik','dashboard','ncr','eightd','cert','admin'].forEach(t=>$('#tab-'+t).classList.toggle('hidden',t!==name));
   if(name==='uretimler')renderUretimler();
+  if(name==='malkabul')renderMalKabul();
   if(name==='leansys')renderLeanSys();
   if(name==='bekleyen')renderBekleyen();
   if(name==='kayitlar')renderKayitlar();
@@ -773,6 +776,55 @@ async function renderBekleyen(){
   await _renderDueControls(root);
   await _renderGirisKalite(root);
 }
+// 📦 Mal Kabul — üst sekme (salt görünüm; LeanSys mal kabul verisi). Kontrol girişi Girilecek Kontroller'de.
+let _mkDeb=null;
+async function renderMalKabul(){
+  const root=$('#tab-malkabul'); root.innerHTML='';
+  root.append(el('div',{class:'card'},
+    el('h3',{style:'margin-top:0'},'📦 Mal Kabul (LeanSys)'),
+    el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:13px',html:'Tedarikçiden mal kabulden gelen ürünler (salt görünüm). Tazelemek: sunucuda <code>_malkabul_guncelle.bat</code>. <b>Giriş kalite kontrolü</b>, <b>Girilecek Kontroller → Giriş Kalite</b>’den girilir.'})));
+  const fSearch=el('input',{class:'inp',placeholder:'🔍 stok kodu / ad / tedarikçi…',style:'min-width:240px',oninput:()=>{clearTimeout(_mkDeb);_mkDeb=setTimeout(load,400);}});
+  const fFrom=el('input',{type:'date',class:'inp',onchange:load});
+  const fTur=el('select',{class:'inp',onchange:load}); [['0','Mal Kabul'],['1','İade'],['','Hepsi']].forEach(([v,t])=>fTur.append(el('option',{value:v},t)));
+  const cnt=el('div',{class:'stat'},el('b',{id:'mkCount'},'—'),el('span',{},'kayıt'));
+  root.append(el('div',{class:'card'},el('div',{class:'toolbar'},
+    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Ara'),fSearch),
+    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Tür'),fTur),
+    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Tarihten'),fFrom),
+    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{fSearch.value='';fFrom.value='';fTur.value='0';load();}},'Temizle'),
+    el('div',{class:'grow'}), cnt)));
+  const out=el('div'); root.append(out);
+  async function load(){
+    out.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
+    let q=sb.from('mal_kabul').select('*').order('tarih',{ascending:false}).limit(500);
+    const t=(fSearch.value||'').trim(); if(t){ const s=t.replace(/[,()%]/g,' ').trim(); q=q.or(`stok_kodu.ilike.%${s}%,stok_adi.ilike.%${s}%,cari_adi.ilike.%${s}%`); }
+    if(fFrom.value) q=q.gte('tarih',fFrom.value);
+    if(fTur.value!=='') q=q.eq('iade',Number(fTur.value));
+    const {data,error}=await q;
+    if(error){ out.innerHTML='<div class="card"><div class="msg err">'+esc(error.message)+'</div></div>'; return; }
+    const rows=data||[];
+    const c=$('#mkCount'); if(c)c.textContent=String(rows.length)+(rows.length>=500?'+':'');
+    out.innerHTML='';
+    if(!rows.length){ out.append(el('div',{class:'card'},el('div',{class:'empty'},'Kayıt yok. (Önce sunucuda _malkabul_guncelle.bat çalıştır.)'))); return; }
+    const codes=[...new Set(rows.map(r=>r.stok_kodu).filter(Boolean))];
+    const planSet=new Set(); if(codes.length){ const {data:pp}=await sb.from('control_plan_items').select('stock_code').in('stock_code',codes).eq('giris_kalite',true).eq('active',true); (pp||[]).forEach(p=>planSet.add(p.stock_code)); }
+    const card=el('div',{class:'card'}); const tb=el('table');
+    tb.append(el('thead',{},el('tr',{},...['Tarih','Stok Kodu','Stok Adı','Tedarikçi','Miktar','İrsaliye','Depo','Tür','Giriş Planı'].map(h=>el('th',{},h)))));
+    const body=el('tbody');
+    rows.forEach(r=>{ body.append(el('tr',{},
+      el('td',{style:'white-space:nowrap'},fmtDate(r.tarih)),
+      el('td',{style:'font-weight:600'},r.stok_kodu||''),
+      el('td',{style:'font-size:12px',title:r.stok_adi||''},(r.stok_adi||'').slice(0,42)),
+      el('td',{style:'font-size:12px',title:r.cari_adi||''},(r.cari_adi||'').slice(0,28)),
+      el('td',{style:'white-space:nowrap'},(r.miktar??'')+' '+(r.birim||'')),
+      el('td',{style:'font-size:11px;white-space:nowrap'},(r.seri||'')+(r.sira?(' / '+r.sira):'')),
+      el('td',{style:'font-size:11px'},r.depo||''),
+      el('td',{}, r.iade===1?el('span',{class:'pill ret'},'İade'):el('span',{class:'pill gray'},'Mal Kabul')),
+      el('td',{}, planSet.has(r.stok_kodu)?el('span',{class:'pill ok'},'var'):el('span',{class:'pill gray'},'yok')))); });
+    tb.append(body); card.append(el('div',{class:'tbl-wrap'},tb)); out.append(card);
+  }
+  fTur.value='0'; load();
+}
 let _gkDeb=null;
 // 📥 Giriş Kalite — LeanSys mal kabulden gelen ürünler; her birine giriş planına göre random kontrol
 async function _renderGirisKalite(root){
@@ -788,7 +840,7 @@ async function _renderGirisKalite(root){
   const out=el('div'); card.append(out); root.append(card);
   async function load(){
     out.innerHTML='<div class="empty" style="padding:10px">Yükleniyor…</div>';
-    let q=sb.from('mal_kabul').select('*').order('tarih',{ascending:false}).limit(300);
+    let q=sb.from('mal_kabul').select('*').order('tarih',{ascending:false}).limit(300).or('iade.eq.0,iade.is.null');   // iade HARİÇ (giriş kalite kuyruğu)
     const t=(fCode.value||'').trim(); if(t){ const s=t.replace(/[,()%]/g,' ').trim(); q=q.or(`stok_kodu.ilike.%${s}%,stok_adi.ilike.%${s}%,cari_adi.ilike.%${s}%`); }
     if(fFrom.value) q=q.gte('tarih',fFrom.value);
     const {data,error}=await q;
@@ -813,14 +865,23 @@ async function _renderGirisKalite(root){
         el('td',{style:'white-space:nowrap'},(r.miktar??'')+' '+(r.birim||'')),
         el('td',{style:'font-size:11px;white-space:nowrap'},(r.seri||'')+(r.sira?(' / '+r.sira):'')),
         el('td',{}, hasPlan?el('span',{class:'pill ok'},'var'):el('span',{class:'pill gray'},'yok')),
-        el('td',{}, done?el('span',{class:'pill ok'},'✓ girildi') : (hasPlan?el('button',{class:'btn sm',onclick:()=>openGirisKalite(r)},'Kontrol Gir'):el('span',{style:'color:var(--muted);font-size:11px'},'plan yok')))
+        el('td',{}, done?el('span',{class:'pill ok'},'✓ girildi') : (hasPlan?el('button',{class:'btn sm',onclick:()=>girisKaliteGir(r)},'Kontrol Gir'):el('span',{style:'color:var(--muted);font-size:11px'},'plan yok')))
       ));
     });
     tb.append(body); out.append(el('div',{class:'tbl-wrap'},tb));
   }
   load();
 }
-// Giriş kalite kontrol giriş modalı — giriş planına göre random örnek üretir (seri başı mantığı), düzenlenebilir
+// Mal kabul kaydından SERİ BAŞI ile AYNI kontrol modalını aç (openControl, sahte-üretim) — stage='giris'
+function girisKaliteGir(mk){
+  const irs=(mk.seri||'')+(mk.sira?(' / '+mk.sira):'');
+  const p={ id:null, stock_code:mk.stok_kodu, stock_name:mk.stok_adi, op_no:null,
+    start_time: mk.tarih?(mk.tarih+'T08:00:00'):null, end_time:null, prod_date:mk.tarih,
+    quantity:mk.miktar, unit:mk.birim, customer:mk.cari_adi, operator:'', machine_name:'', machine_code:'', work_order:irs,
+    __giris:true, mal_kabul_rec_id:mk.rec_id, giris_cari:mk.cari_adi, giris_irsaliye:irs, giris_miktar:mk.miktar, giris_birim:mk.birim };
+  openControl(p,'giris');
+}
+// (eski openGirisKalite — artık kullanılmıyor; girisKaliteGir+openControl ile seri başı modalı kullanılıyor)
 async function openGirisKalite(mk){
   const {data:plan}=await sb.from('control_plan_items').select('*').eq('stock_code',mk.stok_kodu).eq('active',true).order('op_no',{nullsFirst:true}).order('seq');
   const items=(plan||[]).filter(it=>it.giris_kalite===true);
@@ -2169,7 +2230,9 @@ async function openControl(p, forceStage, suggestTime){
     operVal=AUTO_MEASURER;   // ölçümcü: kalite operatörü
     render();
   }
-  const {data:recs}=await sb.from('control_records').select('*').eq('production_id',p.id).order('checked_at');
+  const {data:recs}=await (p.__giris
+    ? sb.from('control_records').select('*').eq('mal_kabul_rec_id',p.mal_kabul_rec_id).order('checked_at')
+    : sb.from('control_records').select('*').eq('production_id',p.id).order('checked_at'));
   const existing=recs||[];
   // periyodik maddeler (VDA yıllık, requalification, yanma vb.) için "kalan süre": geçmişten son fiilen yapılma + plan periodic_start
   const refT=new Date(p.start_time||p.prod_date||Date.now()).getTime();
@@ -2217,7 +2280,9 @@ async function openControl(p, forceStage, suggestTime){
     m.append(el('h3',{},'Kalite Kontrol Girişi'));
     m.append(el('div',{class:'meta',html:
       `<b>${esc(p.stock_code)}</b> — ${esc(p.stock_name||'')}<br>`+
-      `${esc(p.machine_name||'')} (${esc(p.machine_code||'')}) · ${esc(p.operator||'')} · ${fmtDate(p.prod_date)} · Op ${p.op_no??'-'} · Miktar: ${p.quantity??''} ${p.unit||''}`}));
+      (p.__giris
+        ? `Tedarikçi: <b>${esc(p.giris_cari||'-')}</b> · İrsaliye: ${esc(p.giris_irsaliye||'-')} · Miktar: ${p.giris_miktar??''} ${esc(p.giris_birim||'')} · Tarih: ${fmtDate(p.prod_date)}`
+        : `${esc(p.machine_name||'')} (${esc(p.machine_code||'')}) · ${esc(p.operator||'')} · ${fmtDate(p.prod_date)} · Op ${p.op_no??'-'} · Miktar: ${p.quantity??''} ${p.unit||''}`)}));
 
     // mevcut kontroller özeti
     if(existing.length){
@@ -2365,6 +2430,7 @@ async function saveControl(p,items,state,stage,sampleFor){
   const rec={production_id:p.id,stock_code:p.stock_code,stock_name:p.stock_name,machine_code:p.machine_code,
     work_order:p.work_order,stage,operator:oper,shift:_checkedAt?(shiftForTime(new Date(_checkedAt))??p.shift):p.shift,vals,overall_result:overall,
     note:$('#m_note').value.trim()||null};
+  if(p.__giris){ Object.assign(rec,{production_id:null, mal_kabul_rec_id:p.mal_kabul_rec_id, giris_cari:p.giris_cari, giris_irsaliye:p.giris_irsaliye, giris_miktar:p.giris_miktar, giris_birim:p.giris_birim}); }
   if(_checkedAt) rec.checked_at=_checkedAt;
   const {data:ins,error}=await sb.from('control_records').insert(rec).select().maybeSingle();
   if(error){toast(esc(error.message),'err');return;}
