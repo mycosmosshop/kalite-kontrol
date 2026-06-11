@@ -2336,7 +2336,7 @@ async function renderStokKartlari(root){
     if(!rows.length){ out.append(el('div',{class:'card'},el('div',{class:'empty'}, term?'Eşleşen stok kartı yok.':'Aramak için stok kodu veya adı yaz.'))); return; }
     const card=el('div',{class:'card'});
     const tb=el('table',{style:'table-layout:fixed;width:100%'});
-    const cols=[['Stok Kodu','13%'],['Stok Adı','29%'],['Stok Adı (İng)','21%'],['Birim','7%'],['Cinsi','9%'],['Durum','7%'],['Döviz','6%'],['Sektör','12%']];
+    const cols=[['Stok Kodu','12%'],['Stok Adı','26%'],['Stok Adı (İng)','18%'],['Birim','7%'],['Raf Ömrü','8%'],['Cinsi','8%'],['Durum','7%'],['Döviz','5%'],['Sektör','9%']];
     tb.append(el('thead',{},el('tr',{},...cols.map(c=>el('th',{style:'width:'+c[1]},c[0])))));
     const body=el('tbody',{id:'skBody'});
     rows.forEach(r=>{
@@ -2345,6 +2345,7 @@ async function renderStokKartlari(root){
         el('td',{style:'overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:r.stok_adi||''},r.stok_adi||''),
         el('td',{style:'font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:r.stok_adi_ing||''},r.stok_adi_ing||''),
         el('td',{},r.birim||''),
+        el('td',{style:'text-align:center'}, (r.raf_omru!=null && r.raf_omru>0)?String(r.raf_omru):''),
         el('td',{style:'overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:r.cinsi||''},r.cinsi||''),
         el('td',{},el('span',{class:'pill '+(/pasif/i.test(r.durum||'')?'ret':'ok')},r.durum||'—')),
         el('td',{},r.doviz||''),
