@@ -1288,9 +1288,16 @@ function printPlan(sc,stockName,lang){
 async function renderPlan(){
   const root=$('#tab-plan');
   root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
-  const {data}=await sb.from('control_plan_items').select('*').order('stock_code').order('seq');
-  PLAN=data||[];
-  PLAN.forEach(p=>{ if(PLAN_PENDING[p.id]) Object.assign(p,PLAN_PENDING[p.id]); });   // bekleyen (kaydedilmemiş) hücre değişikliklerini koru
+  // Plan LİSTESİ (hafif, sayfalı) — control_plan_list view (kod/ad/madde sayısı). 1000+ plan olsa da hepsi gelir.
+  let planList=[];
+  try{ let off=0; while(true){ const {data,error}=await sb.from('control_plan_list').select('*').order('stock_code').range(off,off+999); if(error) throw error; if(!data||!data.length) break; planList=planList.concat(data); if(data.length<1000) break; off+=1000; } }
+  catch(e){ const {data}=await sb.from('control_plan_items').select('stock_code,stock_name').order('stock_code'); const m=new Map(); (data||[]).forEach(r=>{ if(!m.has(r.stock_code)) m.set(r.stock_code,{stock_code:r.stock_code,stock_name:r.stock_name,n:0}); m.get(r.stock_code).n++; }); planList=[...m.values()]; }
+  // seçili plan kodu (yoksa/silinmişse ilkine düş)
+  if(PLAN_SEL && !planList.some(p=>p.stock_code===PLAN_SEL)) PLAN_SEL=null;
+  if(!PLAN_SEL && planList.length) PLAN_SEL=planList[0].stock_code;
+  // SADECE seçili planın maddelerini yükle (tüm planları DEĞİL → 1000 limiti sorunu biter)
+  PLAN=[];
+  if(PLAN_SEL){ const {data:si}=await sb.from('control_plan_items').select('*').eq('stock_code',PLAN_SEL).order('seq'); PLAN=si||[]; PLAN.forEach(p=>{ if(PLAN_PENDING[p.id]) Object.assign(p,PLAN_PENDING[p.id]); }); }
   root.innerHTML='';
   // ürün seçimi: üretimlerdeki stok kodları
   const prodStocks=[...new Map(PRODS.map(p=>[p.stock_code,p.stock_name])).entries()].filter(x=>x[0]);
@@ -1322,22 +1329,38 @@ async function renderPlan(){
   root.append(lkpCard);
   } // /canPlan
 
-  // mevcut maddeler — stok bazlı grup
-  if(!PLAN.length){ root.append(el('div',{class:'card'},el('div',{class:'empty'},'Henüz kontrol planı yok. Yukarıdan Excel ile içe aktar veya manuel ekle.'))); return; }
-  const byStock={}; PLAN.forEach(p=>{(byStock[p.stock_code]=byStock[p.stock_code]||[]).push(p);});
-  const stockKeys=Object.keys(byStock).sort();
-  if(!PLAN_SEL || !byStock[PLAN_SEL]) PLAN_SEL=stockKeys[0];
+  // plan yoksa
+  if(!planList.length){ root.append(el('div',{class:'card'},el('div',{class:'empty'},'Henüz kontrol planı yok. Yukarıdan Excel ile içe aktar, LeanSys’ten çek veya manuel ekle.'))); return; }
+  const byStock={}; if(PLAN_SEL) byStock[PLAN_SEL]=PLAN;   // yalnız seçili plan yüklü
+  const stockKeys=planList.map(p=>p.stock_code);
+  const countMap=new Map(planList.map(p=>[p.stock_code,p.n]));
+  const planNameMap=new Map(planList.map(p=>[p.stock_code,p.stock_name]));
   // stok adı çözümleyici: plan maddesi → üretimler(PRODS) → DB (üretim silinmiş olsa bile addan vazgeçme)
   let prodNameMap=new Map(PRODS.filter(p=>p.stock_code&&p.stock_name).map(p=>[p.stock_code,p.stock_name]));
   if(!prodNameMap.size){ const {data:pn}=await sb.from('productions').select('stock_code,stock_name').not('stock_name','is',null).limit(1000);
     (pn||[]).forEach(p=>{ if(p.stock_code&&p.stock_name&&!prodNameMap.has(p.stock_code))prodNameMap.set(p.stock_code,p.stock_name); }); }
-  const stockNameOf=sc=>{ const it=(byStock[sc]||[]).find(x=>x.stock_name&&String(x.stock_name).trim()); return ((it&&it.stock_name)||prodNameMap.get(sc)||'').toString().trim(); };
-  // plan seçici (birden fazla plan olunca buradan seç)
-  const planSel=el('select',{class:'inp',onchange:e=>{PLAN_SEL=e.target.value;renderPlan();}});
-  stockKeys.forEach(k=>{const nm=stockNameOf(k); const o=el('option',{value:k},`${k}${nm?' — '+nm.slice(0,45):''} (${byStock[k].length} madde)`); if(k===PLAN_SEL)o.selected=true; planSel.append(o);});
-  root.append(el('div',{class:'card'},el('div',{class:'row'},
-    el('div',{class:'field grow'},el('label',{class:'lab'},`Görüntülenecek Kontrol Planı — ${stockKeys.length} plan kayıtlı`),planSel)
-  )));
+  const stockNameOf=sc=>{ const it=(byStock[sc]||[]).find(x=>x.stock_name&&String(x.stock_name).trim()); return ((it&&it.stock_name)||planNameMap.get(sc)||prodNameMap.get(sc)||'').toString().trim(); };
+  // plan seçici — ARANABİLİR (stok kodu veya adı), 7000+ plan olsa da bul
+  { const curNm=stockNameOf(PLAN_SEL);
+    const curBtn=el('button',{type:'button',class:'inp',style:'text-align:left;cursor:pointer;width:100%'},
+      `${PLAN_SEL||'—'}${curNm?' — '+curNm:''}${PLAN_SEL?` (${countMap.get(PLAN_SEL)||PLAN.length} madde)`:''}   ▾`);
+    const search=el('input',{class:'inp',placeholder:'🔍 stok kodu veya stok adı ile ara…',style:'margin-top:8px;display:none'});
+    const listDiv=el('div',{style:'max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-top:8px;display:none'});
+    function renderOpts(){
+      const q=(search.value||'').toLowerCase().trim(); listDiv.innerHTML='';
+      const ms=planList.filter(p=> !q || (p.stock_code||'').toLowerCase().includes(q) || (p.stock_name||'').toLowerCase().includes(q));
+      ms.slice(0,600).forEach(p=>{ listDiv.append(el('div',{style:'padding:7px 9px;cursor:pointer;border-bottom:1px solid var(--line)'+(p.stock_code===PLAN_SEL?';background:rgba(37,99,235,.14);font-weight:600':''),
+        onclick:()=>{ PLAN_SEL=p.stock_code; renderPlan(); }}, `${p.stock_code}${p.stock_name?' — '+p.stock_name:''} (${p.n} madde)`)); });
+      if(ms.length>600) listDiv.append(el('div',{style:'padding:7px;color:var(--muted);font-size:12px'},`… ${ms.length-600} plan daha — aramayı daralt`));
+      if(!ms.length) listDiv.append(el('div',{style:'padding:9px;color:var(--muted)'},'Eşleşen plan yok.'));
+    }
+    let open=false;
+    curBtn.onclick=()=>{ open=!open; search.style.display=open?'block':'none'; listDiv.style.display=open?'block':'none'; if(open){ renderOpts(); search.focus(); } };
+    search.oninput=renderOpts;
+    root.append(el('div',{class:'card'},
+      el('label',{class:'lab'},`Görüntülenecek Kontrol Planı — ${planList.length} plan kayıtlı (tıkla → ara/seç)`),
+      curBtn, search, listDiv));
+  }
   // ---- Plan Yönetimi: çoklu / toplu sil ----
   if(canPlan && stockKeys.length){
     const selSet=new Set();
@@ -1355,7 +1378,7 @@ async function renderPlan(){
         listBox.append(el('label',{style:'display:flex;align-items:center;gap:8px;padding:3px 5px;cursor:pointer;border-bottom:1px solid var(--line)'},
           cb, el('span',{style:'font-weight:600;min-width:120px'},k),
           el('span',{style:'color:var(--muted);font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'},nm?('— '+nm):''),
-          el('span',{style:'color:var(--muted);font-size:11px'},(byStock[k]||[]).length+' madde')));
+          el('span',{style:'color:var(--muted);font-size:11px'},(countMap.get(k)||0)+' madde')));
       });
       if(keys.length>shown.length) listBox.append(el('div',{style:'padding:6px;color:var(--muted);font-size:12px'},`… ${keys.length-shown.length} plan daha — filtreyle daralt (hepsini silmek için "TÜM Planları Sil")`));
       countBadge.textContent=`${keys.length} plan · ${selSet.size} seçili`;
