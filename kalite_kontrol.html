@@ -283,6 +283,7 @@
     <button data-tab="uretimler" class="active">📋 Üretimler</button>
     <button data-tab="bekleyen">⏰ Girilecek Kontroller</button>
     <button data-tab="kayitlar">✅ Kontrol Kayıtları</button>
+    <button data-tab="stokdok">📄 Stok Dokümanları</button>
     <button data-tab="plan">📐 Kontrol Planı</button>
     <button data-tab="istatistik">📊 İstatistik</button>
     <button data-tab="dashboard" id="dashTab">📈 Dashboard</button>
@@ -302,6 +303,7 @@
     <div id="tab-leansys" class="hidden"></div>
     <div id="tab-bekleyen" class="hidden"></div>
     <div id="tab-kayitlar" class="hidden"></div>
+    <div id="tab-stokdok" class="hidden"></div>
     <div id="tab-plan" class="hidden"></div>
     <div id="tab-istatistik" class="hidden"></div>
     <div id="tab-dashboard" class="hidden"></div>
@@ -520,11 +522,12 @@ async function afterLogin(){
 // ====================== TABS ======================
 function switchTab(name){
   document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
-  ['uretimler','leansys','bekleyen','kayitlar','plan','istatistik','dashboard','ncr','eightd','cert','admin'].forEach(t=>$('#tab-'+t).classList.toggle('hidden',t!==name));
+  ['uretimler','leansys','bekleyen','kayitlar','stokdok','plan','istatistik','dashboard','ncr','eightd','cert','admin'].forEach(t=>$('#tab-'+t).classList.toggle('hidden',t!==name));
   if(name==='uretimler')renderUretimler();
   if(name==='leansys')renderLeanSys();
   if(name==='bekleyen')renderBekleyen();
   if(name==='kayitlar')renderKayitlar();
+  if(name==='stokdok')renderStokDokumanlari($('#tab-stokdok'));
   if(name==='plan')renderPlan();
   if(name==='istatistik')renderIstatistik();
   if(name==='dashboard')renderDashboard();
@@ -2204,8 +2207,6 @@ function kayitTabRow(){
     tabs.append(el('button',{class:'btn sm '+(KAYIT_STAGE===k?'':'sec'),style:'border-radius:8px 8px 0 0',
       onclick:()=>{KAYIT_STAGE=k;renderKayitlar();}}, label+' Kayıtları'));
   });
-  tabs.append(el('button',{class:'btn sm '+(KAYIT_STAGE==='stokdok'?'':'sec'),style:'border-radius:8px 8px 0 0;margin-left:10px',
-    onclick:()=>{KAYIT_STAGE='stokdok';renderKayitlar();}}, '📄 Stok Dokümanları'));
   return tabs;
 }
 
@@ -2221,7 +2222,6 @@ function stokDocHttpUrl(unc){
 }
 async function renderStokDokumanlari(root){
   root.innerHTML='';
-  root.append(kayitTabRow());
   root.append(el('div',{class:'msg info',html:'📄 LeanSys <b>Stok Dokümanları</b> (kod bazlı). <b>Stok kodu</b>, stok adı veya doküman adı ile ara. Dosyalar ağ paylaşımında (<code>\\\\10.11.11.11\\dokumanlar\\stokgorsel</code>) — <b>linki kopyalayıp</b> Dosya Gezgini adres çubuğuna yapıştır.'}));
   const q0=(KAYIT_FILT&&KAYIT_FILT.stock)?KAYIT_FILT.stock:'';
   const search=el('input',{class:'inp',id:'stokDokSearch',placeholder:'🔍 stok kodu, stok adı veya doküman adı…',style:'width:100%',value:q0,
@@ -2290,7 +2290,6 @@ async function renderStokDokumanlari(root){
 
 async function renderKayitlar(){
   const root=$('#tab-kayitlar');
-  if(KAYIT_STAGE==='stokdok') return renderStokDokumanlari(root);
   root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
   // kayıtlar (aşamaya göre) + üretim bilgileri (cari, başlama/bitiş, miktar, makine adı)
   let q=sb.from('control_records').select('*').eq('stage',KAYIT_STAGE).order('checked_at',{ascending:false}).limit(2000);
