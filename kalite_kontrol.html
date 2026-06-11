@@ -790,7 +790,7 @@ async function renderMalKabul(){
   root.append(el('div',{class:'card'},el('div',{class:'toolbar'},
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Ara'),fSearch),
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Tür'),fTur),
-    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Tarihten'),fFrom),
+    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'İrsaliye Tarihinden'),fFrom),
     el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{fSearch.value='';fFrom.value='';fTur.value='0';load();}},'Temizle'),
     el('div',{class:'grow'}), cnt)));
   const out=el('div'); root.append(out);
@@ -809,10 +809,11 @@ async function renderMalKabul(){
     const codes=[...new Set(rows.map(r=>r.stok_kodu).filter(Boolean))];
     const planSet=new Set(); if(codes.length){ const {data:pp}=await sb.from('control_plan_items').select('stock_code').in('stock_code',codes).eq('giris_kalite',true).eq('active',true); (pp||[]).forEach(p=>planSet.add(p.stock_code)); }
     const card=el('div',{class:'card'}); const tb=el('table');
-    tb.append(el('thead',{},el('tr',{},...['Tarih','Stok Kodu','Stok Adı','Tedarikçi','Miktar','İrsaliye','Depo','Tür','Giriş Planı'].map(h=>el('th',{},h)))));
+    tb.append(el('thead',{},el('tr',{},...['İrsaliye Tarih','Kayıt Tarihi','Stok Kodu','Stok Adı','Tedarikçi','Miktar','İrsaliye','Depo','Tür','Giriş Planı'].map(h=>el('th',{},h)))));
     const body=el('tbody');
     rows.forEach(r=>{ body.append(el('tr',{},
       el('td',{style:'white-space:nowrap'},fmtDate(r.tarih)),
+      el('td',{style:'white-space:nowrap;font-size:11px;color:var(--muted)'},r.kayit_tarih||''),
       el('td',{style:'font-weight:600'},r.stok_kodu||''),
       el('td',{style:'font-size:12px',title:r.stok_adi||''},(r.stok_adi||'').slice(0,42)),
       el('td',{style:'font-size:12px',title:r.cari_adi||''},(r.cari_adi||'').slice(0,28)),
