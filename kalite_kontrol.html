@@ -2236,6 +2236,11 @@ function stokDocHttpUrl(unc){
   if(!m) return null;
   return 'http://10.11.11.11/dokumanlar/'+m[1].split('\\').map(p=>encodeURIComponent(p)).join('/');
 }
+// Tarayıcıda GÖMÜLÜ açılabilen türler → "Aç"; gerisi (TIFF/Excel/Word/ppt…) iner → "İndir"
+function _docTarayicidaAcilir(link){
+  const e=(String(link||'').split('.').pop()||'').toLowerCase();
+  return ['pdf','jpg','jpeg','png','gif','bmp','webp','svg'].indexOf(e)>=0;
+}
 async function renderStokDokumanlari(root){
   root.innerHTML='';
   root.append(el('div',{class:'msg info',html:'📄 LeanSys <b>Stok Dokümanları</b> (kod bazlı). <b>Stok kodu</b>, stok adı veya doküman adı ile ara. Dosyalar ağ paylaşımında (<code>\\\\10.11.11.11\\dokumanlar\\stokgorsel</code>) — <b>linki kopyalayıp</b> Dosya Gezgini adres çubuğuna yapıştır.'}));
@@ -2268,9 +2273,13 @@ async function renderStokDokumanlari(root){
     else nameCell.append(document.createTextNode(r.doc_adi||'—'));
     const act=el('td',{style:'white-space:nowrap'});
     if(r.link){
-      if(httpUrl) act.append(el('a',{class:'btn sm',href:httpUrl,target:'_blank',rel:'noopener',style:'text-decoration:none;display:inline-block',title:'Tarayıcıda aç'},'🔗 Aç'));
-      else act.append(el('button',{class:'btn sm',title:r.link,onclick:()=>{ try{navigator.clipboard.writeText(r.link);}catch(_){}; toast('Bu dosya farklı sunucuda — link kopyalandı, Dosya Gezgini’ne yapıştır.','ok'); }},'🔗 Aç'));
-      act.append(el('button',{class:'btn sm sec',style:'margin-left:6px',title:r.link,onclick:copyUNC},'📋 Kopyala'));
+      if(httpUrl){
+        const op=_docTarayicidaAcilir(r.link);
+        act.append(el('a',{class:'btn sm',href:httpUrl,target:'_blank',rel:'noopener',style:'text-decoration:none;display:inline-block',title: op?'Tarayıcıda aç':'Bu tür tarayıcıda gösterilemez; iner (Foto/Office ile açılır)'}, op?'🔗 Aç':'📥 İndir'));
+        act.append(el('button',{class:'btn sm sec',style:'margin-left:6px',title:r.link,onclick:copyUNC},'📋 Kopyala'));
+      } else {
+        act.append(el('button',{class:'btn sm sec',title:r.link,onclick:copyUNC},'📋 Kopyala'));
+      }
     } else { act.append(el('span',{style:'color:var(--muted)'},'link yok')); }
     return el('tr',{},
       nameCell,
