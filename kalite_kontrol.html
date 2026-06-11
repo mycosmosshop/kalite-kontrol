@@ -1388,14 +1388,20 @@ async function renderPlan(){
       `${PLAN_SEL||'—'}${curNm?' — '+curNm:''}${PLAN_SEL?` (${countMap.get(PLAN_SEL)||PLAN.length} madde)`:''}   ▾`);
     const search=el('input',{class:'inp',placeholder:'🔍 stok kodu veya stok adı ile ara…',style:'margin-top:8px;display:none'});
     const listDiv=el('div',{style:'max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-top:8px;display:none'});
+    let _ms=[], _shown=0;
+    function rowOf(p){ return el('div',{style:'padding:7px 9px;cursor:pointer;border-bottom:1px solid var(--line)'+(p.stock_code===PLAN_SEL?';background:rgba(37,99,235,.14);font-weight:600':''),
+      onclick:()=>{ PLAN_SEL=p.stock_code; renderPlan(); }}, `${p.stock_code}${p.stock_name?' — '+p.stock_name:''} (${p.n} madde)`); }
+    function moreOpts(){ if(_footer) _footer.remove(); const next=_ms.slice(_shown,_shown+300); next.forEach(p=>listDiv.append(rowOf(p))); _shown+=next.length;
+      if(_shown<_ms.length){ _footer=el('div',{style:'padding:7px;color:var(--muted);font-size:12px;text-align:center'},`▾ ${_ms.length-_shown} plan daha — kaydır (toplam ${_ms.length})`); listDiv.append(_footer); } }
+    let _footer=null;
     function renderOpts(){
-      const q=(search.value||'').toLowerCase().trim(); listDiv.innerHTML='';
-      const ms=planList.filter(p=> !q || (p.stock_code||'').toLowerCase().includes(q) || (p.stock_name||'').toLowerCase().includes(q));
-      ms.slice(0,600).forEach(p=>{ listDiv.append(el('div',{style:'padding:7px 9px;cursor:pointer;border-bottom:1px solid var(--line)'+(p.stock_code===PLAN_SEL?';background:rgba(37,99,235,.14);font-weight:600':''),
-        onclick:()=>{ PLAN_SEL=p.stock_code; renderPlan(); }}, `${p.stock_code}${p.stock_name?' — '+p.stock_name:''} (${p.n} madde)`)); });
-      if(ms.length>600) listDiv.append(el('div',{style:'padding:7px;color:var(--muted);font-size:12px'},`… ${ms.length-600} plan daha — aramayı daralt`));
-      if(!ms.length) listDiv.append(el('div',{style:'padding:9px;color:var(--muted)'},'Eşleşen plan yok.'));
+      const q=(search.value||'').toLowerCase().trim();
+      _ms=planList.filter(p=> !q || (p.stock_code||'').toLowerCase().includes(q) || (p.stock_name||'').toLowerCase().includes(q));
+      _shown=0; _footer=null; listDiv.scrollTop=0; listDiv.innerHTML='';
+      if(!_ms.length){ listDiv.append(el('div',{style:'padding:9px;color:var(--muted)'},'Eşleşen plan yok.')); return; }
+      moreOpts();
     }
+    listDiv.onscroll=()=>{ if(_shown<_ms.length && listDiv.scrollTop+listDiv.clientHeight >= listDiv.scrollHeight-70) moreOpts(); };
     let open=false;
     curBtn.onclick=()=>{ open=!open; search.style.display=open?'block':'none'; listDiv.style.display=open?'block':'none'; if(open){ renderOpts(); search.focus(); } };
     search.oninput=renderOpts;
