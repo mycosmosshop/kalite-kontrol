@@ -785,7 +785,7 @@ async function renderMalKabul(){
   const root=$('#tab-malkabul'); root.innerHTML='';
   root.append(el('div',{class:'card'},
     el('h3',{style:'margin-top:0'},'📦 Mal Kabul (LeanSys)'),
-    el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:13px',html:'Tedarikçiden mal kabulden gelen ürünler. Aktarmak/tazelemek: sunucuda <b>Mal_Kabul_Aktar</b> penceresi (stok kodu + tarih seçip <b>AKTAR</b>) ya da <code>_malkabul_guncelle.bat</code>. <b>Giriş kalite kontrolü</b>, <b>Girilecek Kontroller → Giriş Kalite</b>’den girilir.'})));
+    el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:13px',html:'Tedarikçiden mal kabulden gelen ürünler. Aktarmak/tazelemek: aşağıdaki <b>📥 LeanSys’ten Aktar</b> butonu (pencere açılır → stok kodu + tarih seçip <b>AKTAR</b>). <b>Giriş kalite kontrolü</b>, <b>Girilecek Kontroller → Giriş Kalite</b>’den girilir.'})));
   const fSearch=el('input',{class:'inp',placeholder:'🔍 stok kodu / ad / tedarikçi…',style:'min-width:240px',oninput:()=>{clearTimeout(_mkDeb);_mkDeb=setTimeout(load,400);}});
   const fFrom=el('input',{type:'date',class:'inp',onchange:load});
   const fTo=el('input',{type:'date',class:'inp',onchange:load});
@@ -804,6 +804,7 @@ async function renderMalKabul(){
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'İrsaliye Tarihi — Başlangıç'),fFrom),
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),fTo),
     el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{fSearch.value='';fFrom.value='';fTo.value='';fTur.value='0';load();}},'Temizle'),
+    el('button',{class:'btn sm',style:'flex:0',title:'LeanSys mal kabul aktarım penceresini açar (stok kodu / tarih seç → AKTAR). İlk seferde tarayıcı “Aç” diye sorabilir. Aktarım bitince Temizle ile yenile.',onclick:()=>{fetch('http://127.0.0.1:17777/open?app=malkabul',{mode:'cors'}).then(()=>toast('Mal Kabul aktarım penceresi açılıyor… Aktarım bitince Temizle ile yenile.','ok')).catch(()=>toast('LeanSys ajanı kapalı. Önce LeanSys_Agent çalışmalı (Startup).','err'));}},'📥 LeanSys’ten Aktar'),
     el('div',{class:'grow'}), mkTools, cnt)));
   const out=el('div'); root.append(out);
   let _mkSeq=0;
