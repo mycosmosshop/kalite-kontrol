@@ -1624,10 +1624,12 @@ async function renderPlan(){
   ));
   // ---- LeanSys'ten kontrol planı çek (katlanır) ----
   root.append(collapseBar('🏭 LeanSys’ten Kontrol Planı Çek',
-    el('p',{style:'color:var(--muted);margin:0 0 12px;font-size:13px',html:'LeanSys’teki kontrol planını bu sayfadaki yapıya kopyalar. <b>Stok kodu yaz</b> → sadece o planı; <b>boş bırak</b> → LeanSys’teki <b>TÜM</b> planları çeker. İlgili stokların buradaki planının üzerine yazılır. <b>LeanSys’e hiçbir şey yazılmaz</b> (salt-okuma). Veriyi tazelemek için sunucuda <code>_kontrolplani_guncelle.bat</code> çalıştırılır.'}),
+    el('p',{style:'color:var(--muted);margin:0 0 6px;font-size:13px',html:'LeanSys’teki kontrol planını bu sayfadaki yapıya kopyalar. <b>Stok kodu yaz</b> → sadece o planı; <b>boş bırak</b> → <b>TÜM</b> planlar. İlgili stokların buradaki planının üzerine yazılır. <b>LeanSys’e hiçbir şey yazılmaz</b> (salt-okuma).'}),
+    el('div',{class:'msg info',style:'margin:0 0 12px;font-size:12.5px',html:'⚠️ <b>2 adımlı:</b> Önce <b>① 🔄 LeanSys’ten Güncelle</b> (pencere açılır → stok kodu → AKTAR; LeanSys’teki güncel veri ara tabloya tazelenir), sonra <b>② 📥 LeanSys’ten Çek</b>. LeanSys’te değişiklik yaptıysan önce ① yapmazsan <b>eski veri</b> gelir.'}),
     el('div',{class:'row'},
-      el('div',{class:'field grow'},el('label',{class:'lab'},'Stok Kodu (boş = tümü)'),el('input',{class:'inp',id:'lkp_code',placeholder:'örn. 700.0.454 — boş bırakırsan hepsi'})),
-      el('button',{class:'btn sm',id:'lkp_btn',style:'flex:0',onclick:cekFromLeansys},'📥 LeanSys’ten Çek')
+      el('div',{class:'field grow'},el('label',{class:'lab'},'Stok Kodu (boş = tümü)'),el('input',{class:'inp',id:'lkp_code',placeholder:'örn. 205.0.138 — boş bırakırsan hepsi'})),
+      el('button',{class:'btn sm sec',style:'flex:0',title:'LeanSys kontrol planı tazeleme penceresini açar (stok kodu → AKTAR → ara tablo güncellenir). İlk seferde tarayıcı “Aç” sorabilir.',onclick:()=>{ const c=($('#lkp_code')&&$('#lkp_code').value.trim())||''; fetch('http://127.0.0.1:17777/open?app=kontrolplani',{mode:'cors'}).then(()=>toast('Kontrol planı tazeleme penceresi açılıyor… '+(c?('Kutuya '+c+' yazıp'):'Stok kodu yazıp')+' AKTAR’a bas, bitince ② Çek.','ok')).catch(()=>toast('LeanSys ajanı kapalı. Önce LeanSys_Agent çalışmalı (Startup).','err')); }},'① 🔄 LeanSys’ten Güncelle'),
+      el('button',{class:'btn sm',id:'lkp_btn',style:'flex:0',onclick:cekFromLeansys},'② 📥 LeanSys’ten Çek')
     )
   ));
   } // /canPlan
