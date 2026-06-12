@@ -1019,9 +1019,12 @@ async function _renderDueControls(root){
   if(!prodIds.length){ listWrap.innerHTML='<div class="empty" style="padding:10px">Üretim yok.</div>'; return; }
   // yapılmış kontroller (aşama bazında)
   const byProd={};
-  { const {data:rr}=await sb.from('control_records').select('production_id,stage').in('production_id',prodIds);
-    (rr||[]).forEach(r=>{ const o=byProd[r.production_id]||(byProd[r.production_id]={seri:false,proses:0,son:false});
-      if(r.stage==='seri_basi')o.seri=true; else if(r.stage==='proses')o.proses++; else if(r.stage==='son')o.son=true; }); }
+  // id'leri parçala + sayfalı çek (1000 satır kapağını aş) → yapılmış kontroller eksiksiz sayılsın; girilmiş üretim kuyrukta kalmasın
+  for(let i=0;i<prodIds.length;i+=300){ const chunk=prodIds.slice(i,i+300);
+    for(let from=0;;from+=1000){ const {data:rr}=await sb.from('control_records').select('production_id,stage').in('production_id',chunk).range(from,from+999);
+      (rr||[]).forEach(r=>{ const o=byProd[r.production_id]||(byProd[r.production_id]={seri:false,proses:0,son:false});
+        if(r.stage==='seri_basi')o.seri=true; else if(r.stage==='proses')o.proses++; else if(r.stage==='son')o.son=true; });
+      if(!rr||rr.length<1000)break; } }
   // plan proses örnekleme sıklığı (stok bazında, en sık olan)
   const stocks=[...new Set(PRODS.map(p=>p.stock_code).filter(Boolean))];
   const freqByStock={};
