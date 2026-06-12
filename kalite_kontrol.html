@@ -1619,6 +1619,25 @@ async function renderPlan(){
       if(keys.length>shown.length) listBox.append(el('div',{style:'padding:6px;color:var(--muted);font-size:12px'},`… ${keys.length-shown.length} plan daha — filtreyle daralt (hepsini silmek için "TÜM Planları Sil")`));
       countBadge.textContent=`${keys.length} plan · ${selSet.size} seçili`;
     }
+    // ADMIN: elle değiştirilen planlar — Plan Yönetimi'nin İÇİNDE alt bölüm (ayrı kart değil)
+    let elleSection=null;
+    if(PROFILE && PROFILE.is_admin){
+      let locks=[]; try{ const {data}=await sb.from('control_plan_locks').select('*').eq('locked',true).order('updated_at',{ascending:false}); locks=data||[]; }catch(e){}
+      if(locks.length){
+        const box=el('div',{style:'max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:4px;margin-top:6px'});
+        locks.forEach(l=>{ const nm=stockNameOf(l.stock_code);
+          box.append(el('div',{style:'display:flex;align-items:center;gap:10px;padding:4px 6px;border-bottom:1px solid var(--line);cursor:pointer',title:'Bu planı aç',onclick:()=>{PLAN_SEL=l.stock_code;renderPlan();}},
+            el('span',{style:'font-weight:600;min-width:120px'},l.stock_code),
+            el('span',{style:'flex:1;color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'},nm?('— '+nm):''),
+            el('span',{class:'pill',style:'background:#0288d1;color:#fff;font-size:11px'},l.kinds||'değişiklik'),
+            el('span',{style:'color:var(--muted);font-size:11px;white-space:nowrap'},l.updated_at?fmtDT(l.updated_at):'')));
+        });
+        elleSection=el('details',{style:'margin-top:14px;border-top:1px solid var(--line);padding-top:10px'},
+          el('summary',{style:'cursor:pointer;font-weight:600;font-size:13.5px'},`✏️ Elle Değiştirilen Planlar (admin) — ${locks.length}`),
+          el('p',{style:'color:var(--muted);margin:6px 0 8px;font-size:12px'},'Elle değişiklik yapılan planlar (LeanSys çekiminde korunur). Tür + tarih gösterilir; satıra tıkla → planı aç.'),
+          box);
+      }
+    }
     const mgmt=collapseBar('🗑 Plan Yönetimi — Çoklu / Toplu Sil',
       el('p',{style:'color:var(--muted);margin:0 0 10px;font-size:13px',html:'Planları seçip <b>Seçilenleri Sil</b> ya da <b>TÜM Planları Sil</b>. Sadece <b>buradaki</b> planı (maddeler + antet) siler; <b>LeanSys’e dokunmaz</b>. Geri alınamaz. <b>TÜM Planları Sil</b> listede görünmeyenler dahil HEPSİNİ siler.'}),
       el('div',{class:'row'},el('div',{class:'field grow'},el('label',{class:'lab'},'Planlarda ara'),filt),countBadge),
@@ -1629,27 +1648,11 @@ async function renderPlan(){
         el('button',{class:'btn sm danger',onclick:()=>bulkDeletePlans([...selSet],false)},'🗑 Seçilenleri Sil'),
         el('div',{class:'grow'}),
         el('button',{class:'btn sm danger',onclick:()=>bulkDeletePlans([],true)},'🗑 TÜM Planları Sil')
-      )
+      ),
+      elleSection
     );
     renderList();
     root.append(mgmt);
-  }
-  // ---- ADMIN: elle değiştirilen planlar (ne değişti / ne zaman) ----
-  if(canPlan && PROFILE && PROFILE.is_admin){
-    let locks=[]; try{ const {data}=await sb.from('control_plan_locks').select('*').eq('locked',true).order('updated_at',{ascending:false}); locks=data||[]; }catch(e){}
-    if(locks.length){
-      const box=el('div',{style:'max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:4px;margin-top:6px'});
-      locks.forEach(l=>{ const nm=stockNameOf(l.stock_code);
-        box.append(el('div',{style:'display:flex;align-items:center;gap:10px;padding:4px 6px;border-bottom:1px solid var(--line);cursor:pointer',title:'Bu planı aç',onclick:()=>{PLAN_SEL=l.stock_code;renderPlan();}},
-          el('span',{style:'font-weight:600;min-width:120px'},l.stock_code),
-          el('span',{style:'flex:1;color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'},nm?('— '+nm):''),
-          el('span',{class:'pill',style:'background:#0288d1;color:#fff;font-size:11px'},l.kinds||'değişiklik'),
-          el('span',{style:'color:var(--muted);font-size:11px;white-space:nowrap'},l.updated_at?fmtDT(l.updated_at):'')));
-      });
-      root.append(collapseBar(`✏️ Elle Değiştirilen Planlar (admin) — ${locks.length}`,
-        el('p',{style:'color:var(--muted);margin:0 0 8px;font-size:12px'},'Elle değişiklik yapılan planlar (LeanSys çekiminde korunur). Tür + tarih gösterilir; satıra tıkla → planı aç.'),
-        box));
-    }
   }
   // ---- Plan seçici — ARANABİLİR (plan görünümünün hemen üstünde) ----
   { const curNm=stockNameOf(PLAN_SEL);
