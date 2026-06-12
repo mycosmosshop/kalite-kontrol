@@ -288,6 +288,7 @@
     <button data-tab="stokdok">📄 Stok Dokümanları</button>
     <button data-tab="stokkart">🗂 Stok Kartları</button>
     <button data-tab="operasyon">⚙️ Operasyon Kartları</button>
+    <button data-tab="urunagaci">🌳 Ürün Ağaçları</button>
     <button data-tab="plan">📐 Kontrol Planı</button>
     <button data-tab="istatistik">📊 İstatistik</button>
     <button data-tab="dashboard" id="dashTab">📈 Dashboard</button>
@@ -312,6 +313,7 @@
     <div id="tab-stokkart" class="hidden"></div>
     <div id="tab-kalitetest" class="hidden"></div>
     <div id="tab-operasyon" class="hidden"></div>
+    <div id="tab-urunagaci" class="hidden"></div>
     <div id="tab-plan" class="hidden"></div>
     <div id="tab-istatistik" class="hidden"></div>
     <div id="tab-dashboard" class="hidden"></div>
@@ -547,7 +549,7 @@ async function afterLogin(){
 // ====================== TABS ======================
 function switchTab(name){
   document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
-  ['uretimler','malkabul','leansys','bekleyen','kayitlar','kalitetest','stokdok','stokkart','operasyon','plan','istatistik','dashboard','ncr','eightd','cert','admin'].forEach(t=>$('#tab-'+t).classList.toggle('hidden',t!==name));
+  ['uretimler','malkabul','leansys','bekleyen','kayitlar','kalitetest','stokdok','stokkart','operasyon','urunagaci','plan','istatistik','dashboard','ncr','eightd','cert','admin'].forEach(t=>$('#tab-'+t).classList.toggle('hidden',t!==name));
   if(name==='uretimler')renderUretimler();
   if(name==='malkabul')renderMalKabul();
   if(name==='leansys')renderLeanSys();
@@ -557,6 +559,7 @@ function switchTab(name){
   if(name==='stokkart')renderStokKartlari($('#tab-stokkart'));
   if(name==='kalitetest')renderKaliteTest($('#tab-kalitetest'));
   if(name==='operasyon')renderOperasyon($('#tab-operasyon'));
+  if(name==='urunagaci')renderUrunAgaci($('#tab-urunagaci'));
   if(name==='plan')renderPlan();
   if(name==='istatistik')renderIstatistik();
   if(name==='dashboard')renderDashboard();
@@ -2937,6 +2940,99 @@ async function renderStokDokumanlari(root){
   load(true);
 }
 
+// 🌳 Ürün Ağaçları (LeanSys SBT071/072, BOM) — tüketim satırları; kod ile çek, akordeon, Supabase'ten sil
+let _uaDeb=null;
+async function renderUrunAgaci(root){
+  root.innerHTML='';
+  const isAdmin=(PROFILE&&PROFILE.is_admin)||can('import');
+  root.append(el('div',{class:'card'},
+    el('h3',{style:'margin-top:0'},'🌳 Ürün Ağaçları (LeanSys BOM)'),
+    el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:13px',html:'Ürün ağaçları — tüketim (BOM) satırları, miktar/birim/fire/cinsi ile. Aşağıdan <b>ürün seç / ara</b> → kart altında açılır (tekrar tıkla kapanır). Çekmek (admin): stok kodu → <b>📥 LeanSys’ten Çek</b> (virgülle çoklu; boş = TÜM).'})));
+  const fCode=el('input',{class:'inp',placeholder:'örn. 700.0.454 (boş=tümü)',style:'min-width:170px'});
+  const pullBtn=el('button',{class:'btn sm',id:'ua_pull',style:'flex:0',onclick:pullFromLeansys},'📥 LeanSys’ten Çek');
+  const cnt=el('div',{class:'stat'},el('b',{id:'uaCardCnt'},'—'),el('span',{},'ürün'));
+  root.append(el('div',{class:'card'},el('div',{class:'toolbar'},
+    ...(isAdmin?[el('div',{class:'field grow'},el('label',{class:'lab'},'Çekilecek stok kodu (virgülle çoklu · boş = TÜM)'),fCode),pullBtn]:[el('div',{class:'grow'})]),
+    cnt)));
+  const search=el('input',{class:'inp',placeholder:'🔍 ürün kodu / ad / tüketim kodu ile ara…',style:'width:100%'});
+  search.oninput=()=>{ clearTimeout(_uaDeb); _uaDeb=setTimeout(renderList,200); };
+  const listDiv=el('div',{style:'border:1px solid var(--line);border-radius:8px;margin-top:8px;overflow:hidden'});
+  root.append(el('div',{class:'card'},el('label',{class:'lab'},'Ürün Seç — koda tıkla → ürün ağacı ALTINDA açılır; tekrar tıkla kapanır'),search,listDiv));
+  let HEADERS=[], openCloser=null;
+  async function pullFromLeansys(){
+    pullBtn.disabled=true; const _t=pullBtn.textContent; pullBtn.textContent='⏳ Çekiliyor…';
+    let res=null;
+    try{ const r=await fetch('http://127.0.0.1:17777/refreshbom?codes='+encodeURIComponent((fCode.value||'').trim()),{mode:'cors'}); res=await r.json(); }catch(e){ res=null; }
+    pullBtn.disabled=false; pullBtn.textContent=_t;
+    if(!res){ toast('LeanSys ajanı kapalı/erişilemedi. LeanSys_Agent çalışıyor mu?','err'); return; }
+    if(!res.ok){ toast('Çekme hatası: '+esc(res.error||'?'),'err'); return; }
+    toast((res.count||0)+' BOM satırı çekildi/güncellendi.','ok'); loadHeaders();
+  }
+  async function loadHeaders(){
+    listDiv.innerHTML='<div style="padding:10px;color:var(--muted)">Yükleniyor…</div>';
+    HEADERS=[]; const seen=new Set(); openCloser=null;
+    for(let from=0;;from+=1000){ const {data,error}=await sb.from('urun_agaclari').select('header_id,urun_kodu,urun_adi,agac_adi,varsayilan,kayit_tarihi').order('urun_kodu').range(from,from+999);
+      if(error){ listDiv.innerHTML='<div class="msg err" style="margin:8px">'+esc(error.message)+'</div>'; return; }
+      (data||[]).forEach(r=>{ if(!seen.has(r.header_id)){ seen.add(r.header_id); HEADERS.push(r); } });
+      if(!data||data.length<1000)break; }
+    const cc=$('#uaCardCnt'); if(cc)cc.textContent=String(HEADERS.length);
+    renderList();
+  }
+  function renderList(){
+    const q=(search.value||'').toLowerCase().trim();
+    const ms=HEADERS.filter(h=> !q || (h.urun_kodu||'').toLowerCase().includes(q) || (h.urun_adi||'').toLowerCase().includes(q));
+    listDiv.innerHTML=''; openCloser=null;
+    if(!HEADERS.length){ listDiv.append(el('div',{style:'padding:10px;color:var(--muted)'},'Kayıt yok. '+(isAdmin?'Yukarıdan stok kodu ile «📥 LeanSys’ten Çek».':'Admin çeksin.'))); return; }
+    if(!ms.length){ listDiv.append(el('div',{style:'padding:10px;color:var(--muted)'},'Eşleşen ürün yok.')); return; }
+    ms.slice(0,300).forEach(h=>{
+      const det=el('div',{style:'display:none;border-top:1px solid var(--line)'});
+      const caret=el('span',{style:'color:var(--muted);flex:0'},'▸');
+      const hdr=el('div',{style:'padding:9px 11px;cursor:pointer;display:flex;justify-content:space-between;gap:10px;align-items:center;font-size:13px'},
+        el('span',{html:`<b>${esc(h.urun_kodu||'')}</b> — ${esc((h.urun_adi||'').slice(0,46))} &nbsp;·&nbsp; ${esc(h.agac_adi||'-')}${h.varsayilan?' ⭐':''}`}), caret);
+      const item=el('div',{style:'border-bottom:1px solid var(--line)'},hdr,det);
+      let loaded=false;
+      const closeThis=()=>{ det.style.display='none'; hdr.style.background=''; caret.textContent='▸'; };
+      hdr.onclick=async()=>{
+        if(openCloser && openCloser.det===det){ closeThis(); openCloser=null; return; }
+        if(openCloser) openCloser.close();
+        hdr.style.background='rgba(37,99,235,.10)'; caret.textContent='▾'; det.style.display='';
+        openCloser={det, close:closeThis};
+        if(!loaded){ det.innerHTML='<div style="padding:10px;color:var(--muted)">Yükleniyor…</div>'; await fillCard(det,h.header_id,h); loaded=true; }
+      };
+      listDiv.append(item);
+    });
+    if(ms.length>300) listDiv.append(el('div',{style:'padding:6px;color:var(--muted);font-size:12px;text-align:center'},`… ${ms.length-300} ürün daha — aramayı daralt`));
+  }
+  async function fillCard(det,hid,h){
+    const {data,error}=await sb.from('urun_agaclari').select('*').eq('header_id',hid).order('cinsi').order('tuketim_kodu');
+    det.innerHTML='';
+    if(error){ det.append(el('div',{class:'msg err',style:'margin:8px'},esc(error.message))); return; }
+    const lines=data||[]; if(!lines.length){ det.append(el('div',{style:'padding:10px;color:var(--muted)'},'Tüketim satırı yok.')); return; }
+    det.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;padding:8px 11px'},
+      el('div',{style:'color:var(--muted);font-size:12.5px'},`Ağaç: ${esc(h.agac_adi||'-')}${h.varsayilan?' ⭐varsayılan':''} · Kayıt ${fmtDate(h.kayit_tarihi)} · ${lines.length} tüketim`),
+      isAdmin?el('button',{class:'btn sm danger',style:'flex:0',title:'Bu ürün ağacını YALNIZ Supabase’ten sil (LeanSys’e dokunmaz)',onclick:async(e)=>{ e.stopPropagation(); if(await delUaCard(hid,h)) loadHeaders(); }},'🗑 Bu ağacı sil'):''));
+    const tb=el('table');
+    tb.append(el('thead',{},el('tr',{},...['Tüketim Kodu','Tüketim Adı','Miktar','Birim','Fire %','Cinsi'].map(x=>el('th',{},x)))));
+    const body=el('tbody');
+    lines.forEach(l=>body.append(el('tr',{},
+      el('td',{style:'white-space:nowrap;font-weight:600'},l.tuketim_kodu||''),
+      el('td',{style:'font-size:12px',title:l.tuketim_adi||''},(l.tuketim_adi||'').slice(0,40)),
+      el('td',{style:'text-align:right'},l.miktar!=null?commaFmt(l.miktar):''),
+      el('td',{},l.birim||''),
+      el('td',{style:'text-align:right'},l.fire_orani!=null?commaFmt(l.fire_orani):'0'),
+      el('td',{style:'font-size:12px'},l.cinsi||'')
+    )));
+    tb.append(body); det.append(el('div',{class:'tbl-wrap'},tb));
+  }
+  loadHeaders();
+}
+async function delUaCard(hid,h){
+  if(!(PROFILE&&PROFILE.is_admin)){ toast('Yetki yok (admin).','err'); return false; }
+  if(!confirm(`"${(h&&h.urun_kodu)||''}" ürün ağacı SUPABASE'ten silinecek.\n\nLeanSys'e DOKUNULMAZ; yeniden çekersen geri gelir. Devam?`)) return false;
+  const {error}=await sb.from('urun_agaclari').delete().eq('header_id',hid);
+  if(error){ toast('Silme hatası: '+esc(error.message),'err'); return false; }
+  toast('Ürün ağacı silindi (Supabase).','ok'); return true;
+}
 // ⚙️ Operasyon Kartları (LeanSys SBT073/074, st04 v2) — rota + operasyon satırları (talimatlarıyla); tarih+kod ile çek
 let _opDeb=null;
 async function renderOperasyon(root){
