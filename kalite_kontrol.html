@@ -2632,7 +2632,14 @@ function genSamples(it,n,override){
   return out;
 }
 // op + aşama filtreleri (toplu üretim için modül seviyesinde)
-function opItemsFor(items,op_no){ if(op_no==null)return items; const m=items.filter(it=>String(it.op_no)===String(op_no)); return m.length?m:items; }
+function opItemsFor(items,op_no){
+  if(op_no==null) return items;                                  // üretimin op'u yok → tüm maddeler
+  const m=items.filter(it=>String(it.op_no)===String(op_no));
+  if(m.length) return m;                                         // op eşleşti → o op'un maddeleri
+  const planHasOps=items.some(it=>it.op_no!=null);               // plan op-yapılı mı?
+  if(!planHasOps) return items;                                  // plan op kullanmıyor → tüm maddeler
+  return items.filter(it=>it.op_no==null);                       // plan op-yapılı ama bu op yok → YALNIZ op'suz (genel) maddeler; ÇAPRAZ-OP karışması olmaz (örn. op4'ün 80°C'si op2 üretimine yazılmaz)
+}
 function stageItems(items,s){ return items.filter(it=> s==='giris'?(it.giris_kalite===true): s==='son'?(it.final_control!==false):(it.process_control!==false)); }
 // proses örnekleme periyodu = proses maddeleri arasında EN SIK görülen sıklık (tek bir kısa/uzun sapma değeri seçmesin; eşitlikte büyük olan)
 function prosesCycleFreq(items){
