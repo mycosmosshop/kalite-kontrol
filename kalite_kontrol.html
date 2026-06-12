@@ -875,9 +875,10 @@ async function _renderGirisKalite(root, embed){
     const tb=el('table');
     tb.append(el('thead',{},el('tr',{},...['Tarih','Stok Kodu','Stok Adı','Tedarikçi','Miktar','İrsaliye','Plan','İşlem'].map(h=>el('th',{},h)))));
     const body=el('tbody');
-    rows.forEach(r=>{
-      const done=doneSet.has(r.rec_id), hasPlan=planSet.has(r.stok_kodu);
-      body.append(el('tr',{style:done?'opacity:.5':''},
+    const pending=rows.filter(r=>!doneSet.has(r.rec_id));   // GİRİLENLER listeden kalkar → Giriş Kalite Kayıtları'na geçer
+    pending.forEach(r=>{
+      const hasPlan=planSet.has(r.stok_kodu);
+      body.append(el('tr',{},
         el('td',{style:'white-space:nowrap'},fmtDate(r.tarih)),
         el('td',{style:'font-weight:600'},r.stok_kodu||''),
         el('td',{style:'font-size:12px',title:r.stok_adi||''},(r.stok_adi||'').slice(0,40)),
@@ -885,9 +886,10 @@ async function _renderGirisKalite(root, embed){
         el('td',{style:'white-space:nowrap'},(r.miktar??'')+' '+(r.birim||'')),
         el('td',{style:'font-size:11px;white-space:nowrap'},(r.seri||'')+(r.sira?(' / '+r.sira):'')),
         el('td',{}, hasPlan?el('span',{class:'pill ok'},'var'):el('span',{class:'pill gray'},'yok')),
-        el('td',{}, done?el('span',{class:'pill ok'},'✓ girildi') : (hasPlan?el('button',{class:'btn sm',onclick:()=>girisKaliteGir(r)},'Kontrol Gir'):el('span',{style:'color:var(--muted);font-size:11px'},'plan yok')))
+        el('td',{}, hasPlan?el('button',{class:'btn sm',onclick:()=>girisKaliteGir(r)},'Kontrol Gir'):el('span',{style:'color:var(--muted);font-size:11px'},'plan yok'))
       ));
     });
+    if(!pending.length){ body.append(el('tr',{},el('td',{colspan:8},el('div',{class:'empty',style:'padding:14px'},'Bu kriterde girilecek (henüz girilmemiş) mal kabul yok. Girilenler Giriş Kalite Kayıtları’nda.')))); }
     tb.append(body); out.append(el('div',{class:'tbl-wrap'},tb));
   }
   load();
@@ -928,7 +930,7 @@ async function fixGirisControlTimes(){
 function girisKaliteGir(mk){
   const irs=(mk.seri||'')+(mk.sira?(' / '+mk.sira):'');
   const p={ id:null, stock_code:mk.stok_kodu, stock_name:mk.stok_adi, op_no:null,
-    start_time: girisCtrlLocal(mk.tarih), end_time:null, prod_date:mk.tarih, giris_tarih:mk.tarih,
+    start_time: null, end_time:null, prod_date:mk.tarih, giris_tarih:mk.tarih,   // kontrol saati elle/boş(=şimdi); otomatik doldur'da random 08:01–17:30
     quantity:mk.miktar, unit:mk.birim, customer:mk.cari_adi, operator:'', machine_name:'', machine_code:'', work_order:irs,
     __giris:true, mal_kabul_rec_id:mk.rec_id, giris_cari:mk.cari_adi, giris_irsaliye:irs, giris_miktar:mk.miktar, giris_birim:mk.birim };
   openControl(p,'giris');
@@ -2279,11 +2281,14 @@ async function openControl(p, forceStage, suggestTime){
     s==='son'   ? (it.final_control!==false) :
                   (it.process_control!==false));   // seri_basi & proses = process_control
   const sampleFor=(it,s)=>{ const v=(s==='son'&&it.son_kontrol_ornekleme)?it.son_kontrol_ornekleme:it.sample_size; const n=Number(v); return n>0?n:1; };
+  let _autoGirisTime=null;   // 🎲 Otomatik doldur giriş kalitede çalışınca kontrol saati = random 08:01–17:30 (irsaliye günü)
   function autoFillStage(){
     itemsForStage(stage).forEach(it=>{ const st=stItem(it); const n=sampleFor(it,stage);
       st.samples=genSamples(it,n); st.cur={value:'',ok:st.samples.length?st.samples[st.samples.length-1].ok:false}; });
     operVal=AUTO_MEASURER;   // ölçümcü: kalite operatörü
+    if(p.__giris){ _autoGirisTime=girisCtrlLocal(p.giris_tarih||p.prod_date); }
     render();
+    if(p.__giris && _autoGirisTime){ const ca=document.getElementById('m_checkedat'); if(ca) ca.value=_autoGirisTime; }   // render sonrası alanı doldur
   }
   const {data:recs}=await (p.__giris
     ? sb.from('control_records').select('*').eq('mal_kabul_rec_id',p.mal_kabul_rec_id).order('checked_at')
@@ -2379,8 +2384,9 @@ async function openControl(p, forceStage, suggestTime){
       el('input',{class:'inp',id:'m_oper',value:operVal,oninput:e=>operVal=e.target.value})));
     if(PROFILE.is_admin){
       const _ds=t=>{ const d=t?new Date(t):new Date(),pd=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${pd(d.getMonth()+1)}-${pd(d.getDate())}T${pd(d.getHours())}:${pd(d.getMinutes())}`; };
-      m.append(el('div',{class:'field',style:'margin:0 0 14px'},el('label',{class:'lab'},'Kontrol Saati (admin) — proses/kontrol zamanını elle gir · boş = kayıt anı'),
-        el('input',{class:'inp',type:'datetime-local',id:'m_checkedat',value:_ds(suggestTime||p.start_time)})));
+      // Giriş: boş başlasın (boş = kayıt anı; 🎲 Otomatik doldur ile random 08:01–17:30 dolar). Diğer aşamalar: üretim saatiyle dolu.
+      m.append(el('div',{class:'field',style:'margin:0 0 14px'},el('label',{class:'lab'},'Kontrol Saati (admin) — elle gir · boş = kayıt anı (şimdi)'),
+        el('input',{class:'inp',type:'datetime-local',id:'m_checkedat',value:(p.__giris?'':_ds(suggestTime||p.start_time))})));
     }
 
     if(!stage){
@@ -2487,8 +2493,8 @@ async function saveControl(p,items,state,stage,sampleFor){
     note:$('#m_note').value.trim()||null};
   if(p.__giris){ Object.assign(rec,{production_id:null, mal_kabul_rec_id:p.mal_kabul_rec_id, giris_cari:p.giris_cari, giris_irsaliye:p.giris_irsaliye, giris_miktar:p.giris_miktar, giris_birim:p.giris_birim}); }
   if(_checkedAt) rec.checked_at=_checkedAt;
-  // Giriş kalite: kontrol saati elle girilmezse irsaliye günü 08:01–17:30 rastgele (admin değilse de geçerli)
-  if(p.__giris && !rec.checked_at){ rec.checked_at = (p.start_time? new Date(p.start_time).toISOString() : girisCtrlISO(p.giris_tarih||p.prod_date)) || new Date().toISOString(); }
+  // Giriş kalite: elle girilmezse → 🎲 otomatik doldur kullanıldıysa random 08:01–17:30, yoksa KAYIT ANI (şimdi)
+  if(p.__giris && !rec.checked_at){ rec.checked_at = _autoGirisTime ? new Date(_autoGirisTime).toISOString() : new Date().toISOString(); }
   if(p.__giris && rec.checked_at){ rec.shift = shiftForTime(new Date(rec.checked_at)) ?? rec.shift; }
   const {data:ins,error}=await sb.from('control_records').insert(rec).select().maybeSingle();
   if(error){toast(esc(error.message),'err');return;}
@@ -2874,6 +2880,12 @@ async function renderKayitlar(){
   if(KAYIT_FILT.end) q=q.lte('checked_at',KAYIT_FILT.end+'T23:59:59');
   const [{data:recsD},{data:prodsD}]=await Promise.all([q, sb.from('productions').select('id,customer,start_time,end_time,quantity,unit,machine_name,machine_code,shift,stock_code,stock_name,prod_date,work_order,op_no,operator')]);
   const recs=recsD||[]; const pmap={}; (prodsD||[]).forEach(p=>pmap[p.id]=p);
+  // Giriş kayıtları: İrsaliye Tarihi mal_kabul'dan (checked_at artık kontrol anı olabilir, irsaliye günü değil)
+  const mkTarih={};
+  if(KAYIT_STAGE==='giris'){
+    const ids=[...new Set(recs.map(r=>r.mal_kabul_rec_id).filter(x=>x!=null))];
+    for(let i=0;i<ids.length;i+=300){ const {data}=await sb.from('mal_kabul').select('rec_id,tarih').in('rec_id',ids.slice(i,i+300)); (data||[]).forEach(m=>{ if(m.tarih) mkTarih[m.rec_id]=String(m.tarih).slice(0,10); }); }
+  }
   root.innerHTML='';
   // aşama alt sekmeleri (+ 📄 Stok Dokümanları)
   root.append(kayitTabRow());
@@ -2925,7 +2937,7 @@ async function renderKayitlar(){
     const vardiya=String((r.checked_at?shiftForTime(r.checked_at):null)??r.shift??pr.shift??'');
     const cells = isGiris ? [
       flagCell(r),
-      el('td',{},fmtDate(r.checked_at)),                       // İrsaliye Tarihi (kontrol/irsaliye günü)
+      el('td',{},fmtDate(mkTarih[r.mal_kabul_rec_id]||r.checked_at)),   // İrsaliye Tarihi (mal_kabul'dan)
       el('td',{style:'font-weight:600'},fmtTime(r.checked_at)),
       el('td',{},vardiya),
       el('td',{},r.giris_cari||''),                            // Tedarikçi
@@ -3078,7 +3090,7 @@ async function editRecord(r,prod){
     ));
     if(r.stage==='giris' && canEdit){
       m.append(el('div',{class:'field',style:'margin:0 0 14px;max-width:320px'},
-        el('label',{class:'lab'},'Kontrol Saati (elle ayarla · boş bırakıp kaydet = irsaliye günü 08:01–17:30 rastgele)'),
+        el('label',{class:'lab'},'Kontrol Saati (elle ayarla · boş = değişmez)'),
         el('input',{class:'inp',type:'datetime-local',id:'er_checkedat',value:toLocalInput(r.checked_at)})));
     }
     if(!canEdit) m.append(el('div',{class:'msg info',style:'margin-bottom:12px'},'🔒 Salt görünüm — bu kaydı yalnızca <b>admin</b> düzenleyebilir. Düzeltmek için kaydı <b>silip yeniden girebilirsin</b>.'));
@@ -3144,11 +3156,7 @@ async function editRecord(r,prod){
     const overall=allS.some(s=>s.ok===false)?'RET':'OK';
     const patch={vals,stage,operator:$('#er_oper').value.trim()||null,note:$('#er_note').value.trim()||null,overall_result:overall};
     const ca=document.getElementById('er_checkedat');
-    if(ca){
-      const iso = ca.value ? new Date(ca.value).toISOString()
-                           : (girisCtrlISO((MK&&MK.tarih)||(r.checked_at?String(r.checked_at).slice(0,10):'')) || r.checked_at);
-      if(iso){ patch.checked_at=iso; patch.shift=shiftForTime(new Date(iso)); r.checked_at=iso; }
-    }
+    if(ca && ca.value){ const iso=new Date(ca.value).toISOString(); patch.checked_at=iso; patch.shift=shiftForTime(new Date(iso)); r.checked_at=iso; }   // boş = değişmez
     const {error}=await sb.from('control_records').update(patch).eq('id',r.id);
     if(error){toast(esc(error.message),'err');return;}
     if(overall==='RET') await autoOpenNCR({id:r.id,overall_result:overall,vals,stock_code:r.stock_code,stock_name:r.stock_name,checked_at:r.checked_at,production_id:r.production_id}, prod);   // RET → otomatik uygunsuzluk
