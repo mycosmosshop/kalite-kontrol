@@ -287,6 +287,7 @@
     <button data-tab="kalitetest">🧪 Kalite Testleri</button>
     <button data-tab="stokdok">📄 Stok Dokümanları</button>
     <button data-tab="stokkart">🗂 Stok Kartları</button>
+    <button data-tab="operasyon">⚙️ Operasyon Kartları</button>
     <button data-tab="plan">📐 Kontrol Planı</button>
     <button data-tab="istatistik">📊 İstatistik</button>
     <button data-tab="dashboard" id="dashTab">📈 Dashboard</button>
@@ -310,6 +311,7 @@
     <div id="tab-stokdok" class="hidden"></div>
     <div id="tab-stokkart" class="hidden"></div>
     <div id="tab-kalitetest" class="hidden"></div>
+    <div id="tab-operasyon" class="hidden"></div>
     <div id="tab-plan" class="hidden"></div>
     <div id="tab-istatistik" class="hidden"></div>
     <div id="tab-dashboard" class="hidden"></div>
@@ -545,7 +547,7 @@ async function afterLogin(){
 // ====================== TABS ======================
 function switchTab(name){
   document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
-  ['uretimler','malkabul','leansys','bekleyen','kayitlar','kalitetest','stokdok','stokkart','plan','istatistik','dashboard','ncr','eightd','cert','admin'].forEach(t=>$('#tab-'+t).classList.toggle('hidden',t!==name));
+  ['uretimler','malkabul','leansys','bekleyen','kayitlar','kalitetest','stokdok','stokkart','operasyon','plan','istatistik','dashboard','ncr','eightd','cert','admin'].forEach(t=>$('#tab-'+t).classList.toggle('hidden',t!==name));
   if(name==='uretimler')renderUretimler();
   if(name==='malkabul')renderMalKabul();
   if(name==='leansys')renderLeanSys();
@@ -554,6 +556,7 @@ function switchTab(name){
   if(name==='stokdok')renderStokDokumanlari($('#tab-stokdok'));
   if(name==='stokkart')renderStokKartlari($('#tab-stokkart'));
   if(name==='kalitetest')renderKaliteTest($('#tab-kalitetest'));
+  if(name==='operasyon')renderOperasyon($('#tab-operasyon'));
   if(name==='plan')renderPlan();
   if(name==='istatistik')renderIstatistik();
   if(name==='dashboard')renderDashboard();
@@ -2934,6 +2937,79 @@ async function renderStokDokumanlari(root){
   load(true);
 }
 
+// ⚙️ Operasyon Kartları (LeanSys SBT073/074, st04 v2) — rota + operasyon satırları (talimatlarıyla); tarih+kod ile çek
+let _opDeb=null;
+async function renderOperasyon(root){
+  root.innerHTML='';
+  const isAdmin=(PROFILE&&PROFILE.is_admin)||can('import');
+  root.append(el('div',{class:'card'},
+    el('h3',{style:'margin-top:0'},'⚙️ Operasyon Kartları (LeanSys st04)'),
+    el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:13px',html:'Operasyon kartları — rota + operasyon satırları, <b>talimatlarıyla</b>. Çekmek: tarih + stok kodu → <b>📥 LeanSys’ten Çek</b>. Stok kodu virgülle çoklu; boş=TÜM. Tarih = kayıt tarihi.'})));
+  const fSearch=el('input',{class:'inp',placeholder:'🔍 stok / parça / makine / talimat…',style:'min-width:230px',oninput:()=>{clearTimeout(_opDeb);_opDeb=setTimeout(load,400);}});
+  const fFrom=el('input',{type:'date',class:'inp',onchange:load});
+  const fTo=el('input',{type:'date',class:'inp',onchange:load});
+  const fCode=el('input',{class:'inp',placeholder:'örn. 700.0.454 (boş=tümü)',style:'min-width:170px'});
+  const cnt=el('div',{class:'stat'},el('b',{id:'opCount'},'—'),el('span',{},'satır'));
+  const pullBtn=el('button',{class:'btn sm',id:'op_pull',style:'flex:0',onclick:pullFromLeansys},'📥 LeanSys’ten Çek');
+  root.append(el('div',{class:'card'},el('div',{class:'toolbar'},
+    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Ara'),fSearch),
+    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Başlangıç'),fFrom),
+    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),fTo),
+    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{fSearch.value='';fFrom.value='';fTo.value='';load();}},'Temizle'),
+    el('div',{class:'grow'}),
+    ...(isAdmin?[el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Çekilecek kod'),fCode),pullBtn]:[]),
+    cnt)));
+  const out=el('div'); root.append(out);
+  let _seq=0;
+  async function pullFromLeansys(){
+    pullBtn.disabled=true; const _t=pullBtn.textContent; pullBtn.textContent='⏳ Çekiliyor…';
+    let res=null;
+    try{ const r=await fetch('http://127.0.0.1:17777/refreshop?codes='+encodeURIComponent((fCode.value||'').trim())+'&from='+encodeURIComponent(fFrom.value||'')+'&to='+encodeURIComponent(fTo.value||''),{mode:'cors'}); res=await r.json(); }catch(e){ res=null; }
+    pullBtn.disabled=false; pullBtn.textContent=_t;
+    if(!res){ toast('LeanSys ajanı kapalı/erişilemedi. LeanSys_Agent çalışıyor mu?','err'); return; }
+    if(!res.ok){ toast('Çekme hatası: '+esc(res.error||'?'),'err'); return; }
+    toast((res.count||0)+' operasyon satırı çekildi/güncellendi.','ok'); load();
+  }
+  async function load(){
+    const my=++_seq;
+    out.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
+    let q=sb.from('operasyon_kartlari').select('*').order('stok_kodu').order('header_id').order('op_no').limit(2000);
+    const t=(fSearch.value||'').trim(); if(t){ const s=t.replace(/[,()%]/g,' ').trim(); q=q.or(`stok_kodu.ilike.%${s}%,stok_adi.ilike.%${s}%,parca_kodu.ilike.%${s}%,makine_adi.ilike.%${s}%,talimat.ilike.%${s}%`); }
+    if(fFrom.value) q=q.gte('kayit_tarihi',fFrom.value);
+    if(fTo.value) q=q.lte('kayit_tarihi',fTo.value);
+    const {data,error}=await q;
+    if(my!==_seq) return;
+    if(error){ out.innerHTML='<div class="card"><div class="msg err">'+esc(error.message)+'</div></div>'; return; }
+    const rows=data||[];
+    const c=$('#opCount'); if(c)c.textContent=String(rows.length)+(rows.length>=2000?'+':'');
+    out.innerHTML='';
+    if(!rows.length){ out.append(el('div',{class:'card'},el('div',{class:'empty'},'Kayıt yok. Yukarıdan tarih+kod seçip «📥 LeanSys’ten Çek» yap.'))); return; }
+    const groups=new Map();
+    rows.forEach(r=>{ const k=r.header_id; if(!groups.has(k))groups.set(k,{h:r,lines:[]}); groups.get(k).lines.push(r); });
+    [...groups.values()].forEach(g=>{
+      const h=g.h, card=el('div',{class:'card'});
+      card.append(el('div',{style:'display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:baseline'},
+        el('h3',{style:'margin:0'},`📦 ${esc(h.stok_kodu||'')} — ${esc(h.stok_adi||'')}`),
+        el('div',{style:'color:var(--muted);font-size:12.5px'},`Rota: ${esc(h.rota_adi||'-')}${h.varsayilan?' ⭐varsayılan':''} · Rev ${h.revizyon_no??0} · Kayıt ${fmtDate(h.kayit_tarihi)}${h.gecerlilik_tarihi?(' · Geçerlilik '+fmtDate(h.gecerlilik_tarihi)):''}`)));
+      const tb=el('table');
+      tb.append(el('thead',{},el('tr',{},...['Op','Parça Kodu','Parça Adı','Makine Grubu','Makine','Std Zaman (dk)','Kapasite','Pers.','Talimat'].map(x=>el('th',{},x)))));
+      const body=el('tbody');
+      g.lines.sort((a,b)=>(a.op_no||0)-(b.op_no||0)).forEach(l=>body.append(el('tr',{},
+        el('td',{style:'font-weight:700;text-align:center'},String(l.op_no??'')),
+        el('td',{style:'white-space:nowrap;font-weight:600'},l.parca_kodu||''),
+        el('td',{style:'font-size:12px',title:l.parca_adi||''},(l.parca_adi||'').slice(0,24)),
+        el('td',{style:'font-size:12px'},l.makine_grup||''),
+        el('td',{style:'font-size:12px'},(l.makine_adi||'')+(l.makine_kodu?(' ('+l.makine_kodu+')'):'')),
+        el('td',{style:'text-align:right'},l.std_zaman!=null?commaFmt(l.std_zaman):''),
+        el('td',{style:'text-align:right'},l.kapasite!=null?String(l.kapasite):''),
+        el('td',{style:'text-align:center'},l.personel!=null?String(l.personel):''),
+        el('td',{style:'white-space:pre-wrap;font-size:12px;max-width:360px'},(l.talimat||'')+(l.talimat_no?('  [No:'+l.talimat_no+']'):''))
+      )));
+      tb.append(body); card.append(el('div',{class:'tbl-wrap'},tb)); out.append(card);
+    });
+  }
+  load();
+}
 // 🧪 Kalite Testleri (LeanSys KLT003) — laboratuvar/kalite test kayıtları; tarih+kod ile çek, listele, detay
 let _ktDeb=null;
 async function renderKaliteTest(root){
