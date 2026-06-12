@@ -286,6 +286,7 @@
     <button data-tab="kayitlar">✅ Kontrol Kayıtları</button>
     <button data-tab="stokdok">📄 Stok Dokümanları</button>
     <button data-tab="stokkart">🗂 Stok Kartları</button>
+    <button data-tab="kalitetest">🧪 Kalite Testleri</button>
     <button data-tab="plan">📐 Kontrol Planı</button>
     <button data-tab="istatistik">📊 İstatistik</button>
     <button data-tab="dashboard" id="dashTab">📈 Dashboard</button>
@@ -308,6 +309,7 @@
     <div id="tab-kayitlar" class="hidden"></div>
     <div id="tab-stokdok" class="hidden"></div>
     <div id="tab-stokkart" class="hidden"></div>
+    <div id="tab-kalitetest" class="hidden"></div>
     <div id="tab-plan" class="hidden"></div>
     <div id="tab-istatistik" class="hidden"></div>
     <div id="tab-dashboard" class="hidden"></div>
@@ -551,6 +553,7 @@ function switchTab(name){
   if(name==='kayitlar')renderKayitlar();
   if(name==='stokdok')renderStokDokumanlari($('#tab-stokdok'));
   if(name==='stokkart')renderStokKartlari($('#tab-stokkart'));
+  if(name==='kalitetest')renderKaliteTest($('#tab-kalitetest'));
   if(name==='plan')renderPlan();
   if(name==='istatistik')renderIstatistik();
   if(name==='dashboard')renderDashboard();
@@ -2931,6 +2934,86 @@ async function renderStokDokumanlari(root){
   load(true);
 }
 
+// 🧪 Kalite Testleri (LeanSys KLT003) — laboratuvar/kalite test kayıtları; tarih+kod ile çek, listele, detay
+let _ktDeb=null;
+async function renderKaliteTest(root){
+  root.innerHTML='';
+  const isAdmin=(PROFILE&&PROFILE.is_admin)||can('import');
+  root.append(el('div',{class:'card'},
+    el('h3',{style:'margin-top:0'},'🧪 Kalite Testleri (LeanSys)'),
+    el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:13px',html:'Laboratuvar/kalite test kayıtları. Aktarmak: aşağıda <b>tarih + çekilecek stok kodu</b> seç → <b>📥 LeanSys’ten Çek</b> (yerel ajan arka planda tazeler). Stok kodu virgülle çoklu; boş = TÜM. Satıra tıkla → detay.'})));
+  const fSearch=el('input',{class:'inp',placeholder:'🔍 test adı / stok / kişi / sonuç…',style:'min-width:220px',oninput:()=>{clearTimeout(_ktDeb);_ktDeb=setTimeout(load,400);}});
+  const fFrom=el('input',{type:'date',class:'inp',onchange:load});
+  const fTo=el('input',{type:'date',class:'inp',onchange:load});
+  const fKarar=el('select',{class:'inp',onchange:load}); [['','Tümü'],['1','Uygun'],['0','Uygunsuz']].forEach(([v,t])=>fKarar.append(el('option',{value:v},t)));
+  const fCode=el('input',{class:'inp',placeholder:'örn. 126.0.559 (boş=tümü)',style:'min-width:170px'});
+  const cnt=el('div',{class:'stat'},el('b',{id:'ktCount'},'—'),el('span',{},'test'));
+  const pullBtn=el('button',{class:'btn sm',id:'kt_pull',style:'flex:0',title:'LeanSys kalite testlerini ara tabloya tazele (tarih + kod), sonra listele.',onclick:pullFromLeansys},'📥 LeanSys’ten Çek');
+  root.append(el('div',{class:'card'},el('div',{class:'toolbar'},
+    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Ara'),fSearch),
+    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Karar'),fKarar),
+    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Başlangıç'),fFrom),
+    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),fTo),
+    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{fSearch.value='';fFrom.value='';fTo.value='';fKarar.value='';load();}},'Temizle'),
+    el('div',{class:'grow'}),
+    ...(isAdmin?[el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Çekilecek kod'),fCode),pullBtn]:[]),
+    cnt)));
+  const out=el('div'); root.append(out);
+  let _seq=0;
+  async function pullFromLeansys(){
+    pullBtn.disabled=true; const _t=pullBtn.textContent; pullBtn.textContent='⏳ Çekiliyor…';
+    let res=null;
+    try{ const r=await fetch('http://127.0.0.1:17777/refreshtest?codes='+encodeURIComponent((fCode.value||'').trim())+'&from='+encodeURIComponent(fFrom.value||'')+'&to='+encodeURIComponent(fTo.value||''),{mode:'cors'}); res=await r.json(); }catch(e){ res=null; }
+    pullBtn.disabled=false; pullBtn.textContent=_t;
+    if(!res){ toast('LeanSys ajanı kapalı/erişilemedi. LeanSys_Agent çalışıyor mu?','err'); return; }
+    if(!res.ok){ toast('Çekme hatası: '+esc(res.error||'?'),'err'); return; }
+    toast((res.count||0)+' test çekildi/güncellendi.','ok'); load();
+  }
+  async function load(){
+    const my=++_seq;
+    out.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
+    let q=sb.from('kalite_testleri').select('*').order('tarih',{ascending:false}).order('sira',{ascending:false}).limit(500);
+    const t=(fSearch.value||'').trim(); if(t){ const s=t.replace(/[,()%]/g,' ').trim(); q=q.or(`adi.ilike.%${s}%,stok_kodu.ilike.%${s}%,stok_adi.ilike.%${s}%,testi_yapan.ilike.%${s}%,sonuc.ilike.%${s}%`); }
+    if(fFrom.value) q=q.gte('tarih',fFrom.value);
+    if(fTo.value) q=q.lte('tarih',fTo.value);
+    if(fKarar.value!=='') q=q.eq('karar',Number(fKarar.value));
+    const {data,error}=await q;
+    if(my!==_seq) return;
+    if(error){ out.innerHTML='<div class="card"><div class="msg err">'+esc(error.message)+'</div></div>'; return; }
+    const rows=data||[];
+    const c=$('#ktCount'); if(c)c.textContent=String(rows.length)+(rows.length>=500?'+':'');
+    out.innerHTML='';
+    if(!rows.length){ out.append(el('div',{class:'card'},el('div',{class:'empty'},'Kayıt yok. Yukarıdan tarih+kod seçip «📥 LeanSys’ten Çek» yap.'))); return; }
+    const card=el('div',{class:'card'}); const tb=el('table');
+    tb.append(el('thead',{},el('tr',{},...['Tarih','Seri/Sıra','Test Adı','Stok Kodu','Stok Adı','Karar','Testi Yapan'].map(h=>el('th',{},h)))));
+    const body=el('tbody');
+    rows.forEach(r=>{ body.append(el('tr',{style:'cursor:pointer',onclick:()=>showKtDetail(r)},
+      el('td',{style:'white-space:nowrap'},fmtDate(r.tarih)),
+      el('td',{style:'white-space:nowrap;font-size:12px'},(r.seri||'')+(r.sira!=null?(' / '+r.sira):'')),
+      el('td',{style:'font-weight:600'},r.adi||''),
+      el('td',{style:'font-weight:600'},r.stok_kodu||''),
+      el('td',{style:'font-size:12px',title:r.stok_adi||''},(r.stok_adi||'').slice(0,30)),
+      el('td',{}, r.karar===1?el('span',{class:'pill ok'},'Uygun'):(r.karar===0?el('span',{class:'pill ret'},'Uygunsuz'):el('span',{class:'pill gray'},'—'))),
+      el('td',{style:'font-size:12px'},r.testi_yapan||''))); });
+    tb.append(body); card.append(el('div',{class:'tbl-wrap'},tb)); out.append(card);
+  }
+  load();
+}
+function showKtDetail(r){
+  const root=$('#modalRoot');
+  const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
+  const m=el('div',{class:'modal',style:'position:relative;max-width:840px'});
+  m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
+  m.append(el('h3',{},'🧪 '+(r.adi||'Kalite Testi')+'  ·  '+(r.seri||'')+(r.sira!=null?(' / '+r.sira):'')));
+  const kararTxt=r.karar===1?'✅ Uygun':(r.karar===0?'⛔ Uygunsuz':'—');
+  const fields=[['Tarih',fmtDate(r.tarih)],['Karar',kararTxt],['Test Tipi',r.tip],['Stok Kodu',r.stok_kodu],['Stok Adı',r.stok_adi],['Hareket Evrak',r.hareket_evrak],['Parti Büyüklüğü',r.parti_buyuklugu],['Numune Sayısı',r.numune_sayisi],['Numune Ebatları',r.numune_ebat],['Testi Yapan',r.testi_yapan]];
+  m.append(el('div',{class:'kk-meta',html:fields.filter(f=>f[1]!=null&&f[1]!=='').map(f=>`<div class="kk-meta-item"><span class="kk-meta-l">» ${esc(f[0])}:</span> <b>${esc(String(f[1]))}</b></div>`).join('')}));
+  [['Referanslar',r.referans],['Diğer Özellikler',r.diger_ozellikler],['Testin Amacı',r.amac],['İstenen Değer',r.istenen],['Test Sonucu',r.sonuc]].forEach(([lab,val])=>{
+    if(val==null||val==='')return;
+    m.append(el('div',{style:'margin-top:10px'},el('label',{class:'lab'},lab),el('div',{style:'white-space:pre-wrap;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:13px'},String(val))));
+  });
+  bg.append(m); root.append(bg);
+}
 // 🗂 LeanSys Stok Kartları (st01 / STOKKARTI view) — kod bazlı arama; çözülmüş birim/cinsi/durum/döviz/sektör
 let _stokKartDeb=null, _skObserver=null;
 async function renderStokKartlari(root){
