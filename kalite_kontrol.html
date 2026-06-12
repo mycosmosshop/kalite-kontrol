@@ -613,7 +613,21 @@ function matchesUF(p){
   if(URETIM_FILT.end && d && d>URETIM_FILT.end) return false;
   return true;
 }
-function closeAutozones(){ document.querySelectorAll('.autozone.open').forEach(z=>z.classList.remove('open')); }
+function closeAutozones(){ document.querySelectorAll('.autozone.open').forEach(z=>{ z.classList.remove('open'); const mn=z.querySelector('.auto-menu,.auto-btn'); if(mn){mn.style.left='';mn.style.right='';} }); }
+// Aç/kapat + ekran kenarına taşmasın diye yön ayarı (sola taşıyorsa sağa açılır)
+function toggleAutozone(handle){
+  const z=handle.parentElement, wasOpen=z.classList.contains('open');
+  closeAutozones();
+  if(wasOpen) return;
+  z.classList.add('open');
+  const menu=z.querySelector('.auto-menu')||z.querySelector('.auto-btn');
+  if(menu){
+    menu.style.left=''; menu.style.right='0';
+    let r=menu.getBoundingClientRect();
+    if(r.left<6){ menu.style.right='auto'; menu.style.left='0'; r=menu.getBoundingClientRect(); }   // sola taşıyor → sağa doğru aç
+    if(r.right>window.innerWidth-6){ menu.style.right='6px'; menu.style.left='auto'; }               // sağa da taşıyorsa kenara yasla
+  }
+}
 async function editSelectedProd(){
   const ids=[...document.querySelectorAll('#prodBody .prodChk:checked')].map(c=>Number(c.dataset.id));
   if(ids.length!==1){ toast('Düzenlemek için TEK üretim seç (sol kutucuk).','err'); return; }
@@ -794,7 +808,7 @@ async function renderMalKabul(){
   const cnt=el('div',{class:'stat'},el('b',{id:'mkCount'},'—'),el('span',{},'kayıt'));
   // Admin: SADECE Supabase mal_kabul silme (LeanSys'e ASLA dokunmaz)
   const mkTools=(PROFILE&&PROFILE.is_admin)?el('div',{class:'autozone'},
-    el('button',{class:'autozone-handle',title:'Mal kabul araçları — yalnızca SUPABASE silme (LeanSys’e dokunmaz)',onclick:e=>{e.stopPropagation();e.currentTarget.parentElement.classList.toggle('open');}},'▾'),
+    el('button',{class:'autozone-handle',title:'Mal kabul araçları — yalnızca SUPABASE silme (LeanSys’e dokunmaz)',onclick:e=>{e.stopPropagation();toggleAutozone(e.currentTarget);}},'▾'),
     el('div',{class:'auto-menu'},
       el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteSelectedMalKabul();}},'🗑 Seçilenleri Sil (Supabase)'),
       el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteAllMalKabul();}},'🧨 TÜMÜNÜ Sil (Supabase)')
@@ -1141,7 +1155,7 @@ async function renderUretimler(){
       aktifFiltre?el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{URETIM_FILT={start:'',end:'',stock:'',group:'',machine:''};renderUretimler();}},'Temizle'):'',
       el('div',{class:'grow'}),
       (can('auto')||can('import')||PROFILE.is_admin)?el('div',{class:'autozone'},
-        el('button',{class:'autozone-handle',title:'Üretim araçları',onclick:e=>{e.stopPropagation();e.currentTarget.parentElement.classList.toggle('open');}},'▾'),
+        el('button',{class:'autozone-handle',title:'Üretim araçları',onclick:e=>{e.stopPropagation();toggleAutozone(e.currentTarget);}},'▾'),
         el('div',{class:'auto-menu',onclick:e=>e.stopPropagation()},
           can('auto')?el('button',{class:'btn sm',onclick:()=>{closeAutozones();openBulkAuto();}},'🎲 Otomatik Kontrol Üret'):'',
           can('import')?el('button',{class:'btn sm',onclick:()=>{closeAutozones();openManualProd();}},'➕ Manuel Üretim Ekle'):'',
@@ -2525,7 +2539,7 @@ async function openControl(p, forceStage, suggestTime){
       m.append(el('div',{class:'field',style:'margin-top:8px'},el('label',{class:'lab'},'Not (opsiyonel)'),el('textarea',{class:'inp',id:'m_note',rows:'2',oninput:e=>noteVal=e.target.value},noteVal)));
       const btnRow=el('div',{style:'display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center'});
       if(items.length && can('auto')) btnRow.append(el('div',{class:'autozone'},
-        el('button',{class:'autozone-handle',title:'Otomatik doldur araçları',onclick:e=>{e.stopPropagation();e.currentTarget.parentElement.classList.toggle('open');}},'▾'),
+        el('button',{class:'autozone-handle',title:'Otomatik doldur araçları',onclick:e=>{e.stopPropagation();toggleAutozone(e.currentTarget);}},'▾'),
         el('button',{class:'btn sm auto-btn',onclick:e=>{e.stopPropagation();autoFillStage();}},'🎲 Otomatik doldur')
       ));
       const saveBtn=el('button',{class:'btn',onclick:()=>saveControl(p,items,state,stage,sampleFor)},`💾 Kaydet — ${STAGES[stage]}`);
