@@ -3057,13 +3057,13 @@ async function renderUrunAgaci(root){
     const tree=el('div',{style:'overflow-x:auto;border-top:1px solid var(--line)'});
     tree.append(treeHeaderRow());
     lines.forEach(l=>{ const nd=makeNode(l,0); roots.push(nd); tree.append(nd.wrap); });
-    const right=el('div',{style:'display:flex;gap:6px;align-items:center;flex-wrap:wrap'});
+    const right=el('div',{style:'display:flex;gap:6px;align-items:center;flex-wrap:nowrap'});
     if(expN){
       right.append(
-        el('button',{class:'btn sm sec',style:'flex:0',title:'Tüm alt ağaçları (her seviye) aç',onclick:async(e)=>{ e.stopPropagation(); const b=e.currentTarget; const _t=b.textContent; b.disabled=true; b.textContent='⏳ açılıyor…'; for(const nd of roots) await expandAll(nd); b.disabled=false; b.textContent=_t; }},'⊞ Tümünü Aç'),
-        el('button',{class:'btn sm sec',style:'flex:0',title:'Tüm alt ağaçları kapat',onclick:(e)=>{ e.stopPropagation(); roots.forEach(collapseAll); }},'⊟ Tümünü Kapat'));
+        el('button',{class:'btn sm sec',style:'flex:0 0 auto;white-space:nowrap',title:'Tüm alt ağaçları (her seviye) aç',onclick:async(e)=>{ e.stopPropagation(); const b=e.currentTarget; const _t=b.textContent; b.disabled=true; b.textContent='⏳ açılıyor…'; for(const nd of roots) await expandAll(nd); b.disabled=false; b.textContent=_t; }},'⊞ Tümünü Aç'),
+        el('button',{class:'btn sm sec',style:'flex:0 0 auto;white-space:nowrap',title:'Tüm alt ağaçları kapat',onclick:(e)=>{ e.stopPropagation(); roots.forEach(collapseAll); }},'⊟ Tümünü Kapat'));
     }
-    if(isAdmin) right.append(el('button',{class:'btn sm danger',style:'flex:0',title:'Bu ürün ağacını YALNIZ Supabase’ten sil (LeanSys’e dokunmaz)',onclick:async(e)=>{ e.stopPropagation(); if(await delUaCard(hid,h)) loadHeaders(); }},'🗑 Bu ağacı sil'));
+    if(isAdmin) right.append(el('button',{class:'btn sm danger',style:'flex:0 0 auto;white-space:nowrap',title:'Bu ürün ağacını YALNIZ Supabase’ten sil (LeanSys’e dokunmaz)',onclick:async(e)=>{ e.stopPropagation(); if(await delUaCard(hid,h)) loadHeaders(); }},'🗑 Bu ağacı sil'));
     det.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;padding:8px 11px'},
       el('div',{style:'color:var(--muted);font-size:12.5px'},`Ağaç: ${esc(h.agac_adi||'-')}${h.varsayilan?' ⭐varsayılan':''} · Kayıt ${fmtDate(h.kayit_tarihi)} · ${lines.length} tüketim${expN?` · ▸ ${expN} alt-ağaç`:''}`),
       right));
