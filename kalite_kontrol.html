@@ -2907,29 +2907,52 @@ async function renderKayitlar(){
   );
   root.append(filt);
   const tb=el('table');
-  tb.append(el('thead',{},el('tr',{},...['','Tarih','Kontrol Saati','Vardiya','Cari','Stok Kodu','Stok Adı','İş Emri','Üretim Mik.','Birim','Makine Kodu','Makine Adı','Sonuç','İşlem'].map(h=>el('th',{},h)))));
+  const isGiris = KAYIT_STAGE==='giris';
+  // Giriş kalite kayıtlarında üretim sütunları (Cari/Üretim Mik./Makine) yerine giriş alanları gösterilir
+  const heads = isGiris
+    ? ['','İrsaliye Tarihi','Kontrol Saati','Vardiya','Tedarikçi','Stok Kodu','Stok Adı','İrsaliye No','Gelen Miktar','Birim','Sonuç','İşlem']
+    : ['','Tarih','Kontrol Saati','Vardiya','Cari','Stok Kodu','Stok Adı','İş Emri','Üretim Mik.','Birim','Makine Kodu','Makine Adı','Sonuç','İşlem'];
+  tb.append(el('thead',{},el('tr',{},...heads.map(h=>el('th',{},h)))));
   const body=el('tbody',{id:'recBody'});
-  if(!recs.length)body.append(el('tr',{},el('td',{colspan:14},el('div',{class:'empty'},`Bu aşamada (${STAGES[KAYIT_STAGE]}) kayıt yok.`))));
+  if(!recs.length)body.append(el('tr',{},el('td',{colspan:heads.length},el('div',{class:'empty'},`Bu aşamada (${STAGES[KAYIT_STAGE]}) kayıt yok.`))));
   recs.forEach(r=>{
     const pr=pmap[r.production_id]||{};
-    body.append(el('tr',{style:'cursor:pointer','data-s':`${r.stock_code} ${r.stock_name} ${r.machine_code} ${pr.customer||''} ${r.work_order||''}`.toLowerCase(),onclick:()=>editRecord(r,pr)},
+    const sonucTd=el('td',{},el('span',{class:'pill '+(r.overall_result==='RET'?'ret':'ok')},r.overall_result||'—'));
+    const actTd=el('td',{style:'white-space:nowrap',onclick:e=>e.stopPropagation()},
+      el('button',{class:'btn sm',onclick:()=>editRecord(r,pr)},'Aç'),
+      (can('delete')||r.created_by===(ME&&ME.id))?el('button',{class:'btn sm danger',style:'margin-left:6px',onclick:()=>delRecord(r.id)},'Sil'):'');
+    const nameTd=el('td',{style:'font-size:11px;white-space:nowrap',title:r.stock_name||''},(r.stock_name||'').slice(0,40));
+    const vardiya=String((r.checked_at?shiftForTime(r.checked_at):null)??r.shift??pr.shift??'');
+    const cells = isGiris ? [
+      flagCell(r),
+      el('td',{},fmtDate(r.checked_at)),                       // İrsaliye Tarihi (kontrol/irsaliye günü)
+      el('td',{style:'font-weight:600'},fmtTime(r.checked_at)),
+      el('td',{},vardiya),
+      el('td',{},r.giris_cari||''),                            // Tedarikçi
+      el('td',{},r.stock_code||''),
+      nameTd,
+      el('td',{},r.giris_irsaliye||r.work_order||''),          // İrsaliye No
+      el('td',{},r.giris_miktar??''),                          // Gelen Miktar
+      el('td',{},r.giris_birim||''),
+      sonucTd, actTd
+    ] : [
       flagCell(r),
       el('td',{},fmtDate(pr.prod_date||pr.start_time||r.checked_at)),
       el('td',{style:'font-weight:600'},fmtTime(r.checked_at)),
-      el('td',{},String((r.checked_at?shiftForTime(r.checked_at):null)??r.shift??pr.shift??'')),
+      el('td',{},vardiya),
       el('td',{},pr.customer||''),
       el('td',{},r.stock_code||''),
-      el('td',{style:'font-size:11px;white-space:nowrap',title:r.stock_name||''},(r.stock_name||'').slice(0,40)),
+      nameTd,
       el('td',{},r.work_order||pr.work_order||''),
       el('td',{},pr.quantity??''),
       el('td',{},pr.unit||''),
       el('td',{},r.machine_code||''),
       el('td',{},pr.machine_name||''),
-      el('td',{},el('span',{class:'pill '+(r.overall_result==='RET'?'ret':'ok')},r.overall_result||'—')),
-      el('td',{style:'white-space:nowrap',onclick:e=>e.stopPropagation()},
-        el('button',{class:'btn sm',onclick:()=>editRecord(r,pr)},'Aç'),
-        (can('delete')||r.created_by===(ME&&ME.id))?el('button',{class:'btn sm danger',style:'margin-left:6px',onclick:()=>delRecord(r.id)},'Sil'):'')
-    ));
+      sonucTd, actTd
+    ];
+    const ds = (isGiris ? `${r.stock_code} ${r.stock_name} ${r.giris_cari||''} ${r.giris_irsaliye||r.work_order||''}`
+                        : `${r.stock_code} ${r.stock_name} ${r.machine_code} ${pr.customer||''} ${r.work_order||''}`).toLowerCase();
+    body.append(el('tr',{style:'cursor:pointer','data-s':ds,onclick:()=>editRecord(r,pr)},...cells));
   });
   tb.append(body); root.append(el('div',{class:'card'},el('div',{class:'tbl-wrap'},tb)));
 }
