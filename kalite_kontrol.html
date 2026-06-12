@@ -284,9 +284,9 @@
     <button data-tab="malkabul">📦 Mal Kabul</button>
     <button data-tab="bekleyen">⏰ Girilecek Kontroller</button>
     <button data-tab="kayitlar">✅ Kontrol Kayıtları</button>
+    <button data-tab="kalitetest">🧪 Kalite Testleri</button>
     <button data-tab="stokdok">📄 Stok Dokümanları</button>
     <button data-tab="stokkart">🗂 Stok Kartları</button>
-    <button data-tab="kalitetest">🧪 Kalite Testleri</button>
     <button data-tab="plan">📐 Kontrol Planı</button>
     <button data-tab="istatistik">📊 İstatistik</button>
     <button data-tab="dashboard" id="dashTab">📈 Dashboard</button>
@@ -545,7 +545,7 @@ async function afterLogin(){
 // ====================== TABS ======================
 function switchTab(name){
   document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
-  ['uretimler','malkabul','leansys','bekleyen','kayitlar','stokdok','stokkart','plan','istatistik','dashboard','ncr','eightd','cert','admin'].forEach(t=>$('#tab-'+t).classList.toggle('hidden',t!==name));
+  ['uretimler','malkabul','leansys','bekleyen','kayitlar','kalitetest','stokdok','stokkart','plan','istatistik','dashboard','ncr','eightd','cert','admin'].forEach(t=>$('#tab-'+t).classList.toggle('hidden',t!==name));
   if(name==='uretimler')renderUretimler();
   if(name==='malkabul')renderMalKabul();
   if(name==='leansys')renderLeanSys();
