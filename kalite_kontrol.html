@@ -804,7 +804,8 @@ async function renderMalKabul(){
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'İrsaliye Tarihi — Başlangıç'),fFrom),
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),fTo),
     el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{fSearch.value='';fFrom.value='';fTo.value='';fTur.value='0';load();}},'Temizle'),
-    el('button',{class:'btn sm',style:'flex:0',title:'LeanSys mal kabul aktarım penceresini açar (stok kodu / tarih seç → AKTAR). İlk seferde tarayıcı “Aç” diye sorabilir. Aktarım bitince Temizle ile yenile.',onclick:()=>{fetch('http://127.0.0.1:17777/open?app=malkabul',{mode:'cors'}).then(()=>toast('Mal Kabul aktarım penceresi açılıyor… Aktarım bitince Temizle ile yenile.','ok')).catch(()=>toast('LeanSys ajanı kapalı. Önce LeanSys_Agent çalışmalı (Startup).','err'));}},'📥 LeanSys’ten Aktar'),
+    el('button',{class:'btn sm',style:'flex:0',title:'LeanSys mal kabul aktarım penceresini açar (stok kodu / tarih seç → AKTAR). İlk seferde tarayıcı “Aç” diye sorabilir. Aktarım bitince 🔄 Yenile ile listeyi tazele.',onclick:()=>{fetch('http://127.0.0.1:17777/open?app=malkabul',{mode:'cors'}).then(()=>toast('Mal Kabul aktarım penceresi açılıyor… Aktarım bitince 🔄 Yenile’ye bas.','ok')).catch(()=>toast('LeanSys ajanı kapalı. Önce LeanSys_Agent çalışmalı (Startup).','err'));}},'📥 LeanSys’ten Aktar'),
+    el('button',{class:'btn sm sec',style:'flex:0',title:'Listeyi yeniden yükle (aktarımdan sonra yeni kayıtları getir) — filtreler korunur',onclick:()=>load()},'🔄 Yenile'),
     el('div',{class:'grow'}), mkTools, cnt)));
   const out=el('div'); root.append(out);
   let _mkSeq=0;
