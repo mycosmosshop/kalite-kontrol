@@ -3158,7 +3158,7 @@ async function editRecord(r,prod){
     if(ca && ca.value){ const iso=new Date(ca.value).toISOString(); patch.checked_at=iso; patch.shift=shiftForTime(new Date(iso)); r.checked_at=iso; }   // boş = değişmez
     const {error}=await sb.from('control_records').update(patch).eq('id',r.id);
     if(error){toast(esc(error.message),'err');return;}
-    if(overall==='RET') await autoOpenNCR({id:r.id,overall_result:overall,vals,stock_code:r.stock_code,stock_name:r.stock_name,checked_at:r.checked_at,production_id:r.production_id}, prod);   // RET → otomatik uygunsuzluk
+    if(overall==='RET') await autoOpenNCR({id:r.id,overall_result:overall,vals,stock_code:r.stock_code,stock_name:r.stock_name,checked_at:r.checked_at,production_id:r.production_id,giris_cari:r.giris_cari}, prod);   // RET → otomatik uygunsuzluk
     toast('Kayıt güncellendi.','ok'); root.innerHTML=''; renderKayitlar();
   }
   render();
@@ -3957,7 +3957,7 @@ async function autoOpenNCR(rec, prod){
     const ncrNo=nextNo('NCR', all||[], 'ncr_no');
     const payload={ ncr_no:ncrNo, source:'record', record_id:rec.id||null,
       stock_code:rec.stock_code||prod.stock_code||null, stock_name:rec.stock_name||prod.stock_name||null,
-      customer:prod.customer||null, production_id:rec.production_id||prod.id||null,
+      customer:prod.customer||rec.giris_cari||null, production_id:rec.production_id||prod.id||null,   // giriş: tedarikçi
       detected_at:rec.checked_at||new Date().toISOString(),
       defect_desc:fails.length?('Uygunsuz ölçüm(ler): '+fails.join(', ')):'Kontrolde uygunsuzluk tespit edildi',
       qty_total:(prod.quantity!=null?prod.quantity:null), status:'open', severity:'medium', created_by:ME&&ME.id };
@@ -3971,7 +3971,7 @@ async function renderNCR(){
   root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
   const [{data:ncrs},{data:retRecs},{data:prods},{data:planItems},{data:e8list}]=await Promise.all([
     sb.from('ncrs').select('*').order('detected_at',{ascending:false}).limit(500),
-    sb.from('control_records').select('id,stock_code,stock_name,checked_at,production_id,vals,overall_result,machine_code,stage').eq('overall_result','RET').order('checked_at',{ascending:false}).limit(500),
+    sb.from('control_records').select('id,stock_code,stock_name,checked_at,production_id,vals,overall_result,machine_code,stage,giris_cari,giris_irsaliye').eq('overall_result','RET').order('checked_at',{ascending:false}).limit(500),
     sb.from('productions').select('id,customer,work_order,quantity,unit,op_no,stock_code,stock_name'),
     sb.from('control_plan_items').select('stock_code,stock_name'),
     sb.from('eightd').select('ncr_id')
@@ -4052,7 +4052,7 @@ async function renderNCR(){
   tb.append(body);
   root.append(el('div',{class:'card'},el('div',{class:'tbl-wrap'},tb)));
 }
-function openNCREdit(existing, fromRet, allNcrs, stockCat, cariList){
+async function openNCREdit(existing, fromRet, allNcrs, stockCat, cariList){
   stockCat=stockCat||[]; cariList=cariList||[];
   const root=$('#modalRoot');
   const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
@@ -4060,9 +4060,16 @@ function openNCREdit(existing, fromRet, allNcrs, stockCat, cariList){
   m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
   const n=existing||{};
   const fr=fromRet||{};
+  // Giriş kalite kaynaklı NCR mı? → "Cari (Müşteri)" yerine "Tedarikçi" + tedarikçi datalist
+  let isGiris=false, girisCari=null;
+  if(fr.record && fr.record.stage==='giris'){ isGiris=true; girisCari=fr.record.giris_cari||null; }
+  else if(existing && existing.record_id){ try{ const {data:cr}=await sb.from('control_records').select('stage,giris_cari').eq('id',existing.record_id).maybeSingle(); if(cr&&cr.stage==='giris'){ isGiris=true; girisCari=cr.giris_cari||null; } }catch(e){} }
+  let supplierList=[];
+  if(isGiris){ try{ const {data:mk}=await sb.from('mal_kabul').select('cari_adi').not('cari_adi','is',null).limit(5000); supplierList=[...new Set((mk||[]).map(x=>x.cari_adi).filter(Boolean))].sort(); }catch(e){} }
+  const cariLbl = isGiris?'Tedarikçi':'Cari (Müşteri)';
   const ncrNo=n.ncr_no||nextNo('NCR',allNcrs||[],'ncr_no');
   m.append(el('h3',{},(existing?'✏ NCR Düzenle':'＋ Uygunsuzluk Aç')+' — '+ncrNo));
-  if(fr.record){ m.append(el('div',{class:'meta',html:`📌 Kontrol kaydı: <b>${esc(fr.record.stock_code)}</b> · ${fmtDate(fr.record.checked_at)} · ${esc((fr.prod||{}).customer||'')}`})); }
+  if(fr.record){ m.append(el('div',{class:'meta',html:`📌 Kontrol kaydı: <b>${esc(fr.record.stock_code)}</b> · ${fmtDate(fr.record.checked_at)} · ${esc(isGiris?('Tedarikçi: '+(girisCari||'-')):((fr.prod||{}).customer||''))}`})); }
   const F={};
   const fld=(key,lbl,placeholder,ml,defaultVal)=>{
     const inp=ml?el('textarea',{class:'inp',rows:String(ml),placeholder:placeholder||''}):el('input',{class:'inp',placeholder:placeholder||''});
@@ -4074,15 +4081,15 @@ function openNCREdit(existing, fromRet, allNcrs, stockCat, cariList){
   m.append(genHdr);
   // Stok Kodu/Adı/Cari — hem manuel yaz hem listeden seç (datalist); kod seçilince ad otomatik dolar
   const dlS=el('datalist',{id:'ncrStockDL'}); stockCat.forEach(s=>dlS.append(el('option',{value:s.code},s.name||'')));
-  const dlC=el('datalist',{id:'ncrCariDL'}); cariList.forEach(c=>dlC.append(el('option',{value:c})));
+  const dlC=el('datalist',{id:'ncrCariDL'}); (isGiris?supplierList:cariList).forEach(c=>dlC.append(el('option',{value:c})));
   const scInp=el('input',{class:'inp',list:'ncrStockDL',placeholder:'700.0.454 (yaz veya seç)'}); scInp.value=n.stock_code??(fr.record?fr.record.stock_code:'')??''; F.stock_code=scInp;
   const snInp=el('input',{class:'inp',placeholder:'Stok adı'}); snInp.value=n.stock_name??(fr.record?fr.record.stock_name:'')??''; F.stock_name=snInp;
-  const carInp=el('input',{class:'inp',list:'ncrCariDL',placeholder:'Müşteri (yaz veya seç)'}); carInp.value=n.customer??((fr.prod||{}).customer||'')??''; F.customer=carInp;
+  const carInp=el('input',{class:'inp',list:'ncrCariDL',placeholder:(isGiris?'Tedarikçi (yaz veya seç)':'Müşteri (yaz veya seç)')}); carInp.value=n.customer??(isGiris?(girisCari||''):((fr.prod||{}).customer||''))??''; F.customer=carInp;
   scInp.oninput=()=>{ const hit=stockCat.find(s=>s.code===scInp.value.trim()); if(hit&&hit.name&&!snInp.value.trim())snInp.value=hit.name; };  // kod seçilince adı otomatik (ad boşsa)
   m.append(dlS,dlC,el('div',{class:'row'},
     el('div',{class:'field grow'},el('label',{class:'lab'},'Stok Kodu'),scInp),
     el('div',{class:'field grow'},el('label',{class:'lab'},'Stok Adı'),snInp),
-    el('div',{class:'field grow'},el('label',{class:'lab'},'Cari (Müşteri)'),carInp)
+    el('div',{class:'field grow'},el('label',{class:'lab'},cariLbl),carInp)
   ));
   m.append(el('div',{class:'row'},
     el('div',{class:'field grow'},el('label',{class:'lab'},'Karar'), (()=>{const s=el('select',{class:'inp'}); [['','—'],...Object.entries(NCR_DECISION)].forEach(([v,t])=>{const o=el('option',{value:v},t);if(v===(n.decision||''))o.selected=true;s.append(o);}); F.decision=s; return s;})()),
