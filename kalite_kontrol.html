@@ -2609,12 +2609,18 @@ async function openBulkAuto(){
   const plan=planAll||[]; const planStocks=new Set(plan.map(x=>x.stock_code));
   // seçili üretimler; yoksa o anki FİLTRE (tarih/stok) kapsamı; o da yoksa planı olan tümü
   const selIds=new Set([...document.querySelectorAll('#prodBody .prodChk:checked')].map(c=>Number(c.dataset.id)));
-  let prods=PRODS.filter(matchesUF).filter(p=>planStocks.has(p.stock_code));
   const aktifFiltre=URETIM_FILT.start||URETIM_FILT.end||URETIM_FILT.stock;
   const secili = selIds.size>0;
-  if(secili) prods=prods.filter(p=>selIds.has(p.id));
+  // KAPSAM: seçili → seçilenler; filtre → filtre kapsamı; ikisi de yoksa → DB'deki TÜM üretimler (yalnız yüklü 500 değil!)
+  let scopeBase;
+  if(secili){ scopeBase=PRODS.filter(p=>selIds.has(p.id)); }
+  else if(aktifFiltre){ scopeBase=PRODS.filter(matchesUF); }
+  else {
+    scopeBase=[];
+    for(let from=0; from<200000; from+=1000){ const r=await sb.from('productions').select('*').order('start_time',{ascending:false}).range(from,from+999); if(r.error)break; scopeBase.push(...(r.data||[])); if(!r.data||r.data.length<1000)break; }
+  }
+  let prods=scopeBase.filter(p=>planStocks.has(p.stock_code));
   // planı OLMAYAN stok kodlu üretimler kapsam dışı kalır → kullanıcıyı uyar (örn. 700.0.454-T)
-  const scopeBase = secili ? PRODS.filter(p=>selIds.has(p.id)) : PRODS.filter(matchesUF);
   const noPlan = scopeBase.filter(p=>!planStocks.has(p.stock_code));
   const noPlanStocks=[...new Set(noPlan.map(p=>p.stock_code).filter(Boolean))];
   root.innerHTML='';
@@ -2649,7 +2655,7 @@ async function openBulkAuto(){
 async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
   // çevrim girilmediyse: mevcut başlama–bitiş sürelerine göre üret (proses dahil)
   if(!Object.values(cyc).some(v=>v>0)){
-    if(!confirm('Hiç çevrim süresi girmedin.\n\nMevcut başlama–bitiş sürelerine göre eksik kontroller (Seri Başı / Proses / Son) üretilsin mi?\n(Bitişi olmayan üretimlerde sadece Seri Başı + Son üretilir.)')) { return; }
+    if(!confirm('Hiç çevrim süresi girmedin.\n\nMevcut başlama–bitiş sürelerine göre eksik kontroller (Seri Başı / Proses / Son) üretilsin mi?\n(Bitişi olmayan = DEVAM EDEN üretimlerde sadece Seri Başı üretilir; bitince Son için tekrar çalıştır.)')) { return; }
   }
   go.disabled=true;
   // mevcut kayıtlar: üretim başına hangi aşamalar var + kayıtların kendisi (boş olanları doldurmak için)
@@ -2665,17 +2671,17 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
     (hist||[]).forEach(rc=>{ (rc.vals||[]).forEach(v=>{ if(/yanma/.test(deTr(v.measure_name||''))){ const k=rc.stock_code+'|'+v.measure_name; if(!priorMap[k]&&Array.isArray(v.samples)&&v.samples.length) priorMap[k]=v.samples; } }); }); }
   let made=0,prodN=0,skipped=0,cleaned=0,recalcN=0;
   for(const p of prods){
-    if(!p.start_time||!p.quantity||p.quantity<=0){skipped++;continue;}
+    if(!p.start_time){skipped++;continue;}   // sadece BAŞLAMA şart; miktar yoksa (devam eden üretim) mevcut süreyle seri başı üretilir
     const cs=cyc[(p.machine_code||'?')+'||'+(p.stock_code||'?')], start=new Date(p.start_time);
-    let end, durMin, recomputed=false;
-    if(cs>0){ const durSec=p.quantity*cs; end=new Date(start.getTime()+durSec*1000); durMin=durSec/60; recomputed=true;  // BİTİŞ = başlama + adet × çevrim (DB'ye yazılır)
+    let end, durMin, recomputed=false, finished=false;
+    if(cs>0 && Number(p.quantity)>0){ const durSec=Number(p.quantity)*cs; end=new Date(start.getTime()+durSec*1000); durMin=durSec/60; recomputed=true; finished=true;  // BİTİŞ = başlama + adet × çevrim (DB'ye yazılır)
       const {error:upErr}=await sb.from('productions').update({end_time:end.toISOString(),duration_min:Math.round(durMin)}).eq('id',p.id);
       if(upErr){ console.warn('Bitiş güncellenemedi:',upErr.message); } else recalcN++;
       p.end_time=end.toISOString(); p.duration_min=Math.round(durMin);
-    } else if(p.end_time){ end=new Date(p.end_time); durMin=Math.round((end.getTime()-start.getTime())/60000); if(durMin<0)durMin+=1440; // çevrim yok → mevcut başlama/bitişten süreyi hesapla (proses de üretilsin)
+    } else if(p.end_time){ end=new Date(p.end_time); durMin=Math.round((end.getTime()-start.getTime())/60000); if(durMin<0)durMin+=1440; finished=true; // çevrim yok → mevcut başlama/bitişten süreyi hesapla (proses de üretilsin)
       if(durMin<=0 && Number(p.duration_min)>0){ durMin=Number(p.duration_min); end=new Date(start.getTime()+durMin*60000); }  // bitiş=başlama ama süre bilgisi varsa onu kullan
-    } else if(Number(p.duration_min)>0){ durMin=Number(p.duration_min); end=new Date(start.getTime()+durMin*60000); }  // bitiş yok ama süre var
-    else { end=start; durMin=0; }  // ne çevrim ne bitiş ne süre → kısa üretim sayılır
+    } else if(Number(p.duration_min)>0){ durMin=Number(p.duration_min); end=new Date(start.getTime()+durMin*60000); finished=true; }  // bitiş yok ama süre var
+    else { end=start; durMin=0; finished=false; }  // bitiş/süre yok (DEVAM EDEN üretim) → sadece Seri Başı (ilerledikçe proses)
     // çevrim girildiyse BİTİŞ değişti → o üretimin TÜM kontrolleri yeni zaman çizelgesine göre baştan üretilsin (eski/tutarsız kontroller silinir)
     if(recomputed && !regen){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); recMap[p.id]={}; }
     if(regen){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); recMap[p.id]={}; }
@@ -2697,7 +2703,7 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
     if(!cur.has('proses')){ for(let t=freq;t<durMin;t+=freq){ const jit=Math.round((Math.random()*10-5)*60000); // ±5 dk sapma — hep tam saat olmasın
       let tm=start.getTime()+t*60000+jit; tm=Math.min(Math.max(tm,start.getTime()+60000),end.getTime()-60000); // aralıkta kal
       const r=buildAutoRec(p,'proses',new Date(tm),items,priorMap); if(r)recs.push(r); } }
-    if(!cur.has('son')){ const r=buildAutoRec(p,'son',end,items,priorMap); if(r)recs.push(r); }                      // son: bitişte
+    if(finished && !cur.has('son')){ const r=buildAutoRec(p,'son',end,items,priorMap); if(r)recs.push(r); }          // son: yalnız BİTMİŞ üretimde (devam edende üretilmez)
     if(!cur.has('giris')){ const r=buildAutoRec(p,'giris',offWhen(),items,priorMap); if(r)recs.push(r); }
     // boş (ölçüm girilmemiş) mevcut kayıtları otomatik doldur
     const updates=[];
