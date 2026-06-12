@@ -3012,7 +3012,65 @@ function showKtDetail(r){
     if(val==null||val==='')return;
     m.append(el('div',{style:'margin-top:10px'},el('label',{class:'lab'},lab),el('div',{style:'white-space:pre-wrap;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:13px'},String(val))));
   });
+  // Test Öncesi / Sonrası görseller (alt taraf)
+  const docs=Array.isArray(r.dokumanlar)?r.dokumanlar:[];
+  if(docs.length){
+    const grp=(title,re)=>{ const us=docs.filter(d=>re.test(d.tur||'')).map(d=>uncToHttp(d.link)).filter(Boolean); if(!us.length)return null;
+      return el('div',{style:'flex:1;min-width:160px'},el('label',{class:'lab'},title),el('div',{style:'display:flex;flex-wrap:wrap;gap:6px'},...us.map(u=>{ const a=el('a',{href:u,target:'_blank',title:u}); const im=el('img',{src:u,style:'max-width:150px;max-height:150px;border:1px solid var(--line);border-radius:6px'}); im.onerror=()=>{ a.innerHTML=''; a.append(el('span',{style:'color:var(--muted);font-size:11px'},'⚠ açılamıyor')); }; a.append(im); return a; }))); };
+    const onc=grp('🖼 Test Öncesi',/once/i), son=grp('🖼 Test Sonrası',/sonra/i);
+    if(onc||son) m.append(el('div',{style:'display:flex;gap:16px;margin-top:12px;flex-wrap:wrap'},onc||'',son||''));
+  }
+  m.append(el('div',{style:'margin-top:14px;text-align:right'},el('button',{class:'btn sm',onclick:()=>printKaliteTest(r)},'🖨 PDF / Yazdır (FR54)')));
   bg.append(m); root.append(bg);
+}
+// UNC paylaşım yolunu (\\HOST\a\b) HTTP'ye çevir (10.11.11.11 web'den servis ediyor; .99 etmeyebilir → kırık görsel)
+function uncToHttp(unc){ if(!unc)return ''; const p=String(unc).replace(/^\\+/,'').split('\\').filter(Boolean); if(p.length<2)return ''; return 'http://'+p[0]+'/'+p.slice(1).map(s=>encodeURIComponent(s)).join('/'); }
+// FR54 — Kalite Kontrol Test Raporu (yazdırılabilir; önce/sonra görseller altta)
+function printKaliteTest(r){
+  const w=window.open('','_blank','width=900,height=1200'); if(!w)return toast('Pop-up engellenmiş.','err');
+  const logoUrl=location.href.replace(/[#?].*$/,'').replace(/[^/]*$/,'')+'SanifoamLogo-Transparent.png';
+  const docs=Array.isArray(r.dokumanlar)?r.dokumanlar:[];
+  const onc=docs.filter(d=>/once/i.test(d.tur||'')).map(d=>uncToHttp(d.link)).filter(Boolean);
+  const son=docs.filter(d=>/sonra/i.test(d.tur||'')).map(d=>uncToHttp(d.link)).filter(Boolean);
+  const e2=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const row=(l,v)=>`<tr><td class="l">${e2(l)}</td><td class="v">${e2(v==null?'':v)}</td></tr>`;
+  const imgs=arr=>arr.length?arr.map(u=>`<img src="${u}" onerror="this.outerHTML='<span class=noimg>⚠ erişilemiyor</span>'">`).join(''):'<span class="noimg">— görsel yok —</span>';
+  const kararTxt=r.karar===1?'UYGUN':(r.karar===0?'UYGUNSUZ':'-');
+  const html=`<!doctype html><html><head><meta charset="utf-8"><title>${e2(r.adi)} ${e2(r.seri)}/${e2(r.sira)}</title><style>
+@page{size:A4;margin:11mm} body{font-family:'Segoe UI',Arial,sans-serif;color:#111;font-size:12px;margin:0}
+.head{display:flex;border:1.5px solid #333;margin-bottom:8px}
+.head .logo{flex:0 0 130px;display:flex;align-items:center;justify-content:center;border-right:1px solid #333;padding:6px} .head .logo img{max-width:118px;max-height:58px}
+.head .mid{flex:1;text-align:center;padding:8px;border-right:1px solid #333} .head .mid .c{font-size:10.5px;color:#333} .head .mid .t{font-size:15px;font-weight:bold;margin-top:6px}
+.head .box{flex:0 0 168px;font-size:10px} .head .box div{display:flex;border-bottom:1px solid #999} .head .box div:last-child{border-bottom:none} .head .box span{padding:2px 5px} .head .box .k{flex:0 0 74px;border-right:1px solid #999;color:#444}
+.rapno{text-align:right;font-weight:bold;font-size:13px;margin:0 0 6px}
+table.f{width:100%;border-collapse:collapse} table.f td{border:1px solid #999;padding:5px 8px;vertical-align:top} table.f td.l{width:33%;background:#f2f4f8;font-weight:600;color:#333} table.f td.v{white-space:pre-wrap}
+.sec{font-weight:bold;background:#1e40af;color:#fff;padding:4px 8px;margin:12px 0 0;font-size:12px}
+.imgwrap{display:flex;gap:10px;margin-top:6px} .imgcol{flex:1;border:1px solid #999;padding:6px;page-break-inside:avoid} .imgcol h4{margin:0 0 6px;font-size:11px;text-align:center;background:#eef;padding:3px} .imgcol img{max-width:100%;max-height:240px;display:block;margin:4px auto;border:1px solid #ccc} .noimg{color:#999;font-style:italic}
+.sign{display:flex;margin-top:14px;border:1px solid #333} .sign .c{flex:1;border-right:1px solid #333;padding:6px 8px;font-size:11px} .sign .c:last-child{border-right:none} .sign .c .h{font-weight:bold} .sign .c .sp{height:26px}
+</style></head><body onload="setTimeout(function(){window.print()},500)">
+<div class="head"><div class="logo"><img src="${logoUrl}"></div>
+<div class="mid"><div class="c">SANİFOAM SÜNGER SAN. TİC. A.Ş.<br>KALİTE YÖNETİM SİSTEMİ DOKÜMANTASYONU</div><div class="t">KALİTE KONTROL TEST RAPORU</div></div>
+<div class="box"><div><span class="k">DOK.NO</span><span>FR54</span></div><div><span class="k">REV.NO</span><span>03</span></div><div><span class="k">Y.TARİHİ</span><span>24.05.2011</span></div><div><span class="k">SAYFA</span><span>1/1</span></div></div></div>
+<div class="rapno">Rapor No: ${e2(r.tip||'')} ${e2(r.seri||'')} / ${e2(r.sira==null?'':r.sira)}</div>
+<table class="f">
+${row('Testin Adı',r.adi)}
+${row('Test Tipi',r.tip)}
+${row('Numune Sayısı / Ebatları',(r.numune_sayisi!=null?r.numune_sayisi:'')+(r.numune_ebat?('   '+r.numune_ebat):''))}
+${row('Referans Teknik Doküman / Standart',r.referans)}
+${row('Test Edilen Parça Adı',r.stok_adi)}
+${row('Test Edilen Parça Stok Kodu',r.stok_kodu)}
+${row('Parti / İrsaliye No',(r.parti_buyuklugu!=null?('Parti: '+r.parti_buyuklugu+'   '):'')+(r.hareket_evrak||''))}
+${row('Diğer Özellikler',r.diger_ozellikler)}
+${row('Testin Amacı',r.amac)}
+${row('Kontrol Edilecek Özellikler ve İstenenler',r.istenen)}
+${row('Test Sonuçları ve Değerlendirme',r.sonuc)}
+${row('Karar',kararTxt)}
+</table>
+<div class="sign"><div class="c"><span class="h">Testi Yapan</span><div class="sp"></div>${e2(r.testi_yapan||'')}<br>${e2(fmtDate(r.tarih))}</div><div class="c"><span class="h">Onaylayan</span><div class="sp"></div>Kalite Güvence Müdürü</div></div>
+<div class="sec">Test Öncesi / Test Sonrası Görseller</div>
+<div class="imgwrap"><div class="imgcol"><h4>TEST ÖNCESİ</h4>${imgs(onc)}</div><div class="imgcol"><h4>TEST SONRASI</h4>${imgs(son)}</div></div>
+</body></html>`;
+  w.document.write(html); w.document.close();
 }
 // 🗂 LeanSys Stok Kartları (st01 / STOKKARTI view) — kod bazlı arama; çözülmüş birim/cinsi/durum/döviz/sektör
 let _stokKartDeb=null, _skObserver=null;
