@@ -2970,12 +2970,13 @@ async function renderUrunAgaci(root){
   }
   async function loadHeaders(){
     listDiv.innerHTML='<div style="padding:10px;color:var(--muted)">Yükleniyor…</div>';
-    HEADERS=[]; const seen=new Set(); openCloser=null;
-    for(let from=0;;from+=1000){ const {data,error}=await sb.from('urun_agaclari').select('header_id,urun_kodu,urun_adi,agac_adi,varsayilan,kayit_tarihi').order('urun_kodu').range(from,from+999);
+    HEADERS=[]; const seen=new Set(), allH=[], childSet=new Set(); openCloser=null;
+    for(let from=0;;from+=1000){ const {data,error}=await sb.from('urun_agaclari').select('header_id,alt_header_id,urun_kodu,urun_adi,agac_adi,varsayilan,kayit_tarihi').order('urun_kodu').range(from,from+999);
       if(error){ listDiv.innerHTML='<div class="msg err" style="margin:8px">'+esc(error.message)+'</div>'; return; }
-      (data||[]).forEach(r=>{ if(!seen.has(r.header_id)){ seen.add(r.header_id); HEADERS.push(r); } });
+      (data||[]).forEach(r=>{ if(r.alt_header_id!=null) childSet.add(r.alt_header_id); if(!seen.has(r.header_id)){ seen.add(r.header_id); allH.push(r); } });
       if(!data||data.length<1000)break; }
-    HEADERSET=seen;   // alt_header_id bu kümedeyse o tüketim kalemi de bir alt-ağaç (açılabilir)
+    HEADERSET=seen;                                  // tüm header'lar — alt_header_id bu kümedeyse o kalem açılabilir alt-ağaç
+    HEADERS=allH.filter(h=> !childSet.has(h.header_id));  // SADECE kök ürünler: başka ağacın altında geçen kodlar listede tekrar gösterilmez
     const cc=$('#uaCardCnt'); if(cc)cc.textContent=String(HEADERS.length);
     renderList();
   }
