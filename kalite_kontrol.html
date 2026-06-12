@@ -3025,6 +3025,13 @@ async function renderKaliteTest(root){
   const fCode=el('input',{class:'inp',placeholder:'örn. 126.0.559 (boş=tümü)',style:'min-width:170px'});
   const cnt=el('div',{class:'stat'},el('b',{id:'ktCount'},'—'),el('span',{},'test'));
   const pullBtn=el('button',{class:'btn sm',id:'kt_pull',style:'flex:0',title:'LeanSys kalite testlerini ara tabloya tazele (tarih + kod), sonra listele.',onclick:pullFromLeansys},'📥 LeanSys’ten Çek');
+  // Admin: SADECE Supabase silme (LeanSys'e ASLA dokunmaz)
+  const ktTools=isAdmin?el('div',{class:'autozone'},
+    el('button',{class:'autozone-handle',title:'Sil — yalnızca SUPABASE (LeanSys’e dokunmaz)',onclick:e=>{e.stopPropagation();toggleAutozone(e.currentTarget);}},'▾'),
+    el('div',{class:'auto-menu'},
+      el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteSelectedKt();}},'🗑 Seçilenleri Sil (Supabase)'),
+      el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteAllKt();}},'🧨 TÜMÜNÜ Sil (Supabase)')
+    )):'';
   root.append(el('div',{class:'card'},el('div',{class:'toolbar'},
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Ara'),fSearch),
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Karar'),fKarar),
@@ -3032,7 +3039,7 @@ async function renderKaliteTest(root){
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),fTo),
     el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{fSearch.value='';fFrom.value='';fTo.value='';fKarar.value='';load();}},'Temizle'),
     el('div',{class:'grow'}),
-    ...(isAdmin?[el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Çekilecek kod'),fCode),pullBtn]:[]),
+    ...(isAdmin?[el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Çekilecek kod'),fCode),pullBtn,ktTools]:[]),
     cnt)));
   const out=el('div'); root.append(out);
   let _seq=0;
@@ -3061,9 +3068,11 @@ async function renderKaliteTest(root){
     out.innerHTML='';
     if(!rows.length){ out.append(el('div',{class:'card'},el('div',{class:'empty'},'Kayıt yok. Yukarıdan tarih+kod seçip «📥 LeanSys’ten Çek» yap.'))); return; }
     const card=el('div',{class:'card'}); const tb=el('table');
-    tb.append(el('thead',{},el('tr',{},...['Tarih','Seri/Sıra','Test Adı','Stok Kodu','Stok Adı','Karar','Testi Yapan'].map(h=>el('th',{},h)))));
-    const body=el('tbody');
+    const chkAll=el('input',{type:'checkbox',title:'Görünenleri seç/bırak'}); chkAll.onclick=e=>{document.querySelectorAll('#ktBody .ktChk').forEach(c=>c.checked=e.target.checked);};
+    tb.append(el('thead',{},el('tr',{}, ...(isAdmin?[el('th',{},chkAll)]:[]), ...['Tarih','Seri/Sıra','Test Adı','Stok Kodu','Stok Adı','Karar','Testi Yapan'].map(h=>el('th',{},h)))));
+    const body=el('tbody',{id:'ktBody'});
     rows.forEach(r=>{ body.append(el('tr',{style:'cursor:pointer',onclick:()=>showKtDetail(r)},
+      ...(isAdmin?[el('td',{onclick:e=>e.stopPropagation()},el('input',{type:'checkbox',class:'ktChk','data-id':String(r.inc_key)}))]:[]),
       el('td',{style:'white-space:nowrap'},fmtDate(r.tarih)),
       el('td',{style:'white-space:nowrap;font-size:12px'},(r.seri||'')+(r.sira!=null?(' / '+r.sira):'')),
       el('td',{style:'font-weight:600'},r.adi||''),
@@ -3147,6 +3156,27 @@ ${row('Karar',kararTxt)}
 <div class="imgwrap"><div class="imgcol"><h4>TEST ÖNCESİ</h4>${imgs(onc)}</div><div class="imgcol"><h4>TEST SONRASI</h4>${imgs(son)}</div></div>
 </body></html>`;
   w.document.write(html); w.document.close();
+}
+// Kalite Testi SİLME — yalnızca SUPABASE kalite_testleri. LeanSys'e ASLA dokunmaz; yeniden çekersen geri gelir.
+async function deleteSelectedKt(){
+  if(!(PROFILE&&PROFILE.is_admin)){ toast('Yetki yok (admin).','err'); return; }
+  const ids=[...document.querySelectorAll('#ktBody .ktChk:checked')].map(c=>Number(c.dataset.id)).filter(x=>!isNaN(x));
+  if(!ids.length){ toast('Önce silinecek testleri seç (sol kutucuk).','err'); return; }
+  if(!confirm(`${ids.length} kalite testi SUPABASE'ten silinecek.\n\nLeanSys'e DOKUNULMAZ; yeniden çekersen geri gelir. Devam?`)) return;
+  let ok=0;
+  for(let i=0;i<ids.length;i+=100){ const chunk=ids.slice(i,i+100); const {error}=await sb.from('kalite_testleri').delete().in('inc_key',chunk); if(error){ toast('Silme hatası: '+esc(error.message),'err'); return; } ok+=chunk.length; }
+  toast(`${ok} kalite testi silindi (Supabase).`,'ok'); renderKaliteTest($('#tab-kalitetest'));
+}
+async function deleteAllKt(){
+  if(!(PROFILE&&PROFILE.is_admin)){ toast('Yetki yok (admin).','err'); return; }
+  if(!confirm("DİKKAT: SUPABASE'teki TÜM kalite testleri silinecek.\n\nLeanSys'e DOKUNULMAZ; yeniden çekersen geri gelir. Devam?")) return;
+  if(!confirm('SON ONAY: bütün kalite testleri (Supabase) silinecek. Eminsen «Tamam».')) return;
+  const ids=[];
+  for(let from=0;;from+=1000){ const {data,error}=await sb.from('kalite_testleri').select('inc_key').range(from,from+999); if(error){ toast(esc(error.message),'err'); return; } ids.push(...(data||[]).map(r=>r.inc_key)); if(!data||data.length<1000) break; }
+  if(!ids.length){ toast('Silinecek kayıt yok.','ok'); return; }
+  let ok=0;
+  for(let i=0;i<ids.length;i+=200){ const chunk=ids.slice(i,i+200); const {error}=await sb.from('kalite_testleri').delete().in('inc_key',chunk); if(error){ toast('Silme hatası: '+esc(error.message),'err'); return; } ok+=chunk.length; }
+  toast(`${ok} kalite testi silindi (Supabase).`,'ok'); renderKaliteTest($('#tab-kalitetest'));
 }
 // 🗂 LeanSys Stok Kartları (st01 / STOKKARTI view) — kod bazlı arama; çözülmüş birim/cinsi/durum/döviz/sektör
 let _stokKartDeb=null, _skObserver=null;
