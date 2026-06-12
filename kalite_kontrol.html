@@ -2944,17 +2944,15 @@ async function renderOperasyon(root){
   const isAdmin=(PROFILE&&PROFILE.is_admin)||can('import');
   root.append(el('div',{class:'card'},
     el('h3',{style:'margin-top:0'},'⚙️ Operasyon Kartları (LeanSys st04)'),
-    el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:13px',html:'Rota + operasyon satırları, <b>talimatlarıyla</b>. Aşağıdan <b>kart seç / ara</b> → yalnız o kart görünür. Çekmek (admin): tarih + stok kodu → <b>📥 LeanSys’ten Çek</b> (virgülle çoklu; boş=TÜM, tarih=kayıt).'})));
+    el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:13px',html:'Rota + operasyon satırları, <b>talimatlarıyla</b>. Aşağıdan <b>kart seç / ara</b> → yalnız o kart görünür. Çekmek (admin): stok kodu yaz → <b>📥 LeanSys’ten Çek</b> (virgülle çoklu; boş = TÜM kartlar).'})));
   const fFrom=el('input',{type:'date',class:'inp'});
   const fTo=el('input',{type:'date',class:'inp'});
   const fCode=el('input',{class:'inp',placeholder:'örn. 700.0.454 (boş=tümü)',style:'min-width:170px'});
   const pullBtn=el('button',{class:'btn sm',id:'op_pull',style:'flex:0',onclick:pullFromLeansys},'📥 LeanSys’ten Çek');
   const cnt=el('div',{class:'stat'},el('b',{id:'opCardCnt'},'—'),el('span',{},'kart'));
   root.append(el('div',{class:'card'},el('div',{class:'toolbar'},
-    ...(isAdmin?[el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Başlangıç'),fFrom),
-      el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),fTo),
-      el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Çekilecek kod'),fCode),pullBtn]:[]),
-    el('div',{class:'grow'}), cnt)));
+    ...(isAdmin?[el('div',{class:'field grow'},el('label',{class:'lab'},'Çekilecek stok kodu (virgülle çoklu · boş = TÜM)'),fCode),pullBtn]:[el('div',{class:'grow'})]),
+    cnt)));
   const search=el('input',{class:'inp',placeholder:'🔍 stok kodu / ad / rota ile ara…',style:'width:100%'});
   search.oninput=()=>{ clearTimeout(_opDeb); _opDeb=setTimeout(renderList,200); };
   const listDiv=el('div',{style:'border:1px solid var(--line);border-radius:8px;margin-top:8px;overflow:hidden'});
