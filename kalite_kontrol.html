@@ -1111,8 +1111,8 @@ async function renderUretimler(){
   const aktifFiltre=URETIM_FILT.start||URETIM_FILT.end||URETIM_FILT.stock||URETIM_FILT.group;
   const filt=el('div',{class:'card'},
     el('div',{class:'toolbar'},
-      el('div',{class:'stat'},el('b',{},String(filtered.length)+(filtered.length!==PRODS.length?'/'+PRODS.length:'')),el('span',{},'Üretim')),
-      el('div',{class:'stat'},el('b',{},String(stockSet.length)),el('span',{},'Farklı ürün')),
+      el('div',{class:'stat'},el('b',{id:'uretimCount'},String(filtered.length)+(filtered.length!==PRODS.length?'/'+PRODS.length:'')),el('span',{},'Üretim')),
+      el('div',{class:'stat'},el('b',{id:'urunCount'},String(stockSet.length)),el('span',{},'Farklı ürün')),
       el('button',{class:'btn sm',style:'flex:0',title:'Supabase’den yeniden çek (LeanSys aktarımından sonra)',onclick:()=>renderUretimler()},'🔄 Yenile'),
       el('button',{class:'btn sm',style:'flex:0',title:'LeanSys aktarım penceresini açar (üretimi güncelle). İlk seferde tarayıcı “Aç” diye sorar.',onclick:()=>{fetch('http://127.0.0.1:17777/open',{mode:'cors'}).then(()=>toast('LeanSys penceresi açılıyor… Aktarım bitince 🔄 Yenile.','ok')).catch(()=>toast('LeanSys ajanı kapalı. Masaüstündeki LeanSys_Aktar’a çift tıkla.','err'));}},'📥 LeanSys Güncelle'),
       el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Başlangıç'),el('input',{type:'date',class:'inp',value:URETIM_FILT.start,onchange:e=>{URETIM_FILT.start=e.target.value;renderUretimler();}})),
@@ -1142,6 +1142,29 @@ async function renderUretimler(){
     el('div',{class:'tbl-wrap'},buildProdTable(filtered))
   );
   root.append(filt);
+  // Filtre yokken ilk 500 gelir; daha fazlasını EKLEYEREK yükle (kaydırma/seçim sıfırlanmaz)
+  if(!_active && data.length>=500){
+    const moreWrap=el('div',{style:'text-align:center;padding:12px'});
+    const moreBtn=el('button',{class:'btn sm sec'},'⬇ Daha fazla yükle (+500)');
+    let busy=false;
+    moreBtn.onclick=async()=>{
+      if(busy)return; busy=true; moreBtn.disabled=true; moreBtn.textContent='Yükleniyor…';
+      const from=PRODS.length;
+      const r=await sb.from('productions').select('*').order('start_time',{ascending:false}).range(from,from+499);
+      if(r.error){ toast(esc(r.error.message),'err'); busy=false; moreBtn.disabled=false; moreBtn.textContent='⬇ Daha fazla yükle (+500)'; return; }
+      const more=r.data||[];
+      PRODS=PRODS.concat(more);
+      const body=document.getElementById('prodBody');
+      if(body) more.filter(matchesUF).forEach(p=>body.append(prodRow(p)));
+      try{ filterProdRows(); }catch(e){}
+      const uc=document.getElementById('uretimCount'); if(uc) uc.textContent=String(PRODS.filter(matchesUF).length);
+      const pc=document.getElementById('urunCount'); if(pc) pc.textContent=String(new Set(PRODS.map(p=>p.stock_code).filter(Boolean)).size);
+      busy=false; moreBtn.disabled=false; moreBtn.textContent='⬇ Daha fazla yükle (+500)';
+      if(more.length<500){ moreWrap.innerHTML=''; moreWrap.append(el('div',{style:'color:var(--muted);font-size:12px'},'Tüm üretimler yüklendi.')); }
+    };
+    moreWrap.append(moreBtn);
+    filt.append(moreWrap);
+  }
 }
 function buildProdTable(rows){
   const tb=el('table');
