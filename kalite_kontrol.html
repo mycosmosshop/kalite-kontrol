@@ -2947,7 +2947,7 @@ async function renderUrunAgaci(root){
   const isAdmin=(PROFILE&&PROFILE.is_admin)||can('import');
   root.append(el('div',{class:'card'},
     el('h3',{style:'margin-top:0'},'🌳 Ürün Ağaçları (LeanSys BOM)'),
-    el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:13px',html:'Ürün ağaçları — tüketim (BOM) satırları, miktar/birim/fire/cinsi ile. Aşağıdan <b>ürün seç / ara</b> → kart altında açılır (tekrar tıkla kapanır). Çekmek (admin): stok kodu → <b>📥 LeanSys’ten Çek</b> (virgülle çoklu; boş = TÜM).'})));
+    el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:13px',html:'Ürün ağaçları (st03) — <b>çok seviyeli ağaç</b>: ana koda bağlı alt kodlar, <b>bastıkça açılır/kapanır</b> (▸). Miktar/birim/fire/cinsi. Aşağıdan <b>ürün seç / ara</b> → ağaç kart altında açılır; satırdaki <b>▸ alt-ağaç</b> kalemlerini tıkla → alt tüketimleri iç içe açılır. Çekmek (admin): stok kodu → <b>📥 LeanSys’ten Çek</b> (alt ağaçlar özyinelemeli gelir; virgülle çoklu; boş = TÜM).'})));
   const fCode=el('input',{class:'inp',placeholder:'örn. 700.0.454 (boş=tümü)',style:'min-width:170px'});
   const pullBtn=el('button',{class:'btn sm',id:'ua_pull',style:'flex:0',onclick:pullFromLeansys},'📥 LeanSys’ten Çek');
   const cnt=el('div',{class:'stat'},el('b',{id:'uaCardCnt'},'—'),el('span',{},'ürün'));
@@ -2958,7 +2958,7 @@ async function renderUrunAgaci(root){
   search.oninput=()=>{ clearTimeout(_uaDeb); _uaDeb=setTimeout(renderList,200); };
   const listDiv=el('div',{style:'border:1px solid var(--line);border-radius:8px;margin-top:8px;overflow:hidden'});
   root.append(el('div',{class:'card'},el('label',{class:'lab'},'Ürün Seç — koda tıkla → ürün ağacı ALTINDA açılır; tekrar tıkla kapanır'),search,listDiv));
-  let HEADERS=[], openCloser=null;
+  let HEADERS=[], openCloser=null, HEADERSET=new Set();
   async function pullFromLeansys(){
     pullBtn.disabled=true; const _t=pullBtn.textContent; pullBtn.textContent='⏳ Çekiliyor…';
     let res=null;
@@ -2975,6 +2975,7 @@ async function renderUrunAgaci(root){
       if(error){ listDiv.innerHTML='<div class="msg err" style="margin:8px">'+esc(error.message)+'</div>'; return; }
       (data||[]).forEach(r=>{ if(!seen.has(r.header_id)){ seen.add(r.header_id); HEADERS.push(r); } });
       if(!data||data.length<1000)break; }
+    HEADERSET=seen;   // alt_header_id bu kümedeyse o tüketim kalemi de bir alt-ağaç (açılabilir)
     const cc=$('#uaCardCnt'); if(cc)cc.textContent=String(HEADERS.length);
     renderList();
   }
@@ -3003,26 +3004,57 @@ async function renderUrunAgaci(root){
     });
     if(ms.length>300) listDiv.append(el('div',{style:'padding:6px;color:var(--muted);font-size:12px;text-align:center'},`… ${ms.length-300} ürün daha — aramayı daralt`));
   }
+  // —— Ağaç (tree) görünümü: ana koda bağlı alt kodlar; bastıkça aç/kapa (expand/collapse) ——
+  const UAT_COLS='display:grid;grid-template-columns:minmax(180px,320px) minmax(130px,1fr) 100px 60px 56px 140px;gap:8px;align-items:center;padding:5px 9px;font-size:12.5px';
+  function treeHeaderRow(){
+    return el('div',{style:UAT_COLS+';border-bottom:1.5px solid var(--line);background:var(--panel2);font-weight:700;font-size:11px;text-transform:uppercase;color:var(--muted)'},
+      el('div',{},'Tüketim Kodu'),el('div',{},'Tüketim Adı'),el('div',{style:'text-align:right'},'Miktar'),el('div',{},'Birim'),el('div',{style:'text-align:right'},'Fire %'),el('div',{},'Cinsi'));
+  }
+  function makeNode(line,depth){
+    const wrap=el('div');
+    const expandable=line.alt_header_id!=null && HEADERSET.has(line.alt_header_id);
+    const childBox=el('div',{style:'display:none'});
+    const caret=el('span',{style:'display:inline-block;width:13px;text-align:center;flex:0 0 13px;color:#2563eb;font-weight:700'},expandable?'▸':'·');
+    const kod=el('b',{style:'white-space:nowrap;overflow:hidden;text-overflow:ellipsis'},line.tuketim_kodu||'');
+    const kodCell=el('div',{style:'display:flex;align-items:center;gap:4px;min-width:0;padding-left:'+(depth*16)+'px'},caret,kod);
+    const baseBg=depth?'rgba(125,125,125,.04)':'';
+    const row=el('div',{style:UAT_COLS+';border-bottom:1px solid var(--line)'+(baseBg?(';background:'+baseBg):'')},
+      kodCell,
+      el('div',{title:line.tuketim_adi||'',style:'overflow:hidden;text-overflow:ellipsis;white-space:nowrap'},line.tuketim_adi||''),
+      el('div',{style:'text-align:right'},line.miktar!=null?commaFmt(line.miktar):''),
+      el('div',{},line.birim||''),
+      el('div',{style:'text-align:right'},line.fire_orani!=null?commaFmt(line.fire_orani):'0'),
+      el('div',{style:'font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'},line.cinsi||''));
+    if(expandable){
+      kodCell.style.cursor='pointer'; row.title='Alt ağacı aç/kapa';
+      let loaded=false, open=false;
+      kodCell.onclick=async()=>{
+        open=!open; caret.textContent=open?'▾':'▸'; childBox.style.display=open?'':'none';
+        row.style.background=open?'rgba(37,99,235,.09)':baseBg;
+        if(open && !loaded){
+          childBox.innerHTML='<div style="padding:5px 9px;color:var(--muted);padding-left:'+((depth+1)*16+18)+'px">Yükleniyor…</div>';
+          const {data}=await sb.from('urun_agaclari').select('*').eq('header_id',line.alt_header_id).order('cinsi').order('tuketim_kodu');
+          childBox.innerHTML=''; (data||[]).forEach(cl=>childBox.append(makeNode(cl,depth+1)));
+          if(!data||!data.length) childBox.append(el('div',{style:'padding:5px 9px;color:var(--muted);font-size:12px;padding-left:'+((depth+1)*16+18)+'px'},'(alt tüketim yok)'));
+          loaded=true;
+        }
+      };
+    }
+    wrap.append(row,childBox); return wrap;
+  }
   async function fillCard(det,hid,h){
     const {data,error}=await sb.from('urun_agaclari').select('*').eq('header_id',hid).order('cinsi').order('tuketim_kodu');
     det.innerHTML='';
     if(error){ det.append(el('div',{class:'msg err',style:'margin:8px'},esc(error.message))); return; }
     const lines=data||[]; if(!lines.length){ det.append(el('div',{style:'padding:10px;color:var(--muted)'},'Tüketim satırı yok.')); return; }
+    const expN=lines.filter(l=>l.alt_header_id!=null && HEADERSET.has(l.alt_header_id)).length;
     det.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;padding:8px 11px'},
-      el('div',{style:'color:var(--muted);font-size:12.5px'},`Ağaç: ${esc(h.agac_adi||'-')}${h.varsayilan?' ⭐varsayılan':''} · Kayıt ${fmtDate(h.kayit_tarihi)} · ${lines.length} tüketim`),
+      el('div',{style:'color:var(--muted);font-size:12.5px'},`Ağaç: ${esc(h.agac_adi||'-')}${h.varsayilan?' ⭐varsayılan':''} · Kayıt ${fmtDate(h.kayit_tarihi)} · ${lines.length} tüketim${expN?` · ▸ ${expN} alt-ağaç (bas → açılır)`:''}`),
       isAdmin?el('button',{class:'btn sm danger',style:'flex:0',title:'Bu ürün ağacını YALNIZ Supabase’ten sil (LeanSys’e dokunmaz)',onclick:async(e)=>{ e.stopPropagation(); if(await delUaCard(hid,h)) loadHeaders(); }},'🗑 Bu ağacı sil'):''));
-    const tb=el('table');
-    tb.append(el('thead',{},el('tr',{},...['Tüketim Kodu','Tüketim Adı','Miktar','Birim','Fire %','Cinsi'].map(x=>el('th',{},x)))));
-    const body=el('tbody');
-    lines.forEach(l=>body.append(el('tr',{},
-      el('td',{style:'white-space:nowrap;font-weight:600'},l.tuketim_kodu||''),
-      el('td',{style:'font-size:12px',title:l.tuketim_adi||''},(l.tuketim_adi||'').slice(0,40)),
-      el('td',{style:'text-align:right'},l.miktar!=null?commaFmt(l.miktar):''),
-      el('td',{},l.birim||''),
-      el('td',{style:'text-align:right'},l.fire_orani!=null?commaFmt(l.fire_orani):'0'),
-      el('td',{style:'font-size:12px'},l.cinsi||'')
-    )));
-    tb.append(body); det.append(el('div',{class:'tbl-wrap'},tb));
+    const tree=el('div',{style:'overflow-x:auto;border-top:1px solid var(--line)'});
+    tree.append(treeHeaderRow());
+    lines.forEach(l=>tree.append(makeNode(l,0)));
+    det.append(tree);
   }
   loadHeaders();
 }
