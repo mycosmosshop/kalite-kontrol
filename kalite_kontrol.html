@@ -785,19 +785,26 @@ async function renderMalKabul(){
   const root=$('#tab-malkabul'); root.innerHTML='';
   root.append(el('div',{class:'card'},
     el('h3',{style:'margin-top:0'},'📦 Mal Kabul (LeanSys)'),
-    el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:13px',html:'Tedarikçiden mal kabulden gelen ürünler (salt görünüm). Tazelemek: sunucuda <code>_malkabul_guncelle.bat</code>. <b>Giriş kalite kontrolü</b>, <b>Girilecek Kontroller → Giriş Kalite</b>’den girilir.'})));
+    el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:13px',html:'Tedarikçiden mal kabulden gelen ürünler. Aktarmak/tazelemek: sunucuda <b>Mal_Kabul_Aktar</b> penceresi (stok kodu + tarih seçip <b>AKTAR</b>) ya da <code>_malkabul_guncelle.bat</code>. <b>Giriş kalite kontrolü</b>, <b>Girilecek Kontroller → Giriş Kalite</b>’den girilir.'})));
   const fSearch=el('input',{class:'inp',placeholder:'🔍 stok kodu / ad / tedarikçi…',style:'min-width:240px',oninput:()=>{clearTimeout(_mkDeb);_mkDeb=setTimeout(load,400);}});
   const fFrom=el('input',{type:'date',class:'inp',onchange:load});
   const fTo=el('input',{type:'date',class:'inp',onchange:load});
   const fTur=el('select',{class:'inp',onchange:load}); [['0','Mal Kabul'],['1','İade'],['','Hepsi']].forEach(([v,t])=>fTur.append(el('option',{value:v},t)));
   const cnt=el('div',{class:'stat'},el('b',{id:'mkCount'},'—'),el('span',{},'kayıt'));
+  // Admin: SADECE Supabase mal_kabul silme (LeanSys'e ASLA dokunmaz)
+  const mkTools=(PROFILE&&PROFILE.is_admin)?el('div',{class:'autozone'},
+    el('button',{class:'autozone-handle',title:'Mal kabul araçları — yalnızca SUPABASE silme (LeanSys’e dokunmaz)',onclick:e=>{e.stopPropagation();e.currentTarget.parentElement.classList.toggle('open');}},'▾'),
+    el('div',{class:'auto-menu'},
+      el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteSelectedMalKabul();}},'🗑 Seçilenleri Sil (Supabase)'),
+      el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteAllMalKabul();}},'🧨 TÜMÜNÜ Sil (Supabase)')
+    )):'';
   root.append(el('div',{class:'card'},el('div',{class:'toolbar'},
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Ara'),fSearch),
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Tür'),fTur),
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'İrsaliye Tarihi — Başlangıç'),fFrom),
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),fTo),
     el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{fSearch.value='';fFrom.value='';fTo.value='';fTur.value='0';load();}},'Temizle'),
-    el('div',{class:'grow'}), cnt)));
+    el('div',{class:'grow'}), mkTools, cnt)));
   const out=el('div'); root.append(out);
   let _mkSeq=0;
   async function load(){
@@ -819,9 +826,12 @@ async function renderMalKabul(){
     out.innerHTML='';
     if(!rows.length){ out.append(el('div',{class:'card'},el('div',{class:'empty'},'Kayıt yok. (Önce sunucuda _malkabul_guncelle.bat çalıştır.)'))); return; }
     const card=el('div',{class:'card'}); const tb=el('table');
-    tb.append(el('thead',{},el('tr',{},...['İrsaliye Tarih','Kayıt Tarihi','Stok Kodu','Stok Adı','Tedarikçi','Miktar','İrsaliye','Depo','Tür','Giriş Planı'].map(h=>el('th',{},h)))));
-    const body=el('tbody');
+    const isAdmin=PROFILE&&PROFILE.is_admin;
+    const chkAll=el('input',{type:'checkbox',title:'Görünenleri seç/bırak'}); chkAll.onclick=e=>{document.querySelectorAll('#mkBody .mkChk').forEach(c=>c.checked=e.target.checked);};
+    tb.append(el('thead',{},el('tr',{}, ...(isAdmin?[el('th',{},chkAll)]:[]), ...['İrsaliye Tarih','Kayıt Tarihi','Stok Kodu','Stok Adı','Tedarikçi','Miktar','İrsaliye','Depo','Tür','Giriş Planı'].map(h=>el('th',{},h)))));
+    const body=el('tbody',{id:'mkBody'});
     rows.forEach(r=>{ body.append(el('tr',{},
+      ...(isAdmin?[el('td',{},el('input',{type:'checkbox',class:'mkChk','data-id':String(r.rec_id)}))]:[]),
       el('td',{style:'white-space:nowrap'},fmtDate(r.tarih)),
       el('td',{style:'white-space:nowrap;font-size:11px;color:var(--muted)'},r.kayit_tarih||''),
       el('td',{style:'font-weight:600'},r.stok_kodu||''),
@@ -836,6 +846,27 @@ async function renderMalKabul(){
   }
   fTur.value='0'; load();
 }
+// Mal Kabul SİLME — yalnızca SUPABASE mal_kabul tablosu. LeanSys'e ASLA dokunmaz. Yeniden aktarınca geri gelir.
+async function deleteSelectedMalKabul(){
+  if(!(PROFILE&&PROFILE.is_admin)){ toast('Yetki yok (admin).','err'); return; }
+  const ids=[...document.querySelectorAll('#mkBody .mkChk:checked')].map(c=>Number(c.dataset.id)).filter(x=>!isNaN(x));
+  if(!ids.length){ toast('Önce silinecek satırları seç (sol kutucuk).','err'); return; }
+  if(!confirm(`${ids.length} mal kabul satırı SUPABASE'ten silinecek.\n\nLeanSys'e DOKUNULMAZ; yeniden aktarınca geri gelir. Devam?`)) return;
+  let ok=0;
+  for(let i=0;i<ids.length;i+=100){ const chunk=ids.slice(i,i+100); const {error}=await sb.from('mal_kabul').delete().in('rec_id',chunk); if(error){ toast('Silme hatası: '+esc(error.message),'err'); return; } ok+=chunk.length; }
+  toast(`${ok} mal kabul satırı silindi (Supabase).`,'ok'); renderMalKabul();
+}
+async function deleteAllMalKabul(){
+  if(!(PROFILE&&PROFILE.is_admin)){ toast('Yetki yok (admin).','err'); return; }
+  if(!confirm("DİKKAT: SUPABASE'teki TÜM mal kabul kayıtları silinecek.\n\nLeanSys'e DOKUNULMAZ; yeniden aktarınca geri gelir. Devam?")) return;
+  if(!confirm('SON ONAY: bütün mal kabul kayıtları (Supabase) silinecek. Eminsen «Tamam».')) return;
+  const ids=[];
+  for(let from=0;;from+=1000){ const {data,error}=await sb.from('mal_kabul').select('rec_id').range(from,from+999); if(error){ toast(esc(error.message),'err'); return; } ids.push(...(data||[]).map(r=>r.rec_id)); if(!data||data.length<1000) break; }
+  if(!ids.length){ toast('Silinecek kayıt yok.','ok'); return; }
+  let ok=0;
+  for(let i=0;i<ids.length;i+=200){ const chunk=ids.slice(i,i+200); const {error}=await sb.from('mal_kabul').delete().in('rec_id',chunk); if(error){ toast('Silme hatası: '+esc(error.message),'err'); return; } ok+=chunk.length; }
+  toast(`${ok} mal kabul kaydı silindi (Supabase).`,'ok'); renderMalKabul();
+}
 let _gkDeb=null;
 // 📥 Giriş Kalite — LeanSys mal kabulden gelen ürünler; her birine giriş planına göre random kontrol
 async function _renderGirisKalite(root, embed){
@@ -849,8 +880,7 @@ async function _renderGirisKalite(root, embed){
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Ara'),fCode),
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'İrsaliye Tarihi — Başlangıç'),fFrom),
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),fTo),
-    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{fCode.value='';fFrom.value='';fTo.value='';load();}},'Temizle'),
-    ...((PROFILE&&PROFILE.is_admin)?[el('button',{class:'btn sm sec',style:'flex:0',title:'Mevcut giriş kontrol kayıtlarının saatini irsaliye gününde 08:01–17:30 arası rastgele düzelt',onclick:async e=>{e.target.disabled=true;await fixGirisControlTimes();e.target.disabled=false;load();}},'🕒 Kontrol Saatlerini Düzelt')]:[])));
+    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{fCode.value='';fFrom.value='';fTo.value='';load();}},'Temizle')));
   const out=el('div'); card.append(out); root.append(card);
   let _gkSeq=0;
   async function load(){
@@ -893,38 +923,6 @@ async function _renderGirisKalite(root, embed){
     tb.append(body); out.append(el('div',{class:'tbl-wrap'},tb));
   }
   load();
-}
-// Mevcut giriş kontrol kayıtlarının kontrol saatini düzelt: irsaliye günü + 08:01–17:30 rastgele (zaten uygun olanlara dokunmaz)
-async function fixGirisControlTimes(){
-  if(!(PROFILE&&PROFILE.is_admin)){ toast('Yalnızca admin.','err'); return; }
-  const recs=[];
-  for(let from=0;;from+=1000){
-    const {data,error}=await sb.from('control_records').select('id,checked_at,mal_kabul_rec_id').eq('stage','giris').range(from,from+999);
-    if(error){ toast(esc(error.message),'err'); return; }
-    recs.push(...(data||[])); if(!data||data.length<1000) break;
-  }
-  if(!recs.length){ toast('Giriş kontrol kaydı yok.','ok'); return; }
-  const mkIds=[...new Set(recs.map(r=>r.mal_kabul_rec_id).filter(x=>x!=null))];
-  const tarMap={};
-  for(let i=0;i<mkIds.length;i+=500){
-    const {data}=await sb.from('mal_kabul').select('rec_id,tarih').in('rec_id',mkIds.slice(i,i+500));
-    (data||[]).forEach(m=>{ if(m.tarih) tarMap[m.rec_id]=String(m.tarih).slice(0,10); });
-  }
-  const fixes=[];
-  recs.forEach(r=>{
-    const irs=tarMap[r.mal_kabul_rec_id] || (r.checked_at?String(r.checked_at).slice(0,10):null);
-    if(!irs) return;
-    let need=true;
-    if(r.checked_at){ const d=new Date(r.checked_at),p=n=>String(n).padStart(2,'0');
-      const dStr=`${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`, tmin=d.getHours()*60+d.getMinutes();
-      if(dStr===irs && tmin>=481 && tmin<=1050) need=false; }   // doğru gün + 08:01–17:30 → dokunma
-    if(need){ const iso=girisCtrlISO(irs); if(iso) fixes.push({id:r.id,checked_at:iso,shift:shiftForTime(new Date(iso))}); }
-  });
-  if(!fixes.length){ toast('Tüm giriş kontrol saatleri zaten uygun (irsaliye günü 08:01–17:30).','ok'); return; }
-  if(!confirm(`${fixes.length} giriş kontrol kaydının saati irsaliye gününde 08:01–17:30 arası rastgele ayarlanacak. (Zaten uygun olanlara dokunulmaz.) Devam?`)) return;
-  let ok=0;
-  for(const f of fixes){ const {error}=await sb.from('control_records').update({checked_at:f.checked_at,shift:f.shift}).eq('id',f.id); if(!error) ok++; }
-  toast(`${ok}/${fixes.length} giriş kontrol saati güncellendi.`, ok===fixes.length?'ok':'err');
 }
 // Mal kabul kaydından SERİ BAŞI ile AYNI kontrol modalını aç (openControl, sahte-üretim) — stage='giris'
 function girisKaliteGir(mk){
