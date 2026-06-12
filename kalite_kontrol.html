@@ -2957,10 +2957,9 @@ async function renderOperasyon(root){
     el('div',{class:'grow'}), cnt)));
   const search=el('input',{class:'inp',placeholder:'🔍 stok kodu / ad / rota ile ara…',style:'width:100%'});
   search.oninput=()=>{ clearTimeout(_opDeb); _opDeb=setTimeout(renderList,200); };
-  const listDiv=el('div',{style:'max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-top:8px'});
-  root.append(el('div',{class:'card'},el('label',{class:'lab'},'Operasyon Kartı Seç'),search,listDiv));
-  const detail=el('div'); root.append(detail);
-  let HEADERS=[], SEL=null;
+  const listDiv=el('div',{style:'border:1px solid var(--line);border-radius:8px;margin-top:8px;overflow:hidden'});
+  root.append(el('div',{class:'card'},el('label',{class:'lab'},'Operasyon Kartı Seç — koda tıkla → kart ALTINDA açılır; aynı koda tekrar tıkla → kapanır'),search,listDiv));
+  let HEADERS=[], openCloser=null;
   async function pullFromLeansys(){
     pullBtn.disabled=true; const _t=pullBtn.textContent; pullBtn.textContent='⏳ Çekiliyor…';
     let res=null;
@@ -2972,37 +2971,47 @@ async function renderOperasyon(root){
   }
   async function loadHeaders(){
     listDiv.innerHTML='<div style="padding:10px;color:var(--muted)">Yükleniyor…</div>';
-    HEADERS=[]; const seen=new Set();
+    HEADERS=[]; const seen=new Set(); openCloser=null;
     for(let from=0;;from+=1000){ const {data,error}=await sb.from('operasyon_kartlari').select('header_id,stok_kodu,stok_adi,rota_adi,kayit_tarihi,revizyon_no,varsayilan').order('stok_kodu').range(from,from+999);
       if(error){ listDiv.innerHTML='<div class="msg err" style="margin:8px">'+esc(error.message)+'</div>'; return; }
       (data||[]).forEach(r=>{ if(!seen.has(r.header_id)){ seen.add(r.header_id); HEADERS.push(r); } });
       if(!data||data.length<1000)break; }
     const cc=$('#opCardCnt'); if(cc)cc.textContent=String(HEADERS.length);
-    if(SEL && !seen.has(SEL)){ SEL=null; detail.innerHTML=''; }
     renderList();
   }
   function renderList(){
     const q=(search.value||'').toLowerCase().trim();
     const ms=HEADERS.filter(h=> !q || (h.stok_kodu||'').toLowerCase().includes(q) || (h.stok_adi||'').toLowerCase().includes(q) || (h.rota_adi||'').toLowerCase().includes(q));
-    listDiv.innerHTML='';
+    listDiv.innerHTML=''; openCloser=null;
     if(!HEADERS.length){ listDiv.append(el('div',{style:'padding:10px;color:var(--muted)'},'Kart yok. '+(isAdmin?'Yukarıdan tarih+kod ile «📥 LeanSys’ten Çek».':'Admin çeksin.'))); return; }
     if(!ms.length){ listDiv.append(el('div',{style:'padding:10px;color:var(--muted)'},'Eşleşen kart yok.')); return; }
-    ms.slice(0,400).forEach(h=>{ listDiv.append(el('div',{style:'padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--line)'+(h.header_id===SEL?';background:rgba(37,99,235,.14);font-weight:600':''),
-      onclick:()=>{ SEL=h.header_id; renderList(); showCard(h.header_id); }},
-      `${h.stok_kodu||''} — ${(h.stok_adi||'').slice(0,42)}  ·  ${h.rota_adi||'-'}${h.varsayilan?' ⭐':''} · Rev ${h.revizyon_no??0} · ${fmtDate(h.kayit_tarihi)}`)); });
-    if(ms.length>400) listDiv.append(el('div',{style:'padding:6px;color:var(--muted);font-size:12px;text-align:center'},`… ${ms.length-400} kart daha — aramayı daralt`));
+    ms.slice(0,300).forEach(h=>{
+      const det=el('div',{style:'display:none;border-top:1px solid var(--line)'});
+      const caret=el('span',{style:'color:var(--muted);flex:0'},'▸');
+      const hdr=el('div',{style:'padding:9px 11px;cursor:pointer;display:flex;justify-content:space-between;gap:10px;align-items:center;font-size:13px'},
+        el('span',{html:`<b>${esc(h.stok_kodu||'')}</b> — ${esc((h.stok_adi||'').slice(0,42))} &nbsp;·&nbsp; ${esc(h.rota_adi||'-')}${h.varsayilan?' ⭐':''} · Rev ${h.revizyon_no??0} · ${fmtDate(h.kayit_tarihi)}`}), caret);
+      const item=el('div',{style:'border-bottom:1px solid var(--line)'},hdr,det);
+      let loaded=false;
+      const closeThis=()=>{ det.style.display='none'; hdr.style.background=''; caret.textContent='▸'; };
+      hdr.onclick=async()=>{
+        if(openCloser && openCloser.det===det){ closeThis(); openCloser=null; return; }   // aynı koda tıkla → kapat
+        if(openCloser) openCloser.close();                                                 // başka açıksa onu kapat
+        hdr.style.background='rgba(37,99,235,.10)'; caret.textContent='▾'; det.style.display='';
+        openCloser={det, close:closeThis};
+        if(!loaded){ det.innerHTML='<div style="padding:10px;color:var(--muted)">Yükleniyor…</div>'; await fillCard(det,h.header_id,h); loaded=true; }
+      };
+      listDiv.append(item);
+    });
+    if(ms.length>300) listDiv.append(el('div',{style:'padding:6px;color:var(--muted);font-size:12px;text-align:center'},`… ${ms.length-300} kart daha — aramayı daralt`));
   }
-  async function showCard(hid){
-    detail.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
+  async function fillCard(det,hid,h){
     const {data,error}=await sb.from('operasyon_kartlari').select('*').eq('header_id',hid).order('op_no');
-    if(error){ detail.innerHTML='<div class="card"><div class="msg err">'+esc(error.message)+'</div></div>'; return; }
-    const lines=data||[]; detail.innerHTML=''; if(!lines.length){ return; }
-    const h=lines[0], card=el('div',{class:'card'});
-    card.append(el('div',{style:'display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:center'},
-      el('h3',{style:'margin:0'},`📦 ${esc(h.stok_kodu||'')} — ${esc(h.stok_adi||'')}`),
-      el('div',{style:'display:flex;gap:12px;align-items:center;flex-wrap:wrap'},
-        el('span',{style:'color:var(--muted);font-size:12.5px'},`Rota: ${esc(h.rota_adi||'-')}${h.varsayilan?' ⭐varsayılan':''} · Rev ${h.revizyon_no??0} · Kayıt ${fmtDate(h.kayit_tarihi)}${h.gecerlilik_tarihi?(' · Geçerlilik '+fmtDate(h.gecerlilik_tarihi)):''}`),
-        isAdmin?el('button',{class:'btn sm danger',style:'flex:0',title:'Bu operasyon kartını YALNIZ Supabase’ten sil (LeanSys’e dokunmaz)',onclick:async()=>{ if(await delOpCard(hid,h)) loadHeaders(); }},'🗑 Bu kartı sil'):'')));
+    det.innerHTML='';
+    if(error){ det.append(el('div',{class:'msg err',style:'margin:8px'},esc(error.message))); return; }
+    const lines=data||[]; if(!lines.length){ det.append(el('div',{style:'padding:10px;color:var(--muted)'},'Satır yok.')); return; }
+    det.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;padding:8px 11px'},
+      el('div',{style:'color:var(--muted);font-size:12.5px'},`Rota: ${esc(h.rota_adi||'-')}${h.varsayilan?' ⭐varsayılan':''} · Rev ${h.revizyon_no??0} · Kayıt ${fmtDate(h.kayit_tarihi)}${h.gecerlilik_tarihi?(' · Geçerlilik '+fmtDate(h.gecerlilik_tarihi)):''}`),
+      isAdmin?el('button',{class:'btn sm danger',style:'flex:0',title:'Bu operasyon kartını YALNIZ Supabase’ten sil (LeanSys’e dokunmaz)',onclick:async(e)=>{ e.stopPropagation(); if(await delOpCard(hid,h)) loadHeaders(); }},'🗑 Bu kartı sil'):''));
     const tb=el('table');
     tb.append(el('thead',{},el('tr',{},...['Op','Parça Kodu','Parça Adı','Makine Grubu','Makine','Std Zaman (dk)','Kapasite','Pers.','Talimat'].map(x=>el('th',{},x)))));
     const body=el('tbody');
@@ -3017,7 +3026,7 @@ async function renderOperasyon(root){
       el('td',{style:'text-align:center'},l.personel!=null?String(l.personel):''),
       el('td',{style:'white-space:pre-wrap;font-size:12px;max-width:380px'},(l.talimat||'')+(l.talimat_no?('  [No:'+l.talimat_no+']'):''))
     )));
-    tb.append(body); card.append(el('div',{class:'tbl-wrap'},tb)); detail.append(card);
+    tb.append(body); det.append(el('div',{class:'tbl-wrap'},tb));
   }
   loadHeaders();
 }
