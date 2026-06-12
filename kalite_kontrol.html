@@ -3923,9 +3923,15 @@ async function renderDashboard(){
   if(!can('dashboard')){ root.innerHTML='<div class="card"><div class="empty">Bu bölüm için yetkin yok (admin veya «Dashboard» yetkisi gerekir).</div></div>'; return; }
   root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
   const sd=DASH_FILT.start?new Date(DASH_FILT.start+'T00:00:00').getTime():null, ed=DASH_FILT.end?new Date(DASH_FILT.end+'T23:59:59').getTime():null;
-  let q=sb.from('control_records').select('stock_code,stock_name,machine_code,stage,checked_at,operator,shift,overall_result,vals,production_id').order('checked_at',{ascending:false}).limit(20000);
-  if(DASH_FILT.stock)q=q.eq('stock_code',DASH_FILT.stock);
-  const [{data:recsAll},{data:prods}]=await Promise.all([q, sb.from('productions').select('id,op_no,machine_name,machine_code,shift,operator,customer')]);
+  // SEÇİLİ kapsamın TÜM kayıtları — sayfalı (server max-rows 1000 kapağını aş); tarih+stok server'da süzülür
+  const baseQ=()=>{ let q=sb.from('control_records').select('stock_code,stock_name,machine_code,stage,checked_at,operator,shift,overall_result,vals,production_id,giris_cari').order('checked_at',{ascending:false});
+    if(DASH_FILT.stock)q=q.eq('stock_code',DASH_FILT.stock);
+    if(DASH_FILT.start)q=q.gte('checked_at',DASH_FILT.start);
+    if(DASH_FILT.end)q=q.lte('checked_at',DASH_FILT.end+'T23:59:59');
+    return q; };
+  let recsAll=[];
+  for(let from=0;from<300000;from+=1000){ const {data}=await baseQ().range(from,from+999); recsAll.push(...(data||[])); if(!data||data.length<1000)break; }
+  const {data:prods}=await sb.from('productions').select('id,op_no,machine_name,machine_code,shift,operator,customer');
   const pmap={}; (prods||[]).forEach(p=>pmap[p.id]=p);
   const stockSet=[...new Set((recsAll||[]).map(r=>r.stock_code).filter(Boolean))].sort();
   const cariSet=[...new Set((prods||[]).map(p=>p.customer).filter(Boolean))].sort();
@@ -3954,14 +3960,15 @@ async function renderDashboard(){
   // ---- AGREGASYON ----
   const G=()=>({total:0,ret:0});
   const add=(map,key,isRet)=>{ if(key==null||key==='')return; const g=map[key]||(map[key]=G()); g.total++; if(isRet)g.ret++; };
-  const byStock={},byOp={},byMachine={},byShift={},byOperator={},byDate={},byMeasure={},nitelDetail={},byStage={},byCustomer={};
+  const byStock={},byOp={},byMachine={},byShift={},byOperator={},byDate={},byMeasure={},nitelDetail={},byStage={},byCustomer={},byTedarikci={};
   let okRec=0,retRec=0,emptyRec=0,totalMeas=0,retMeas=0; const prodSet=new Set();
   recs.forEach(r=>{
     const p=pmap[r.production_id]||{}; const isRet=r.overall_result==='RET'; const st=recStatus(r);
     if(st==='ret')retRec++; else if(st==='empty')emptyRec++; else okRec++;
     if(r.production_id)prodSet.add(r.production_id);
     add(byStage, STAGES[r.stage]||r.stage||'—', isRet);
-    add(byCustomer, p.customer||'—', isRet);
+    if(r.stage==='giris') add(byTedarikci, r.giris_cari||'—', isRet);   // tedarikçi yalnız giriş kalitede
+    add(byCustomer, p.customer||(r.stage==='giris'?'':'—'), isRet);     // giriş kayıtları müşteri kırılımına '—' eklemesin
     add(byStock, r.stock_code, isRet);
     add(byOp, p.op_no!=null?('Op '+p.op_no):'—', isRet);
     add(byMachine, (p.machine_name||r.machine_code||'—'), isRet);
@@ -4006,10 +4013,11 @@ async function renderDashboard(){
   const stageRows=Object.entries(byStage).map(([k,g])=>({label:k,total:g.total,ret:g.ret}))
     .sort((a,b)=>{ const ia=stageOrder.indexOf(a.label),ib=stageOrder.indexOf(b.label); return (ia<0?99:ia)-(ib<0?99:ib); });
   const grid=el('div',{class:'dash-grid'});
-  grid.append(dpanel('🚦 Aşama Bazlı RET (Seri Başı / Proses / Son)',stageRows,{colLabel:'Kontrol Aşaması',limit:10}));
+  grid.append(dpanel('🚦 Aşama Bazlı RET (Giriş Kalite / Seri Başı / Proses / Son)',stageRows,{colLabel:'Kontrol Aşaması',limit:10}));
   grid.append(dpanel('🔴 En Çok Retlenen Ölçümler',measRows,{colLabel:'Ölçülecek Değer'}));
   grid.append(dpanel('📋 Nitel Kontroller (RET detayı)',nitelRows,{colLabel:'Nitel hedef'}));
   grid.append(dpanel('🏢 Cari (Müşteri) Bazlı',toRows(byCustomer),{colLabel:'Cari'}));
+  if(Object.keys(byTedarikci).length) grid.append(dpanel('🚚 Tedarikçi Bazlı (Giriş Kalite)',toRows(byTedarikci),{colLabel:'Tedarikçi'}));
   grid.append(dpanel('📦 Stok Kodu Bazlı',toRows(byStock),{colLabel:'Stok Kodu'}));
   grid.append(dpanel('🔧 Operasyon Bazlı',toRows(byOp),{colLabel:'Operasyon'}));
   grid.append(dpanel('🏭 Makine Bazlı',toRows(byMachine),{colLabel:'Makine'}));
