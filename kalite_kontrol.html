@@ -3026,35 +3026,47 @@ async function renderUrunAgaci(root){
       el('div',{},line.birim||''),
       el('div',{style:'text-align:right'},line.fire_orani!=null?commaFmt(line.fire_orani):'0'),
       el('div',{style:'font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'},line.cinsi||''));
+    wrap.append(row,childBox);
+    const nd={wrap, expandable, children:[], _loaded:false, _open:false};
+    async function ensureLoaded(){
+      if(nd._loaded) return;
+      childBox.innerHTML='<div style="padding:5px 9px;color:var(--muted);padding-left:'+((depth+1)*16+18)+'px">Yükleniyor…</div>';
+      const {data}=await sb.from('urun_agaclari').select('*').eq('header_id',line.alt_header_id).order('cinsi').order('tuketim_kodu');
+      childBox.innerHTML='';
+      (data||[]).forEach(cl=>{ const c=makeNode(cl,depth+1); nd.children.push(c); childBox.append(c.wrap); });
+      if(!data||!data.length) childBox.append(el('div',{style:'padding:5px 9px;color:var(--muted);font-size:12px;padding-left:'+((depth+1)*16+18)+'px'},'(alt tüketim yok)'));
+      nd._loaded=true;
+    }
+    nd.openSelf=async()=>{ if(!expandable) return; nd._open=true; caret.textContent='▾'; childBox.style.display=''; row.style.background='rgba(37,99,235,.09)'; await ensureLoaded(); };
+    nd.closeSelf=()=>{ if(!expandable) return; nd._open=false; caret.textContent='▸'; childBox.style.display='none'; row.style.background=baseBg; };
     if(expandable){
       kodCell.style.cursor='pointer'; row.title='Alt ağacı aç/kapa';
-      let loaded=false, open=false;
-      kodCell.onclick=async()=>{
-        open=!open; caret.textContent=open?'▾':'▸'; childBox.style.display=open?'':'none';
-        row.style.background=open?'rgba(37,99,235,.09)':baseBg;
-        if(open && !loaded){
-          childBox.innerHTML='<div style="padding:5px 9px;color:var(--muted);padding-left:'+((depth+1)*16+18)+'px">Yükleniyor…</div>';
-          const {data}=await sb.from('urun_agaclari').select('*').eq('header_id',line.alt_header_id).order('cinsi').order('tuketim_kodu');
-          childBox.innerHTML=''; (data||[]).forEach(cl=>childBox.append(makeNode(cl,depth+1)));
-          if(!data||!data.length) childBox.append(el('div',{style:'padding:5px 9px;color:var(--muted);font-size:12px;padding-left:'+((depth+1)*16+18)+'px'},'(alt tüketim yok)'));
-          loaded=true;
-        }
-      };
+      kodCell.onclick=()=>{ if(nd._open) nd.closeSelf(); else nd.openSelf(); };
     }
-    wrap.append(row,childBox); return wrap;
+    return nd;
   }
+  async function expandAll(nd){ if(!nd.expandable) return; await nd.openSelf(); for(const c of nd.children) await expandAll(c); }
+  function collapseAll(nd){ nd.closeSelf&&nd.closeSelf(); (nd.children||[]).forEach(collapseAll); }
   async function fillCard(det,hid,h){
     const {data,error}=await sb.from('urun_agaclari').select('*').eq('header_id',hid).order('cinsi').order('tuketim_kodu');
     det.innerHTML='';
     if(error){ det.append(el('div',{class:'msg err',style:'margin:8px'},esc(error.message))); return; }
     const lines=data||[]; if(!lines.length){ det.append(el('div',{style:'padding:10px;color:var(--muted)'},'Tüketim satırı yok.')); return; }
     const expN=lines.filter(l=>l.alt_header_id!=null && HEADERSET.has(l.alt_header_id)).length;
-    det.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;padding:8px 11px'},
-      el('div',{style:'color:var(--muted);font-size:12.5px'},`Ağaç: ${esc(h.agac_adi||'-')}${h.varsayilan?' ⭐varsayılan':''} · Kayıt ${fmtDate(h.kayit_tarihi)} · ${lines.length} tüketim${expN?` · ▸ ${expN} alt-ağaç (bas → açılır)`:''}`),
-      isAdmin?el('button',{class:'btn sm danger',style:'flex:0',title:'Bu ürün ağacını YALNIZ Supabase’ten sil (LeanSys’e dokunmaz)',onclick:async(e)=>{ e.stopPropagation(); if(await delUaCard(hid,h)) loadHeaders(); }},'🗑 Bu ağacı sil'):''));
+    const roots=[];
     const tree=el('div',{style:'overflow-x:auto;border-top:1px solid var(--line)'});
     tree.append(treeHeaderRow());
-    lines.forEach(l=>tree.append(makeNode(l,0)));
+    lines.forEach(l=>{ const nd=makeNode(l,0); roots.push(nd); tree.append(nd.wrap); });
+    const right=el('div',{style:'display:flex;gap:6px;align-items:center;flex-wrap:wrap'});
+    if(expN){
+      right.append(
+        el('button',{class:'btn sm sec',style:'flex:0',title:'Tüm alt ağaçları (her seviye) aç',onclick:async(e)=>{ e.stopPropagation(); const b=e.currentTarget; const _t=b.textContent; b.disabled=true; b.textContent='⏳ açılıyor…'; for(const nd of roots) await expandAll(nd); b.disabled=false; b.textContent=_t; }},'⊞ Tümünü Aç'),
+        el('button',{class:'btn sm sec',style:'flex:0',title:'Tüm alt ağaçları kapat',onclick:(e)=>{ e.stopPropagation(); roots.forEach(collapseAll); }},'⊟ Tümünü Kapat'));
+    }
+    if(isAdmin) right.append(el('button',{class:'btn sm danger',style:'flex:0',title:'Bu ürün ağacını YALNIZ Supabase’ten sil (LeanSys’e dokunmaz)',onclick:async(e)=>{ e.stopPropagation(); if(await delUaCard(hid,h)) loadHeaders(); }},'🗑 Bu ağacı sil'));
+    det.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;padding:8px 11px'},
+      el('div',{style:'color:var(--muted);font-size:12.5px'},`Ağaç: ${esc(h.agac_adi||'-')}${h.varsayilan?' ⭐varsayılan':''} · Kayıt ${fmtDate(h.kayit_tarihi)} · ${lines.length} tüketim${expN?` · ▸ ${expN} alt-ağaç`:''}`),
+      right));
     det.append(tree);
   }
   loadHeaders();
