@@ -1625,11 +1625,11 @@ async function renderPlan(){
   // ---- LeanSys'ten kontrol planı çek (katlanır) ----
   root.append(collapseBar('🏭 LeanSys’ten Kontrol Planı Çek',
     el('p',{style:'color:var(--muted);margin:0 0 6px;font-size:13px',html:'LeanSys’teki kontrol planını bu sayfadaki yapıya kopyalar. <b>Stok kodu yaz</b> → sadece o planı; <b>boş bırak</b> → <b>TÜM</b> planlar. İlgili stokların buradaki planının üzerine yazılır. <b>LeanSys’e hiçbir şey yazılmaz</b> (salt-okuma).'}),
-    el('div',{class:'msg info',style:'margin:0 0 12px;font-size:12.5px',html:'⚠️ <b>2 adımlı:</b> Önce <b>① 🔄 LeanSys’ten Güncelle</b> (pencere açılır → stok kodu → AKTAR; LeanSys’teki güncel veri ara tabloya tazelenir), sonra <b>② 📥 LeanSys’ten Çek</b>. LeanSys’te değişiklik yaptıysan önce ① yapmazsan <b>eski veri</b> gelir.'}),
+    el('div',{class:'msg info',style:'margin:0 0 12px;font-size:12.5px',html:'⚡ <b>Tek tıkla:</b> <b>🔄 LeanSys’ten Güncelle + Çek</b> → önce LeanSys’teki güncel plan otomatik tazelenir (yerel ajan, pencere açılmaz), sonra bu plana uygulanır. Tek işlem; LeanSys’te değişiklik yapsan da güncel veri gelir. (Ajan kapalıysa hata verir; alttaki “pencere” seçeneğini kullan.)'}),
     el('div',{class:'row'},
       el('div',{class:'field grow'},el('label',{class:'lab'},'Stok Kodu (boş = tümü)'),el('input',{class:'inp',id:'lkp_code',placeholder:'örn. 205.0.138 — boş bırakırsan hepsi'})),
-      el('button',{class:'btn sm sec',style:'flex:0',title:'LeanSys kontrol planı tazeleme penceresini açar (stok kodu → AKTAR → ara tablo güncellenir). İlk seferde tarayıcı “Aç” sorabilir.',onclick:()=>{ const c=($('#lkp_code')&&$('#lkp_code').value.trim())||''; fetch('http://127.0.0.1:17777/open?app=kontrolplani',{mode:'cors'}).then(()=>toast('Kontrol planı tazeleme penceresi açılıyor… '+(c?('Kutuya '+c+' yazıp'):'Stok kodu yazıp')+' AKTAR’a bas, bitince ② Çek.','ok')).catch(()=>toast('LeanSys ajanı kapalı. Önce LeanSys_Agent çalışmalı (Startup).','err')); }},'① 🔄 LeanSys’ten Güncelle'),
-      el('button',{class:'btn sm',id:'lkp_btn',style:'flex:0',onclick:cekFromLeansys},'② 📥 LeanSys’ten Çek')
+      el('button',{class:'btn sm',id:'lkp_btn',style:'flex:0',title:'Tek işlem: LeanSys ara tablosunu tazele + plana uygula',onclick:cekPlanCombined},'🔄 LeanSys’ten Güncelle + Çek'),
+      el('button',{class:'btn sm sec',style:'flex:0',title:'Ajan çalışmazsa: tazeleme penceresini elle aç (stok kodu → AKTAR), sonra tekrar bu butona bas.',onclick:()=>{ fetch('http://127.0.0.1:17777/open?app=kontrolplani',{mode:'cors'}).then(()=>toast('Tazeleme penceresi açılıyor (yedek yol).','ok')).catch(()=>toast('LeanSys ajanı kapalı.','err')); }},'🪟 Pencere')
     )
   ));
   } // /canPlan
@@ -2269,7 +2269,21 @@ async function _lkpFlush(list){   // list:[{sc,lines}] → app'in kendi tablolar
   for(let i=0;i<items.length;i+=1000){ const {error}=await sb.from('control_plan_items').insert(items.slice(i,i+1000)); if(error) throw error; }
   for(let i=0;i<headers.length;i+=500){ const {error}=await sb.from('control_plan_headers').upsert(headers.slice(i,i+500),{onConflict:'stock_code'}); if(error) throw error; }
 }
-async function cekFromLeansys(){
+// TEK İŞLEM: önce yerel ajan ile LeanSys ara tablosunu tazele (pencere yok), sonra plana uygula
+async function cekPlanCombined(){
+  if(!can('plan')){ toast('Bu işlem için yetkin yok (plan).','err'); return; }
+  const code=($('#lkp_code')&&$('#lkp_code').value.trim())||'';
+  const btn=$('#lkp_btn'); const _t=btn?btn.textContent:'';
+  if(btn){ btn.disabled=true; btn.textContent='⏳ LeanSys tazeleniyor…'; }
+  let res=null;
+  try{ const r=await fetch('http://127.0.0.1:17777/refreshplan?codes='+encodeURIComponent(code),{mode:'cors'}); res=await r.json(); }catch(e){ res=null; }
+  if(btn){ btn.disabled=false; btn.textContent=_t; }
+  if(!res){ toast('LeanSys ajanı kapalı/erişilemedi. “🪟 Pencere” ile elle tazele ya da LeanSys_Agent’i başlat.','err'); return; }
+  if(!res.ok){ toast('LeanSys tazeleme başarısız: '+esc(res.error||'?'),'err'); return; }
+  toast('Ara tablo tazelendi ('+(res.count||0)+' satır) — plana uygulanıyor…','ok');
+  await cekFromLeansys(true);   // auto: temel onayı atla (kilitli plan onayı yine sorulur)
+}
+async function cekFromLeansys(auto){
   if(!can('plan')){ toast('Bu işlem için yetkin yok (plan).','err'); return; }
   const code=($('#lkp_code')&&$('#lkp_code').value.trim())||'';
   const tek=!!code;
@@ -2281,7 +2295,7 @@ async function cekFromLeansys(){
     if(lockedSet.has(code)){
       if(!confirm(`"${code}" planında ELLE DEĞİŞİKLİK var (korunuyor).\nLeanSys'ten çekersen elle değişikliklerin SİLİNİR, LeanSys hâli yazılır.\nYine de üzerine yazılsın mı?`)) return;
       overwriteLocked=true;
-    } else if(!confirm(`"${code}" kontrol planı LeanSys'ten çekilip buradaki planın ÜZERİNE YAZILACAK.\n(LeanSys'e dokunulmaz; yalnız buradaki tablo değişir.)\nDevam?`)) return;
+    } else if(!auto && !confirm(`"${code}" kontrol planı LeanSys'ten çekilip buradaki planın ÜZERİNE YAZILACAK.\n(LeanSys'e dokunulmaz; yalnız buradaki tablo değişir.)\nDevam?`)) return;
   } else {
     if(!confirm("LeanSys'teki TÜM kontrol planları çekilip ilgili stokların buradaki planlarının ÜZERİNE YAZILACAK.\nELLE DEĞİŞTİRDİĞİN planlar KORUNUR (atlanır).\nBu birkaç dakika sürebilir.\n(LeanSys'e dokunulmaz.)\nDevam?")) return;
   }
