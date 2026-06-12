@@ -2655,7 +2655,7 @@ async function openBulkAuto(){
 async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
   // çevrim girilmediyse: mevcut başlama–bitiş sürelerine göre üret (proses dahil)
   if(!Object.values(cyc).some(v=>v>0)){
-    if(!confirm('Hiç çevrim süresi girmedin.\n\nMevcut başlama–bitiş sürelerine göre eksik kontroller (Seri Başı / Proses / Son) üretilsin mi?\n(Bitişi olmayan = DEVAM EDEN üretimlerde sadece Seri Başı üretilir; bitince Son için tekrar çalıştır.)')) { return; }
+    if(!confirm('Hiç çevrim süresi girmedin.\n\nMevcut başlama–bitiş sürelerine göre eksik kontroller (Seri Başı / Proses / Son) üretilsin mi?\n(Bitmemiş = DEVAM EDEN üretimlerde kontrol ÜRETİLMEZ; üretim bitince tekrar çalıştır.)')) { return; }
   }
   go.disabled=true;
   // mevcut kayıtlar: üretim başına hangi aşamalar var + kayıtların kendisi (boş olanları doldurmak için)
@@ -2681,7 +2681,7 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
     } else if(p.end_time){ end=new Date(p.end_time); durMin=Math.round((end.getTime()-start.getTime())/60000); if(durMin<0)durMin+=1440; finished=true; // çevrim yok → mevcut başlama/bitişten süreyi hesapla (proses de üretilsin)
       if(durMin<=0 && Number(p.duration_min)>0){ durMin=Number(p.duration_min); end=new Date(start.getTime()+durMin*60000); }  // bitiş=başlama ama süre bilgisi varsa onu kullan
     } else if(Number(p.duration_min)>0){ durMin=Number(p.duration_min); end=new Date(start.getTime()+durMin*60000); finished=true; }  // bitiş yok ama süre var
-    else { end=start; durMin=0; finished=false; }  // bitiş/süre yok (DEVAM EDEN üretim) → sadece Seri Başı (ilerledikçe proses)
+    else { skipped++; continue; }  // DEVAM EDEN (bitmemiş) üretim → bitene kadar otomatik kontrol ÜRETİLMEZ
     // çevrim girildiyse BİTİŞ değişti → o üretimin TÜM kontrolleri yeni zaman çizelgesine göre baştan üretilsin (eski/tutarsız kontroller silinir)
     if(recomputed && !regen){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); recMap[p.id]={}; }
     if(regen){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); recMap[p.id]={}; }
