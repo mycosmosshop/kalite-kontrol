@@ -1027,10 +1027,15 @@ async function _renderDueControls(root){
       if(!rr||rr.length<1000)break; } }
   // plan proses örnekleme sıklığı (stok bazında, en sık olan)
   const stocks=[...new Set(PRODS.map(p=>p.stock_code).filter(Boolean))];
-  const freqByStock={};
-  if(stocks.length){ const {data:pl}=await sb.from('control_plan_items').select('stock_code,sampling_frequency,process_control,active').in('stock_code',stocks);
-    const byStock={}; (pl||[]).forEach(it=>{ (byStock[it.stock_code]||(byStock[it.stock_code]=[])).push(it); });
-    Object.keys(byStock).forEach(sc=>{ freqByStock[sc]=prosesCycleFreq(byStock[sc]); }); }
+  const freqByStock={}, hasProcByStock={}, hasSonByStock={};
+  if(stocks.length){
+    const pl=[];
+    for(let i=0;i<stocks.length;i+=200){ const chunk=stocks.slice(i,i+200);
+      for(let from=0;;from+=1000){ const {data}=await sb.from('control_plan_items').select('stock_code,sampling_frequency,process_control,final_control,active').in('stock_code',chunk).range(from,from+999); pl.push(...(data||[])); if(!data||data.length<1000)break; } }
+    const byStock={}; pl.forEach(it=>{ (byStock[it.stock_code]||(byStock[it.stock_code]=[])).push(it); });
+    Object.keys(byStock).forEach(sc=>{ const its=byStock[sc]; freqByStock[sc]=prosesCycleFreq(its);
+      hasProcByStock[sc]=its.some(it=>it.active!==false && it.process_control!==false);   // seri başı + proses bu maddelerden
+      hasSonByStock[sc]=its.some(it=>it.active!==false && it.final_control!==false); }); }
   const now=Date.now();
   const groups={seri_basi:[], proses:[], son:[]};
   PRODS.forEach(p=>{
@@ -1041,10 +1046,12 @@ async function _renderDueControls(root){
     const elapsed=Math.max(0,Math.round(((end||now)-start)/60000));
     const o=byProd[p.id]||{seri:false,proses:0,son:false};
     const freq=freqByStock[p.stock_code]||60;
-    const prosesExp=elapsed>=freq?Math.min(Math.floor(elapsed/freq),100):0;
-    if(!o.seri) groups.seri_basi.push({p,finished,start});
-    if(prosesExp>o.proses){ for(let k=o.proses+1;k<=prosesExp;k++) groups.proses.push({p,finished,start,prosesNo:k,dueMs:start+k*freq*60000}); }   // her vadesi gelen proses = AYRI satır
-    if(finished && !o.son) groups.son.push({p,finished,start});
+    const hasProc=!!hasProcByStock[p.stock_code];   // planında proses/seri maddesi var mı (yoksa kuyrukta gösterme)
+    const hasSon=!!hasSonByStock[p.stock_code];     // planında son kontrol maddesi var mı
+    const prosesExp=Math.min(Math.max(0,Math.ceil(elapsed/freq)-1),100);   // otomatik üretimle aynı sayı (t=freq..t<süre)
+    if(!o.seri && hasProc) groups.seri_basi.push({p,finished,start});
+    if(hasProc && prosesExp>o.proses){ for(let k=o.proses+1;k<=prosesExp;k++) groups.proses.push({p,finished,start,prosesNo:k,dueMs:start+k*freq*60000}); }   // her vadesi gelen proses = AYRI satır
+    if(finished && !o.son && hasSon) groups.son.push({p,finished,start});
   });
   Object.values(groups).forEach(g=> g.sort((a,b)=> (a.finished?1:0)-(b.finished?1:0) || (b.start-a.start) || ((a.prosesNo||0)-(b.prosesNo||0)) ) );
   const STG=[['seri_basi','🏁 Seri Başı'],['proses','⚙️ Proses'],['son','🏆 Son Kontrol']];
