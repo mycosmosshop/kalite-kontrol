@@ -1027,15 +1027,13 @@ async function _renderDueControls(root){
       if(!rr||rr.length<1000)break; } }
   // plan proses örnekleme sıklığı (stok bazında, en sık olan)
   const stocks=[...new Set(PRODS.map(p=>p.stock_code).filter(Boolean))];
-  const freqByStock={}, hasProcByStock={}, hasSonByStock={};
+  const freqByStock={}; const planByStock={};
   if(stocks.length){
     const pl=[];
     for(let i=0;i<stocks.length;i+=200){ const chunk=stocks.slice(i,i+200);
-      for(let from=0;;from+=1000){ const {data}=await sb.from('control_plan_items').select('stock_code,sampling_frequency,process_control,final_control,active').in('stock_code',chunk).range(from,from+999); pl.push(...(data||[])); if(!data||data.length<1000)break; } }
-    const byStock={}; pl.forEach(it=>{ (byStock[it.stock_code]||(byStock[it.stock_code]=[])).push(it); });
-    Object.keys(byStock).forEach(sc=>{ const its=byStock[sc]; freqByStock[sc]=prosesCycleFreq(its);
-      hasProcByStock[sc]=its.some(it=>it.active!==false && it.process_control!==false);   // seri başı + proses bu maddelerden
-      hasSonByStock[sc]=its.some(it=>it.active!==false && it.final_control!==false); }); }
+      for(let from=0;;from+=1000){ const {data}=await sb.from('control_plan_items').select('stock_code,op_no,sampling_frequency,process_control,final_control,giris_kalite,active').in('stock_code',chunk).range(from,from+999); pl.push(...(data||[])); if(!data||data.length<1000)break; } }
+    pl.filter(it=>it.active!==false).forEach(it=>{ (planByStock[it.stock_code]||(planByStock[it.stock_code]=[])).push(it); });
+    Object.keys(planByStock).forEach(sc=>{ freqByStock[sc]=prosesCycleFreq(planByStock[sc]); }); }
   const now=Date.now();
   const groups={seri_basi:[], proses:[], son:[]};
   PRODS.forEach(p=>{
@@ -1046,8 +1044,10 @@ async function _renderDueControls(root){
     const elapsed=Math.max(0,Math.round(((end||now)-start)/60000));
     const o=byProd[p.id]||{seri:false,proses:0,son:false};
     const freq=freqByStock[p.stock_code]||60;
-    const hasProc=!!hasProcByStock[p.stock_code];   // planında proses/seri maddesi var mı (yoksa kuyrukta gösterme)
-    const hasSon=!!hasSonByStock[p.stock_code];     // planında son kontrol maddesi var mı
+    // OP bazlı (otomatik üretimle birebir): bu üretimin op'unda proses/son maddesi yoksa o kuyrukta gösterme
+    const _items=opItemsFor(planByStock[p.stock_code]||[], p.op_no);
+    const hasProc=stageItems(_items,'proses').length>0;   // seri başı + proses = process_control maddeleri
+    const hasSon=stageItems(_items,'son').length>0;        // son = final_control maddeleri
     const prosesExp=Math.min(Math.max(0,Math.ceil(elapsed/freq)-1),100);   // otomatik üretimle aynı sayı (t=freq..t<süre)
     if(!o.seri && hasProc) groups.seri_basi.push({p,finished,start});
     if(hasProc && prosesExp>o.proses){ for(let k=o.proses+1;k<=prosesExp;k++) groups.proses.push({p,finished,start,prosesNo:k,dueMs:start+k*freq*60000}); }   // her vadesi gelen proses = AYRI satır
@@ -3442,13 +3442,16 @@ async function renderIstatistik(){
   root.innerHTML='';
 
   // sayısal ölçüm kataloğu (plan + kayıt) seçili stok için
+  // AYNI AD farklı op'ta farklı hedef olabilir (örn. MAKINE ISI AYARI op2=145 / op3=200 / op4=80) → AYRI ölçüm. Anahtar: ad + limit + hedef.
+  const _mkey=(name,lo,hi,tg)=>{ const f=x=>{ const n=Number(x); return (x==null||x===''||!isFinite(n))?'':String(n); }; return (name||'')+'§'+f(lo)+'/'+f(hi)+'/'+f(tg); };
   const measMap=new Map();
-  plan.filter(p=>p.stock_code===STAT_FILT.stock && p.is_qualitative!==true).forEach(p=>measMap.set(p.measure_name,{lower:p.lower_limit,upper:p.upper_limit,target:p.target,unit:p.unit}));
-  recs.filter(r=>r.stock_code===STAT_FILT.stock).forEach(r=>(r.vals||[]).forEach(v=>{ if(v.is_qualitative===true)return; if(!measMap.has(v.measure_name))measMap.set(v.measure_name,{lower:v.lower_limit,upper:v.upper_limit,target:v.target,unit:v.unit}); }));
-  const measures=[...measMap.keys()].filter(Boolean).sort();
-  const measLabel=m=>{ const L=measMap.get(m)||{}; const ex=[]; if(L.target!=null&&L.target!=='')ex.push(String(L.target)); if(L.unit)ex.push(L.unit);
+  const addMeas=(name,lo,hi,tg,unit,op)=>{ if(!name)return; const k=_mkey(name,lo,hi,tg); const ex=measMap.get(k); if(!ex)measMap.set(k,{name,lower:lo,upper:hi,target:tg,unit:unit||'',op:(op==null?null:op)}); else if(ex.op==null&&op!=null)ex.op=op; };
+  plan.filter(p=>p.stock_code===STAT_FILT.stock && p.is_qualitative!==true).forEach(p=>addMeas(p.measure_name,p.lower_limit,p.upper_limit,p.target,p.unit,p.op_no));
+  recs.filter(r=>r.stock_code===STAT_FILT.stock).forEach(r=>(r.vals||[]).forEach(v=>{ if(v.is_qualitative===true)return; addMeas(v.measure_name,v.lower_limit,v.upper_limit,v.target,v.unit,null); }));
+  const measures=[...measMap.keys()].filter(Boolean).sort((a,b)=>{ const A=measMap.get(a),B=measMap.get(b); return (A.name||'').localeCompare(B.name||'','tr')||((A.op==null?99:A.op)-(B.op==null?99:B.op)); });
+  const measLabel=k=>{ const L=measMap.get(k)||{}; let s=L.name||''; if(L.op!=null)s+=' (Op '+L.op+')'; const ex=[]; if(L.target!=null&&L.target!=='')ex.push(String(L.target)); if(L.unit)ex.push(L.unit);
     const lim=[]; if(L.lower!=null&&L.lower!=='')lim.push(String(L.lower)); if(L.upper!=null&&L.upper!=='')lim.push(String(L.upper));
-    let s=m; if(ex.length)s+=' — '+ex.join(' '); if(lim.length===2)s+=' ['+lim[0]+'…'+lim[1]+']'; return s; };
+    if(ex.length)s+=' — '+ex.join(' '); if(lim.length===2)s+=' ['+lim[0]+'…'+lim[1]+']'; return s; };
   if(!STAT_FILT.measure || !measures.includes(STAT_FILT.measure)) STAT_FILT.measure=measures[0]||'';
   const machSet=new Set(); recs.filter(r=>r.stock_code===STAT_FILT.stock).forEach(r=>r.machine_code&&machSet.add(r.machine_code));
   const machines=[...machSet].sort();
@@ -3498,6 +3501,7 @@ async function renderIstatistik(){
 
   // ---- VERİ TOPLA ----
   const lim=measMap.get(STAT_FILT.measure)||{};
+  const MNAME=lim.name||STAT_FILT.measure;   // gösterimde temiz ölçüm adı (anahtar değil)
   let LSL=Number(lim.lower),USL=Number(lim.upper),TGT=Number(lim.target);
   if(!isFinite(LSL))LSL=null; if(!isFinite(USL))USL=null; if(!isFinite(TGT))TGT=null;
   const unit=lim.unit||'';
@@ -3508,7 +3512,7 @@ async function renderIstatistik(){
   recs.forEach(r=>{ if(r.stock_code!==STAT_FILT.stock)return; if(STAT_FILT.stage&&r.stage!==STAT_FILT.stage)return; if(STAT_FILT.machine&&r.machine_code!==STAT_FILT.machine)return;
     if(cariSel.length && !cariSel.includes(r._cari||''))return;   // cari (müşteri) filtresi
     const tm=new Date(r.checked_at).getTime(); if(sd&&tm<sd)return; if(ed&&tm>ed)return;
-    (r.vals||[]).forEach(v=>{ if(v.measure_name!==STAT_FILT.measure)return;
+    (r.vals||[]).forEach(v=>{ if(v.is_qualitative===true)return; if(_mkey(v.measure_name,v.lower_limit,v.upper_limit,v.target)!==STAT_FILT.measure)return;   // ad+limit+hedef birebir (farklı op'un aynı adlısı karışmaz)
       const gv=(v.samples||[]).map(s=>Number(s.value)).filter(x=>isFinite(x)); if(gv.length)groups.push({t:tm,v:gv}); });
   });
   groups.sort((a,b)=>a.t-b.t);
@@ -3586,7 +3590,7 @@ async function renderIstatistik(){
   const showSpec = chartType==='IMR';   // spec limitleri yalnız bireysel grafikte anlamlı
   const cc=el('div',{class:'card chart-card'});
   cc.append(el('h3',{style:'margin:0 0 2px'}, chartType==='IMR'?'Kontrol Grafiği — Bireysel Değerler (I)':'Kontrol Grafiği — Altgrup Ortalamaları (X̄)'));
-  cc.append(el('p',{style:'margin:0 0 10px;color:var(--muted);font-size:12px'},`${esc(STAT_FILT.measure)}${unit?(' ('+esc(unit)+')'):''} · ${chartTitle} · ${groups.length} altgrup / ${n} ölçüm · kırmızı+numaralı noktalar test ihlali (${STAT_TESTS.filter(Boolean).length} test aktif). 🖱️ Noktaya sağ tıkla → aksiyon/CAPA notu (sebep, faaliyet, sorumlu, termin, durum).`));
+  cc.append(el('p',{style:'margin:0 0 10px;color:var(--muted);font-size:12px'},`${esc(MNAME)}${lim.op!=null?(' · Op '+lim.op):''}${unit?(' ('+esc(unit)+')'):''} · ${chartTitle} · ${groups.length} altgrup / ${n} ölçüm · kırmızı+numaralı noktalar test ihlali (${STAT_TESTS.filter(Boolean).length} test aktif). 🖱️ Noktaya sağ tıkla → aksiyon/CAPA notu (sebep, faaliyet, sorumlu, termin, durum).`));
   const ic=el('canvas'); ic.style.height='300px'; cc.append(ic);
   cc.append(el('div',{class:'chart-legend'},
     leg('var(--accent)','solid', chartType==='IMR'?'Ölçüm':'Altgrup ort.'), leg('#22c55e','solid', chartType==='IMR'?'Merkez (X̄)':'Merkez (X̿)'), leg('#ef4444','dashed','UCL/LCL'),
@@ -3677,7 +3681,7 @@ async function renderIstatistik(){
     const tolTxt = (LSL!=null||USL!=null)?(' · <b>Tolerans:</b> '+(LSL!=null?F(LSL,2):'…')+' – '+(USL!=null?F(USL,2):'…')+uTxt):'';
     const _ts=pts.map(p=>p.t); const dateTxt = _ts.length?(' · <b>Tarih:</b> '+fmtDate(Math.min(..._ts))+' – '+fmtDate(Math.max(..._ts))):'';
     const cariTxt=(Array.isArray(STAT_FILT.customers)&&STAT_FILT.customers.length)?(' · Cari: '+esc(STAT_FILT.customers.join(', '))):'';
-    const filtTxt=`Stok: ${esc(STAT_FILT.stock)} · Ölçüm: <b>${esc(STAT_FILT.measure)}</b>${unit?(' ('+esc(unit)+')'):''}${hedefTxt}${tolTxt}${dateTxt} · Aşama: ${STAT_FILT.stage?STAGES[STAT_FILT.stage]:'Tümü'} · Makine: ${esc(STAT_FILT.machine||'Tümü')}${cariTxt}`;
+    const filtTxt=`Stok: ${esc(STAT_FILT.stock)} · Ölçüm: <b>${esc(MNAME)}</b>${lim.op!=null?(' (Op '+lim.op+')'):''}${unit?(' ('+esc(unit)+')'):''}${hedefTxt}${tolTxt}${dateTxt} · Aşama: ${STAT_FILT.stage?STAGES[STAT_FILT.stage]:'Tümü'} · Makine: ${esc(STAT_FILT.machine||'Tümü')}${cariTxt}`;
     const mt=(title,rows)=>`<table class="mt"><tr><th colspan="2">${esc(title)}</th></tr>${rows.map(([k,v])=>`<tr><td>${esc(k)}</td><td class="v">${esc(v)}</td></tr>`).join('')}</table>`;
     const proc=mt('Süreç Verisi',[['Alt Limit (LSL)',LSL!=null?F(LSL,3):'—'],['Hedef',TGT!=null?F(TGT,3):'—'],['Üst Limit (USL)',USL!=null?F(USL,3):'—'],['Örnek Ort. (X̄)',F(mean,3)+u],['Örnek N',String(n)],['Altgrup boyu (n)',subN+' ('+chartTitle+')'],['Altgrup sayısı',String(groups.length)],['StdSapma (Within)',F(sWithin,4)],['StdSapma (Overall)',F(sOverall,4)]]);
     const wcap=mt('Potansiyel (Within) Yeterlilik',[['Cp',capTxt(W.cp)],['CPL',capTxt(W.cpl)],['CPU',capTxt(W.cpu)],['Cpk',capTxt(W.cpk)]]);
