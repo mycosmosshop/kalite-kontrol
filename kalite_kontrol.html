@@ -3139,14 +3139,16 @@ async function renderKaliteTest(root){
   const isAdmin=(PROFILE&&PROFILE.is_admin)||can('import');
   root.append(el('div',{class:'card'},
     el('h3',{style:'margin-top:0'},'🧪 Kalite Testleri (LeanSys)'),
-    el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:13px',html:'Laboratuvar/kalite test kayıtları. Aktarmak: aşağıda <b>tarih + çekilecek stok kodu</b> seç → <b>📥 LeanSys’ten Çek</b> (yerel ajan arka planda tazeler). Stok kodu virgülle çoklu; boş = TÜM. Satıra tıkla → detay.'})));
+    el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:13px',html:'Laboratuvar/kalite test kayıtları. Aktarmak: sağdaki <b>Çek-Başlangıç / Çek-Bitiş + çekilecek stok kodu</b> → <b>📥 LeanSys’ten Çek</b> (yerel ajan arka planda tazeler; boş tarih = tümü, kod virgülle çoklu / boş = TÜM). Soldaki <b>Başlangıç/Bitiş</b> yalnız listeyi süzer. Satıra tıkla → detay.'})));
   const fSearch=el('input',{class:'inp',placeholder:'🔍 test adı / stok / kişi / sonuç…',style:'min-width:220px',oninput:()=>{clearTimeout(_ktDeb);_ktDeb=setTimeout(load,400);}});
   const fFrom=el('input',{type:'date',class:'inp',onchange:load});
   const fTo=el('input',{type:'date',class:'inp',onchange:load});
   const fKarar=el('select',{class:'inp',onchange:load}); [['','Tümü'],['1','Uygun'],['0','Uygunsuz']].forEach(([v,t])=>fKarar.append(el('option',{value:v},t)));
   const fCode=el('input',{class:'inp',placeholder:'örn. 126.0.559 (boş=tümü)',style:'min-width:170px'});
   const cnt=el('div',{class:'stat'},el('b',{id:'ktCount'},'—'),el('span',{},'test'));
-  const pullBtn=el('button',{class:'btn sm',id:'kt_pull',style:'flex:0',title:'LeanSys kalite testlerini ara tabloya tazele (tarih + kod), sonra listele.',onclick:pullFromLeansys},'📥 LeanSys’ten Çek');
+  const pFrom=el('input',{type:'date',class:'inp',title:'LeanSys’ten çekilecek aralık — başlangıç (boş = en eski)'});
+  const pTo=el('input',{type:'date',class:'inp',title:'LeanSys’ten çekilecek aralık — bitiş (boş = bugün/sonrası)'});
+  const pullBtn=el('button',{class:'btn sm',id:'kt_pull',style:'flex:0',title:'LeanSys kalite testlerini ara tabloya tazele (çekme tarihi + kod), sonra listele.',onclick:pullFromLeansys},'📥 LeanSys’ten Çek');
   // Admin: SADECE Supabase silme (LeanSys'e ASLA dokunmaz)
   const ktTools=isAdmin?el('div',{class:'autozone'},
     el('button',{class:'autozone-handle',title:'Sil — yalnızca SUPABASE (LeanSys’e dokunmaz)',onclick:e=>{e.stopPropagation();toggleAutozone(e.currentTarget);}},'▾'),
@@ -3161,14 +3163,16 @@ async function renderKaliteTest(root){
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),fTo),
     el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{fSearch.value='';fFrom.value='';fTo.value='';fKarar.value='';load();}},'Temizle'),
     el('div',{class:'grow'}),
-    ...(isAdmin?[el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Çekilecek kod'),fCode),pullBtn,ktTools]:[]),
+    ...(isAdmin?[el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Çek-Başlangıç'),pFrom),
+      el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Çek-Bitiş'),pTo),
+      el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Çekilecek kod'),fCode),pullBtn,ktTools]:[]),
     cnt)));
   const out=el('div'); root.append(out);
   let _seq=0;
   async function pullFromLeansys(){
     pullBtn.disabled=true; const _t=pullBtn.textContent; pullBtn.textContent='⏳ Çekiliyor…';
     let res=null;
-    try{ const r=await fetch('http://127.0.0.1:17777/refreshtest?codes='+encodeURIComponent((fCode.value||'').trim())+'&from='+encodeURIComponent(fFrom.value||'')+'&to='+encodeURIComponent(fTo.value||''),{mode:'cors'}); res=await r.json(); }catch(e){ res=null; }
+    try{ const r=await fetch('http://127.0.0.1:17777/refreshtest?codes='+encodeURIComponent((fCode.value||'').trim())+'&from='+encodeURIComponent(pFrom.value||'')+'&to='+encodeURIComponent(pTo.value||''),{mode:'cors'}); res=await r.json(); }catch(e){ res=null; }
     pullBtn.disabled=false; pullBtn.textContent=_t;
     if(!res){ toast('LeanSys ajanı kapalı/erişilemedi. LeanSys_Agent çalışıyor mu?','err'); return; }
     if(!res.ok){ toast('Çekme hatası: '+esc(res.error||'?'),'err'); return; }
