@@ -570,7 +570,7 @@ document.querySelectorAll('nav.tabs button').forEach(b=>b.onclick=async()=>{
 
 // ====================== ÜRETİMLER ======================
 let PRODS=[];
-let URETIM_FILT={start:'',end:'',stock:'',group:''};
+let URETIM_FILT={start:'',end:'',stock:'',group:'',machine:''};
 // LeanSys MAKİNE GRUBU (şube) eşlemesi: makine kodu -> grup adı (URETIMRAPORU_VW.MAKINEGRUP_ADI, 155 makine 1:1).
 // productions zaten machine_code içerdiği için grup satır bazında BURADAN türetilir (Supabase kolonu gerekmez).
 // Yeni makine eklenirse buraya bir satır eklenir; bilinmeyen kod -> '' (Tümü dışında "(grupsuz)" olarak görünür).
@@ -608,6 +608,7 @@ function matchesUF(p){
   const d=ufDate(p);
   if(URETIM_FILT.stock && p.stock_code!==URETIM_FILT.stock) return false;
   if(URETIM_FILT.group && machineGroupOf(p.machine_code)!==URETIM_FILT.group) return false;
+  if(URETIM_FILT.machine && p.machine_code!==URETIM_FILT.machine) return false;
   if(URETIM_FILT.start && d && d<URETIM_FILT.start) return false;
   if(URETIM_FILT.end && d && d>URETIM_FILT.end) return false;
   return true;
@@ -686,7 +687,7 @@ async function deleteAllProds(){
   const {error:e2}=await sb.from('productions').delete().neq('id',0);
   if(e2){ toast('Üretimler silinemedi: '+esc(e2.message),'err'); return; }
   toast('Tüm üretimler ve kontrol kayıtları silindi.','ok');
-  URETIM_FILT={start:'',end:'',stock:'',group:''}; renderUretimler();
+  URETIM_FILT={start:'',end:'',stock:'',group:'',machine:''}; renderUretimler();
 }
 async function deleteSelectedRecs(){
   const ids=[...document.querySelectorAll('#prodBody .prodChk:checked')].map(c=>Number(c.dataset.id));
@@ -1107,8 +1108,9 @@ async function renderUretimler(){
   // stats + filtreler (tarih + stok kodu)
   const stockSet=[...new Set(PRODS.map(p=>p.stock_code).filter(Boolean))];
   const groupSet=[...new Set(PRODS.map(p=>machineGroupOf(p.machine_code)).filter(Boolean))].sort();
+  const machineSet=[...new Map(PRODS.filter(p=>p.machine_code).map(p=>[p.machine_code,p.machine_name||''])).entries()].sort((a,b)=>String(a[1]||a[0]).localeCompare(String(b[1]||b[0]),'tr'));
   const filtered=PRODS.filter(matchesUF);
-  const aktifFiltre=URETIM_FILT.start||URETIM_FILT.end||URETIM_FILT.stock||URETIM_FILT.group;
+  const aktifFiltre=URETIM_FILT.start||URETIM_FILT.end||URETIM_FILT.stock||URETIM_FILT.group||URETIM_FILT.machine;
   const filt=el('div',{class:'card'},
     el('div',{class:'toolbar'},
       el('div',{class:'stat'},el('b',{id:'uretimCount'},String(filtered.length)+(filtered.length!==PRODS.length?'/'+PRODS.length:'')),el('span',{},'Üretim')),
@@ -1123,7 +1125,10 @@ async function renderUretimler(){
       el('div',{class:'field',style:'flex:0;min-width:190px'},el('label',{class:'lab'},'Makine Grubu'),
         (()=>{ const s=el('select',{class:'inp',id:'uretimGrupSel',onchange:e=>{URETIM_FILT.group=e.target.value;renderUretimler();}});
           s.append(el('option',{value:''},'Tümü')); groupSet.forEach(g=>{const o=el('option',{value:g},g); if(g===URETIM_FILT.group)o.selected=true; s.append(o);}); return s; })()),
-      aktifFiltre?el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{URETIM_FILT={start:'',end:'',stock:'',group:''};renderUretimler();}},'Temizle'):'',
+      el('div',{class:'field',style:'flex:0;min-width:200px'},el('label',{class:'lab'},'Makine'),
+        (()=>{ const s=el('select',{class:'inp',id:'uretimMakSel',onchange:e=>{URETIM_FILT.machine=e.target.value;renderUretimler();}});
+          s.append(el('option',{value:''},'Tümü')); machineSet.forEach(([code,name])=>{const o=el('option',{value:code},(name?name+' ':'')+'('+code+')'); if(code===URETIM_FILT.machine)o.selected=true; s.append(o);}); return s; })()),
+      aktifFiltre?el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{URETIM_FILT={start:'',end:'',stock:'',group:'',machine:''};renderUretimler();}},'Temizle'):'',
       el('div',{class:'grow'}),
       (can('auto')||can('import')||PROFILE.is_admin)?el('div',{class:'autozone'},
         el('button',{class:'autozone-handle',title:'Üretim araçları',onclick:e=>{e.stopPropagation();e.currentTarget.parentElement.classList.toggle('open');}},'▾'),
@@ -2618,7 +2623,7 @@ async function openBulkAuto(){
   const plan=planAll||[]; const planStocks=new Set(plan.map(x=>x.stock_code));
   // seçili üretimler; yoksa o anki FİLTRE (tarih/stok) kapsamı; o da yoksa planı olan tümü
   const selIds=new Set([...document.querySelectorAll('#prodBody .prodChk:checked')].map(c=>Number(c.dataset.id)));
-  const aktifFiltre=URETIM_FILT.start||URETIM_FILT.end||URETIM_FILT.stock;
+  const aktifFiltre=URETIM_FILT.start||URETIM_FILT.end||URETIM_FILT.stock||URETIM_FILT.group||URETIM_FILT.machine;
   const secili = selIds.size>0;
   // KAPSAM: seçili → seçilenler; filtre → filtre kapsamı; ikisi de yoksa → DB'deki TÜM üretimler (yalnız yüklü 500 değil!)
   let scopeBase;
