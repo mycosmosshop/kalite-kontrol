@@ -2650,15 +2650,46 @@ async function openBulkAuto(){
   const m=el('div',{class:'modal',style:'position:relative;max-width:860px'});
   m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
   m.append(el('h3',{},'🎲 Otomatik Kontrol Üret'));
+  const cycInputs={};   // key -> çevrim input (Excel'den yüklerken güncellenir)
+  function exportCyc(){
+    const rows=Object.values(combos).sort((a,b)=>(a.stock_code+a.machine_code).localeCompare(b.stock_code+b.machine_code)).map(c=>({
+      'Stok Kodu':c.stock_code,'Stok Adı':c.stock_name||'','Makine Kodu':c.machine_code,'Makine Adı':c.machine_name||'',
+      'Üretim Adedi':c.count,'Birim':c.unit||'','Çevrim Süresi (sn/birim)':(cyc[c.key]>0?cyc[c.key]:'')}));
+    if(!rows.length){toast('Aktarılacak satır yok.','err');return;}
+    const ws=XLSX.utils.json_to_sheet(rows); ws['!cols']=[{wch:14},{wch:34},{wch:16},{wch:30},{wch:12},{wch:8},{wch:22}];
+    const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Cevrim Sureleri'); XLSX.writeFile(wb,'cevrim_sureleri.xlsx');
+  }
+  async function importCyc(file){
+    try{
+      const buf=await file.arrayBuffer(); const wb=XLSX.read(buf,{type:'array'});
+      const arr=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});
+      let n=0;
+      arr.forEach(r=>{
+        const sc=String(r['Stok Kodu']||'').trim(), mc=String(r['Makine Kodu']||'').trim();
+        const cv=Number(String(r['Çevrim Süresi (sn/birim)']??'').replace(',','.'))||0;
+        if(!sc||!mc) return; const key=mc+'||'+sc; if(!combos[key]) return;   // bu modalda olmayan kombinasyon atlanır
+        cyc[key]=cv; if(cycInputs[key]) cycInputs[key].value=cv>0?cv:'';
+        try{ const s=JSON.parse(localStorage.getItem('kk_cyc')||'{}'); if(cv>0)s[key]=cv; else delete s[key]; localStorage.setItem('kk_cyc',JSON.stringify(s)); }catch(_){}
+        n++;
+      });
+      toast(n+' satır çevrim süresi Excel’den yüklendi.', n?'ok':'err');
+    }catch(e){ toast('Excel okunamadı: '+e.message,'err'); }
+  }
+  m.append(el('div',{style:'display:flex;gap:8px;margin:0 0 8px;flex-wrap:wrap'},
+    el('button',{class:'btn sm sec',onclick:exportCyc},'⬇ Excel’e Aktar'),
+    (()=>{ const fi=el('input',{type:'file',accept:'.xlsx,.xls',style:'display:none'}); fi.onchange=e=>{ if(e.target.files[0]){ importCyc(e.target.files[0]); e.target.value=''; } };
+      return el('span',{},el('button',{class:'btn sm sec',onclick:()=>fi.click()},'⬆ Excel’den Yükle'),fi); })()
+  ));
   const kapsam = secili ? ('🎯 '+prods.length+' SEÇİLİ üretim') : (aktifFiltre ? ('🔎 Filtreli kapsam — '+prods.length+' üretim'+(URETIM_FILT.stock?' · '+URETIM_FILT.stock:'')+((URETIM_FILT.start||URETIM_FILT.end)?' · '+(URETIM_FILT.start||'…')+'–'+(URETIM_FILT.end||'…'):'')) : (prods.length+' üretim (planı olan tümü)'));
   m.append(el('p',{class:'meta'},`${kapsam}. Çevrim süresi (saniye/birim) girersen bitiş = başlangıç + adet × çevrim olarak yeniden hesaplanıp üretime yazılır. <b>Her satır KOD + MAKİNE bazlıdır</b> (aynı makinede 12 gözlü kalıp vb. farklı ürün = farklı çevrim); girdiğin değer o <b>ürün+makine</b> için hafızaya kaydedilir — tekrar açınca hatırlanır ve düzenlenebilir. ÇEVRİM GİRMEZSEN üretimin MEVCUT başlama–bitiş süresi kullanılır. Sonra plandaki örnekleme sıklığına göre Seri Başı + saatlik Proses + Son üretilir (hepsi uygun, rastgele). Satır seçersen sadece seçilenlere; filtre uygularsan filtre kapsamına uygulanır.`));
   if(noPlan.length){ m.append(el('div',{class:'msg err',style:'margin:0 0 12px',html:`⚠ <b>${noPlan.length} üretim</b> kapsam DIŞI: stok kodunun kontrol planı yok → <b>${noPlanStocks.map(esc).join(', ')}</b>. Bu makineler/çevrimler aşağıda görünmez ve bitişleri hesaplanmaz. Çözüm: Kontrol Planı’nda «📋 Başka Koda Kopyala» ile bu kod(lar)a plan oluştur, sonra tekrar dene.`}));}
   Object.values(combos).sort((a,b)=>(a.stock_code+a.machine_code).localeCompare(b.stock_code+b.machine_code)).forEach(c=>{
+    const inp=el('input',{class:'inp',type:'number',step:'0.001',value:(cyc[c.key]>0?cyc[c.key]:''),placeholder:'çevrim süresi (sn/'+(c.unit||'birim')+')',
+      oninput:e=>{ const v=Number(e.target.value)||0; cyc[c.key]=v;
+        try{ const s=JSON.parse(localStorage.getItem('kk_cyc')||'{}'); if(v>0)s[c.key]=v; else delete s[c.key]; localStorage.setItem('kk_cyc',JSON.stringify(s)); }catch(_){} }});
+    cycInputs[c.key]=inp;
     m.append(el('div',{class:'row',style:'margin-bottom:8px'},
-      el('div',{class:'field grow'},el('label',{class:'lab'},`📦 ${esc(c.stock_code)}${c.stock_name?(' — '+esc(c.stock_name)):''} · 🛠 ${esc(c.machine_code)} ${esc(c.machine_name||'')} · ${c.count} üretim · birim: ${esc(c.unit||'-')}`),
-        el('input',{class:'inp',type:'number',step:'0.001',value:(cyc[c.key]>0?cyc[c.key]:''),placeholder:'çevrim süresi (sn/'+(c.unit||'birim')+')',
-          oninput:e=>{ const v=Number(e.target.value)||0; cyc[c.key]=v;
-            try{ const s=JSON.parse(localStorage.getItem('kk_cyc')||'{}'); if(v>0)s[c.key]=v; else delete s[c.key]; localStorage.setItem('kk_cyc',JSON.stringify(s)); }catch(_){} }}))));
+      el('div',{class:'field grow'},el('label',{class:'lab'},`📦 ${esc(c.stock_code)}${c.stock_name?(' — '+esc(c.stock_name)):''} · 🛠 ${esc(c.machine_code)} ${esc(c.machine_name||'')} · ${c.count} üretim · birim: ${esc(c.unit||'-')}`), inp)));
   });
   const regenCb=el('input',{type:'checkbox'});
   m.append(el('label',{style:'display:flex;align-items:center;gap:6px;margin:6px 0 6px;cursor:pointer'},regenCb,'Var olan kayıtları silip yeniden üret (kapalıysa sadece eksik aşamalar tamamlanır)'));
@@ -3386,19 +3417,20 @@ function mrow(lab,val,calc,cls){
 async function renderIstatistik(){
   const root=$('#tab-istatistik'); _statPrint=null;
   root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
-  const [{data:planD},{data:recD},{data:prodD}]=await Promise.all([
+  const [{data:planD},{data:prodD}]=await Promise.all([
     sb.from('control_plan_items').select('*'),
-    sb.from('control_records').select('stock_code,machine_code,stage,checked_at,vals,production_id').order('checked_at',{ascending:true}).limit(8000),
     sb.from('productions').select('id,customer')
   ]);
-  const plan=planD||[], recs=recD||[];
-  const prodCari={}; (prodD||[]).forEach(p=>prodCari[p.id]=p.customer||''); recs.forEach(r=>{ r._cari=prodCari[r.production_id]||''; });
-  root.innerHTML='';
-
-  // stok seçenekleri
-  const stockSet=new Set(); recs.forEach(r=>r.stock_code&&stockSet.add(r.stock_code)); plan.forEach(p=>p.stock_code&&stockSet.add(p.stock_code));
+  const plan=planD||[];
+  // stok seçenekleri — plandaki stoklar (SPC limitleri plandan gelir)
+  const stockSet=new Set(); plan.forEach(p=>p.stock_code&&stockSet.add(p.stock_code));
   const stocks=[...stockSet].sort();
   if(!STAT_FILT.stock || !stocks.includes(STAT_FILT.stock)) STAT_FILT.stock=stocks[0]||'';
+  // SEÇİLİ stok'un TÜM kontrol kayıtları — sayfalı (eski 8000 kapağı kalktı; yeni/çok veri de gelir)
+  let recs=[];
+  if(STAT_FILT.stock){ for(let from=0;;from+=1000){ const {data}=await sb.from('control_records').select('stock_code,machine_code,stage,checked_at,vals,production_id').eq('stock_code',STAT_FILT.stock).order('checked_at',{ascending:true}).range(from,from+999); recs.push(...(data||[])); if(!data||data.length<1000)break; } }
+  const prodCari={}; (prodD||[]).forEach(p=>prodCari[p.id]=p.customer||''); recs.forEach(r=>{ r._cari=prodCari[r.production_id]||''; });
+  root.innerHTML='';
 
   // sayısal ölçüm kataloğu (plan + kayıt) seçili stok için
   const measMap=new Map();
