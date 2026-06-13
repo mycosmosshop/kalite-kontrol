@@ -813,6 +813,11 @@ async function renderMalKabul(){
   root.append(el('div',{class:'card'},
     el('h3',{style:'margin-top:0'},'📦 Mal Kabul (LeanSys)'),
     el('p',{style:'color:var(--muted);margin:-4px 0 10px;font-size:13px',html:'Tedarikçiden mal kabulden gelen ürünler. Aktarmak/tazelemek: aşağıdaki <b>📥 LeanSys’ten Aktar</b> butonu (pencere açılır → stok kodu + tarih seçip <b>AKTAR</b>). <b>Giriş kalite kontrolü</b>, <b>Girilecek Kontroller → Giriş Kalite</b>’den girilir.'})));
+  // izlenebilirlikten gelen alış (FIFO_HAREKET) bilgisi → üstte banner
+  if(MK_BANNER){ const bn=MK_BANNER; MK_BANNER=null;
+    root.append(el('div',{class:'card',style:'background:rgba(21,128,61,.07);border:1px solid #15803d;display:flex;align-items:flex-start;gap:8px'},
+      el('div',{style:'font-size:12.5px;flex:1',html:bn.html}),
+      el('button',{class:'btn sm sec',style:'flex:0',title:'Banner’ı kapat',onclick:e=>{const cc=e.currentTarget.closest('.card');if(cc)cc.remove();}},'✕'))); }
   const fSearch=el('input',{class:'inp',placeholder:'🔍 stok kodu / ad / tedarikçi…',style:'min-width:240px',oninput:()=>{clearTimeout(_mkDeb);_mkDeb=setTimeout(load,400);}});
   const fFrom=el('input',{type:'date',class:'inp',onchange:load});
   const fTo=el('input',{type:'date',class:'inp',onchange:load});
@@ -2842,6 +2847,7 @@ let _kayitDeb=null; // tarih yazarken her tuşta yeniden çizmesin
 let KAYIT_PROD=null;   // belirli bir üretimin kayıtlarına odaklanma
 let KAYIT_IRS=null;    // izlenebilirlikten giriş kalite'ye odak: yalnız bu irsaliye (giris_irsaliye)
 let MK_FOCUS=null;     // izlenebilirlikten mal kabul'a odak {stok,tarih}
+let MK_BANNER=null;    // izlenebilirlikten mal kabul sekmesi üstüne alış (FIFO_HAREKET) bilgisi {html}
 // kayıt durumu: ölçüm girilmemişse 'empty', RET ise 'ret', değilse 'ok'
 function recStatus(r){
   const vals=r.vals||[];
@@ -3164,13 +3170,21 @@ async function renderIzleme(root){
   function gotoGirisKalite(n){ const p=(n.irsaliye||'').split('/'); const irs=(p[0]||'').trim()+((p[1]&&p[1].trim())?(' / '+p[1].trim()):''); KAYIT_PROD=null; KAYIT_PRODS=null; KAYIT_IRS=irs||null; KAYIT_STAGE='giris'; KAYIT_FILT={start:'',end:'',stock:n.stok_kodu||''}; switchTab('kayitlar'); }
   async function gotoMalKabul(n){
     const stok=n.stok_kodu||'';
-    const {data:mk}=await sb.from('mal_kabul').select('rec_id').eq('stok_kodu',stok).limit(1);
-    if(mk&&mk.length){ MK_FOCUS={stok, tarih:''}; switchTab('malkabul'); return; }
-    // mal_kabul tablosu boş → alış (mal kabul = giriş) bilgisini izden göster (gerçek LeanSys verisi)
+    // alış (mal kabul = giriş) bilgisini izden Mal Kabul sekmesi ÜSTÜNE banner olarak taşı (gerçek LeanSys FIFO_HAREKET verisi)
     const c=(n.ek&&n.ek.cols)||{}; const p=(n.irsaliye||'').split('/');
     const seri=c.irs_seri||(p[0]||'').trim(), sira=c.irs_sira||(p[1]||'').trim();
-    const ted=n.tedarikci||c.tedarikci||'?'; const mik=(c.giris_miktar!=null?c.giris_miktar:n.miktar);
-    toast('📦 Mal kabul (alış): '+stok+' · irsaliye '+seri+(sira?('/'+sira):'')+' · '+ted+(mik!=null?(' · '+commaFmt(mik)):'')+(n.tarih?(' · '+fmtDate(n.tarih)):'')+' — ayrı Mal Kabul tablosu boş; 📥 Mal Kabul sekmesinden LeanSys’ten aktarılabilir.','ok');
+    const irs=(((seri||'')+(sira?('/'+sira):''))||n.irsaliye||'—');
+    const ted=n.tedarikci||c.tedarikci||'—'; const mik=(c.giris_miktar!=null?c.giris_miktar:n.miktar);
+    MK_BANNER={ html:'📦 <b>Mal kabul (alış)</b> · '+esc(stok)+(n.stok_adi?(' — '+esc((n.stok_adi||'').slice(0,40))):'')
+      +'<br>İrsaliye <b>'+esc(irs)+'</b> · Tedarikçi <b>'+esc(ted)+'</b>'
+      +(mik!=null?(' · Miktar <b>'+commaFmt(mik)+(c.birim?(' '+esc(c.birim)):'')+'</b>'):'')
+      +' · Tarih <b>'+(n.tarih?fmtDate(n.tarih):'—')+'</b>'
+      +(c.fifo_toplam!=null?(' · FIFO toplam <b>'+commaFmt(c.fifo_toplam)+'</b>'):'')
+      +'<br><span style="color:var(--muted);font-size:10px">kaynak: LeanSys FIFO_HAREKET (alış irsaliyesi · gerçek veri)</span>' };
+    const {data:mk}=await sb.from('mal_kabul').select('rec_id').eq('stok_kodu',stok).limit(1);
+    // mal_kabul tablosunda kayıt varsa o stoğa odakla (banner + filtreli liste); yoksa sadece banner görünür
+    MK_FOCUS=(mk&&mk.length)?{stok, tarih:''}:null;
+    switchTab('malkabul');
   }
   // op kontrolleri TAM GENİŞLİK alt satır (makine adı + SB/PR/SON ferah)
   function opLine(n,depth){
@@ -3547,13 +3561,11 @@ async function renderIzleme(root){
       const gk=_izGiris[giris.stok_kodu];
       if(gk&&gk.giris){ grow.append(el('span',{class:'pill gray',style:'cursor:pointer;font-size:9px;padding:1px 6px',title:'Bu malzemenin kontrol planında giriş kalite VAR — o tarihteki gerçek kayıt varsa onu kullanır, yoksa 🔧 Türet plana göre oluşturur',onclick:e=>{e.stopPropagation();gotoGirisKalite(giris);}},'giriş kalite')); }
       else { grow.append(el('span',{style:'font-size:9px;color:var(--muted);border:1px dashed var(--line);border-radius:3px;padding:0 5px',title:(gk&&gk.plan)?'Bu malzemenin kontrol planında giriş kalite TANIMLI DEĞİL → giriş kalite gerekmez':'Bu malzeme için kontrol planı yok → giriş kalite uygulanmaz'},(gk&&gk.plan)?'giriş kalitesi yok (plan)':'kontrol planı yok')); }
-      // MAL KABUL → tıkla → KALICI inline kart (LeanSys gerçek alış bilgisi)
-      const cmk=(giris.ek&&giris.ek.cols)||{};
-      const mkBox=el('div',{style:'display:none;margin-top:4px;font-size:10.5px;background:rgba(21,128,61,.07);border:1px solid #15803d;border-radius:6px;padding:6px 9px',html:'📦 <b>Mal kabul (alış)</b> · '+esc(giris.stok_kodu||'')+(giris.stok_adi?(' — '+esc((giris.stok_adi||'').slice(0,30))):'')+'<br>İrsaliye <b>'+esc(((cmk.irs_seri||'')+(cmk.irs_sira?('/'+cmk.irs_sira):''))||giris.irsaliye||'—')+'</b> · Tedarikçi <b>'+esc(giris.tedarikci||cmk.tedarikci||'—')+'</b>'+(cmk.giris_miktar!=null?(' · Miktar <b>'+commaFmt(cmk.giris_miktar)+(cmk.birim?(' '+esc(cmk.birim)):'')+'</b>'):'')+' · Tarih <b>'+(giris.tarih?fmtDate(giris.tarih):'—')+'</b>'+(cmk.fifo_toplam!=null?(' · FIFO toplam <b>'+commaFmt(cmk.fifo_toplam)+'</b>'):'')+'<br><span style="color:var(--muted);font-size:9.5px">kaynak: LeanSys FIFO_HAREKET (alış irsaliyesi · gerçek veri)</span>'});
-      const mkPill=el('span',{class:'pill gray',style:'cursor:pointer;font-size:9px;padding:1px 6px',title:'Mal kabul (alış) bilgisini göster/gizle'},'mal kabul');
-      mkPill.onclick=e=>{e.stopPropagation(); mkBox.style.display=(mkBox.style.display==='none')?'':'none';};
+      // MAL KABUL → tıkla → Mal Kabul sekmesine git, alış bilgisi (LeanSys FIFO_HAREKET) üstte banner olarak görünür
+      const mkPill=el('span',{class:'pill gray',style:'cursor:pointer;font-size:9px;padding:1px 6px',title:'Mal Kabul sekmesine git — alış (FIFO_HAREKET) bilgisi üstte gösterilir'},'mal kabul');
+      mkPill.onclick=e=>{e.stopPropagation(); gotoMalKabul(giris);};
       grow.append(mkPill);
-      wrap.append(grow, mkBox);
+      wrap.append(grow);
     } else if(T){
       wrap.append(el('div',{style:'font-size:10px;color:#b45309;margin-top:3px'},'◇ giriş/üretim kaydı yok'));
     }
