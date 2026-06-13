@@ -3007,9 +3007,12 @@ async function turetEksikQC({prodId=null, mk=null, regen=false, baseDate=null}={
   else { const {data:exr}=await sb.from('control_records').select('stage').eq('production_id',p.id); (exr||[]).forEach(r=>have.add(r.stage)); }
   const recs=[]; const endMs=(end.getTime()>start.getTime())?end.getTime():(start.getTime()+6*60000);
   const offWhen=()=>new Date(Math.min(start.getTime()+Math.round((1+Math.random()*4)*60000), endMs-30000));
-  if(!have.has('seri_basi')){ const r=buildAutoRec(p,'seri_basi',offWhen(),items,null); if(r){r.note='izleme-türet';recs.push(r);} }
-  if(!have.has('proses')){ const N=Math.min(3,Math.max(1,Math.round(durMin/Math.max(freq,1)))); for(let i=1;i<=N;i++){ let tm=start.getTime()+Math.round(durMin*i/(N+1))*60000; tm=Math.min(Math.max(tm,start.getTime()+60000),end.getTime()-60000); const r=buildAutoRec(p,'proses',new Date(tm),items,null); if(r){r.note='izleme-türet';recs.push(r);} } }   // YETECEK KADAR: op başına en çok 3 proses (eşit aralıklı)
-  if(finished && !have.has('son')){ const r=buildAutoRec(p,'son',end,items,null); if(r){r.note='izleme-türet';recs.push(r);} }
+  // KONTROL PLANINA SIKI BAĞLI: yalnız planda o aşamanın maddesi VARSA türet (proses/seri başı=process_control; son=final_control)
+  const hasProc=stageItems(items,'proses').length>0;
+  const hasFin=stageItems(items,'son').length>0;
+  if(hasProc && !have.has('seri_basi')){ const r=buildAutoRec(p,'seri_basi',offWhen(),items,null); if(r){r.note='izleme-türet';recs.push(r);} }
+  if(hasProc && !have.has('proses')){ const N=Math.min(3,Math.max(1,Math.round(durMin/Math.max(freq,1)))); for(let i=1;i<=N;i++){ let tm=start.getTime()+Math.round(durMin*i/(N+1))*60000; tm=Math.min(Math.max(tm,start.getTime()+60000),end.getTime()-60000); const r=buildAutoRec(p,'proses',new Date(tm),items,null); if(r){r.note='izleme-türet';recs.push(r);} } }   // YETECEK KADAR: op başına en çok 3 proses (eşit aralıklı)
+  if(hasFin && finished && !have.has('son')){ const r=buildAutoRec(p,'son',end,items,null); if(r){r.note='izleme-türet';recs.push(r);} }   // SON yalnız planda final_control maddesi varsa
   if(!have.has('giris') && stageItems(items,'giris').length){ const r=buildAutoRec(p,'giris',offWhen(),items,null); if(r){r.note='izleme-türet';recs.push(r);} }
   if(recs.length){ const {data:ins,error}=await sb.from('control_records').insert(recs).select(); if(error) return {made:0,error:error.message}; for(const rc of (ins||[])) if(rc.overall_result==='RET'){ try{ await autoOpenNCR(rc,p); }catch(e){} } return {made:recs.length}; }
   return {made:0,reason:'eksik yok'};
