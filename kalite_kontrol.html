@@ -2963,6 +2963,22 @@ async function renderIzleme(root){
     getBtn)));
   const sevkBox=el('div'); root.append(sevkBox);
   const out=el('div'); root.append(out);
+  let _qcMap={};   // stok_kodu -> {seri_basi,proses,son,giris} sayilari (bizim control_records)
+
+  async function loadQc(nodes){
+    _qcMap={};
+    const codes=[...new Set(nodes.filter(n=>(n.tur==='uretim'||n.tur==='sevk')&&n.stok_kodu).map(n=>n.stok_kodu))];
+    if(!codes.length)return;
+    try{
+      const {data:recs}=await sb.from('control_records').select('stage,stock_code').in('stock_code',codes).limit(10000);
+      (recs||[]).forEach(r=>{ const o=_qcMap[r.stock_code]||(_qcMap[r.stock_code]={seri_basi:0,proses:0,son:0,giris:0}); if(o[r.stage]!=null)o[r.stage]++; });
+    }catch(e){}
+  }
+  function qcBadges(row,stok){
+    const qc=_qcMap[stok]; if(!qc)return;
+    const mkB=(stage,lab,cls)=>{ const c=qc[stage]||0; const b=el('span',{class:'pill '+cls,style:'cursor:pointer;margin-left:4px;font-size:10px'+(c?'':';opacity:.4'),title:STAGES[stage]+' kayıtları ('+c+') — tıkla: kayıtlara git',onclick:e=>{e.stopPropagation();KAYIT_PROD=null;KAYIT_STAGE=stage;KAYIT_FILT={start:'',end:'',stock:stok};switchTab('kayitlar');}},lab+' '+c); return b; };
+    row.append(mkB('seri_basi','🏁SB','seri'),mkB('proses','⚙️PR','proses'),mkB('son','🏆SON','son'));
+  }
 
   async function loadSevkler(){
     const u=(fUrun.value||'').trim(); if(!u){ toast('Önce ürün/stok kodu gir.','err'); return; }
@@ -3021,6 +3037,7 @@ async function renderIzleme(root){
     if(!nodes.length){ out.append(el('div',{class:'card'},'İz boş.')); return; }
     const byParent={}; nodes.forEach(n=>{ const p=(n.parent_no==null)?0:n.parent_no; (byParent[p]=byParent[p]||[]).push(n); });
     const roots=byParent[0]||[];
+    await loadQc(nodes);   // seri başı/proses/son kontrol kayıtlarını (bizim) bağla
     const tahminiN=nodes.filter(n=>n.tahmini).length;
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'},
@@ -3033,7 +3050,7 @@ async function renderIzleme(root){
     const tree=el('div',{style:'margin-top:10px'});
     roots.forEach(r=>tree.append(izNode(r,byParent)));
     card.append(tree); out.append(card);
-    out.append(el('div',{style:'color:var(--muted);font-size:11.5px;margin:8px 4px',html:'<b>●</b> gerçek (LeanSys) · <b style="color:#b45309">◇</b> LeanSys’te kaydı yok, BOM’dan türetildi. “BOM teorik” = ürün ağacı oranı × üretim çıktısı (referans). Ağırlık bazlı kütle denkliği ve ileri-yön izleme sonraki fazda.'}));
+    out.append(el('div',{style:'color:var(--muted);font-size:11.5px;margin:8px 4px',html:'<b>●</b> gerçek (LeanSys) · <b style="color:#b45309">◇</b> LeanSys’te kaydı yok, BOM’dan türetildi · <b>🏁SB ⚙️PR 🏆SON</b> = bu ürünün seri başı / proses / son kontrol kayıt sayıları (tıkla → kayıtlara git). “BOM teorik” = ürün ağacı oranı × üretim çıktısı (referans). Ağırlık bazlı kütle denkliği ve ileri-yön izleme sonraki fazda.'}));
   }
   function izNode(n,byParent){
     const kids=byParent[n.node_no]||[];
@@ -3052,7 +3069,8 @@ async function renderIzleme(root){
     const mark=el('span',{style:'display:inline-block;width:14px;font-weight:700;color:'+(T?'#b45309':'#16a34a')},T?'◇':'●');
     const caret=el('span',{style:'display:inline-block;width:13px;color:#2563eb;font-weight:700;'+(hasKids?'cursor:pointer':'')},hasKids?'▾':'·');
     const rowTxt=el('span',{style:T?'opacity:.85':'',html:ic+' '+bits.join(' · ')+extra});
-    const row=el('div',{style:'padding:4px 2px;font-size:12.5px;display:flex;align-items:baseline;gap:2px'},caret,mark,rowTxt);
+    const row=el('div',{style:'padding:4px 2px;font-size:12.5px;display:flex;align-items:baseline;gap:2px;flex-wrap:wrap'},caret,mark,rowTxt);
+    if(n.tur==='uretim'||n.tur==='sevk') qcBadges(row,n.stok_kodu);
     const wrap=el('div',{style:'border-left:2px solid '+(T?'#fde68a':'var(--line)')+';margin-left:7px;padding-left:9px'});
     wrap.append(row);
     if(hasKids){
