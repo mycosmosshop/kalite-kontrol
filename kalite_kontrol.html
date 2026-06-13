@@ -2948,6 +2948,54 @@ async function renderStokDokumanlari(root){
 // 🔎 İzlenebilirlik (Traceability) — sevkten geriye FIFO/iş-emri zinciri: sevk→üretim→hammadde→giriş + kütle denkliği(BOM) + QC
 const IZ_ICON={sevk:'🚚',uretim:'🏭',hammadde:'🧪',giris:'📦',not:'⚠️'};
 let _izKeep=null;   // son iz durumu (sekme değişince kaybolmasın): {urun,sevkler,key,irs,s}
+// ====== TÜRET: kontrol planına göre EKSİK QC kaydı üret — YALNIZ Supabase'e (LeanSys'e ASLA yazılmaz) ======
+async function turetEksikQC({prodId=null, mk=null, regen=false}={}){
+  // A) GİRİŞ KALİTE (hammadde mal kabul) — yalnız giriş kalite PLANI olan stoklar
+  if(mk){
+    const {data:plan}=await sb.from('control_plan_items').select('*').eq('stock_code',mk.stok_kodu).eq('active',true);
+    const items=(plan||[]).filter(it=>it.giris_kalite===true);
+    if(!items.length) return {made:0,reason:'giriş kalite planı yok'};
+    const {data:done}=await sb.from('control_records').select('id').eq('mal_kabul_rec_id',mk.rec_id).limit(1);
+    if((done||[]).length && !regen) return {made:0,reason:'giriş zaten var'};
+    if((done||[]).length && regen) await sb.from('control_records').delete().eq('mal_kabul_rec_id',mk.rec_id);
+    const iso=girisCtrlISO(mk.tarih); const when=iso?new Date(iso):new Date();
+    const irs=(mk.seri||'')+(mk.sira?(' / '+mk.sira):'');
+    const p={ id:null, stock_code:mk.stok_kodu, stock_name:mk.stok_adi, machine_code:null, work_order:irs, op_no:null, shift:shiftForTime(when) };
+    const rec=buildAutoRec(p,'giris',when,items,null);
+    if(!rec) return {made:0,reason:'giriş maddesi yok'};
+    Object.assign(rec,{ production_id:null, mal_kabul_rec_id:mk.rec_id, giris_cari:mk.cari_adi, giris_irsaliye:irs, giris_miktar:mk.miktar, giris_birim:mk.birim, checked_at:when.toISOString(), note:'izleme-türet', overall_result: rec.vals.flatMap(v=>v.samples).some(x=>x.ok===false)?'RET':'OK' });
+    const {data:ins,error}=await sb.from('control_records').insert(rec).select().maybeSingle();
+    if(error) return {made:0,error:error.message};
+    if(rec.overall_result==='RET'){ try{ await autoOpenNCR(ins||rec,{stock_code:mk.stok_kodu,stock_name:mk.stok_adi,customer:mk.cari_adi}); }catch(e){} }
+    return {made:1};
+  }
+  // B) ÜRETİM (seri_basi / proses / son) — kontrol planına göre eksikleri kur
+  const {data:prods}=await sb.from('productions').select('*').eq('id',prodId).limit(1);
+  let p=(prods||[])[0];
+  if(!p) return {made:0,reason:'üretim yok'};
+  if(!p.start_time) return {made:0,reason:'start_time yok'};
+  const start=new Date(p.start_time);
+  let end=p.end_time?new Date(p.end_time):new Date();
+  let finished=!!p.end_time;
+  let durMin=Math.round((end.getTime()-start.getTime())/60000);
+  if(!p.end_time){ if(end<=start) return {made:0,reason:'bitiş başlamadan önce'}; if(durMin<1)durMin=1; await sb.from('productions').update({end_time:end.toISOString(),duration_min:durMin}).eq('id',p.id); p.end_time=end.toISOString(); finished=true; }
+  else if(durMin<0){ durMin+=1440; }
+  const {data:plan}=await sb.from('control_plan_items').select('*').eq('stock_code',p.stock_code).eq('active',true);
+  const items=opItemsFor((plan||[]),p.op_no);
+  if(!items.length) return {made:0,reason:'plan yok'};
+  const freq=prosesCycleFreq(stageItems(items,'proses'));
+  let have=new Set();
+  if(regen){ await sb.from('control_records').delete().eq('production_id',p.id); }
+  else { const {data:exr}=await sb.from('control_records').select('stage').eq('production_id',p.id); (exr||[]).forEach(r=>have.add(r.stage)); }
+  const recs=[]; const endMs=(end.getTime()>start.getTime())?end.getTime():(start.getTime()+6*60000);
+  const offWhen=()=>new Date(Math.min(start.getTime()+Math.round((1+Math.random()*4)*60000), endMs-30000));
+  if(!have.has('seri_basi')){ const r=buildAutoRec(p,'seri_basi',offWhen(),items,null); if(r){r.note='izleme-türet';recs.push(r);} }
+  if(!have.has('proses')){ let n=0; for(let t=freq;t<durMin&&n<120;t+=freq,n++){ const jit=Math.round((Math.random()*10-5)*60000); let tm=start.getTime()+t*60000+jit; tm=Math.min(Math.max(tm,start.getTime()+60000),end.getTime()-60000); const r=buildAutoRec(p,'proses',new Date(tm),items,null); if(r){r.note='izleme-türet';recs.push(r);} } }
+  if(finished && !have.has('son')){ const r=buildAutoRec(p,'son',end,items,null); if(r){r.note='izleme-türet';recs.push(r);} }
+  if(!have.has('giris') && stageItems(items,'giris').length){ const r=buildAutoRec(p,'giris',offWhen(),items,null); if(r){r.note='izleme-türet';recs.push(r);} }
+  if(recs.length){ const {data:ins,error}=await sb.from('control_records').insert(recs).select(); if(error) return {made:0,error:error.message}; for(const rc of (ins||[])) if(rc.overall_result==='RET'){ try{ await autoOpenNCR(rc,p); }catch(e){} } return {made:recs.length}; }
+  return {made:0,reason:'eksik yok'};
+}
 async function renderIzleme(root){
   root.innerHTML='';
   const isAdmin=(PROFILE&&PROFILE.is_admin)||can('import');
@@ -2998,7 +3046,7 @@ async function renderIzleme(root){
         const plan=planOps[n.stok_kodu]||{};
         const opNos=[...new Set([...Object.keys(plan),...Object.keys(realByOp)].map(Number))].sort((a,b)=>a-b);
         const ops=opNos.map(op=>({op_no:op, proc:(plan[op]&&plan[op].proc)||0, fin:(plan[op]&&plan[op].fin)||0, real:realByOp[op]||{seri_basi:0,proses:0,son:0}}));
-        _qcMap[n.node_no]={ ops, opened:matched.length>0, opMachine };
+        _qcMap[n.node_no]={ ops, opened:matched.length>0, opMachine, prodIds:matched.map(p=>p.id) };
       });
     }catch(e){}
   }
@@ -3107,6 +3155,25 @@ async function renderIzleme(root){
     if(!varMi){ try{ await sb.from('izleme_node').update({kilitli:true}).eq('trace_key',key); }catch(e){} }
     loadTrace(key, irs, s);
   }
+  // EKSİK KONTROLLERİ TÜRET: kontrol planına göre seri/proses/son + hammadde giriş kalite (yalnız Supabase'e)
+  async function turetTrace(nodes,key,irs,s){
+    if(!(PROFILE&&PROFILE.is_admin)){ toast('Yetki yok (admin).','err'); return; }
+    if(!confirm('Eksik kontroller — kontrol planı OLAN ürünlerde seri başı/proses/son + hammadde giriş kalite — kontrol planına göre TÜRETİLİP yalnız bizim QC sistemimize (Supabase control_records) yazılacak.\n\n⛔ LeanSys’e HİÇBİR ŞEY yazılmaz. Mal kabul/hammadde/müşteri türetilmez (gerçek veri). Türetilenler sonradan silinebilir.\n\nDevam?')) return;
+    let total=0, atlanan=0;
+    for(const n of nodes.filter(x=>x.tur==='uretim')){
+      const q=_qcMap[n.node_no]; const pids=(q&&q.prodIds)||[];
+      if(!pids.length){ atlanan++; continue; }                 // üretim bizim sistemde yok → türetilemez (Üretimler'den çek)
+      for(const pid of pids){ try{ const r=await turetEksikQC({prodId:pid}); total+=(r.made||0); }catch(e){} }
+    }
+    for(const n of nodes.filter(x=>x.tur==='giris'&&x.stok_kodu&&x.irsaliye&&x.irsaliye!=='/')){
+      const parts=(n.irsaliye||'').split('/'); const seri=(parts[0]||'').trim(); const sira=(parts[1]||'').trim();
+      let mq=sb.from('mal_kabul').select('*').eq('stok_kodu',n.stok_kodu); if(seri)mq=mq.eq('seri',seri); if(sira){ const sn=Number(sira); mq=mq.eq('sira',isNaN(sn)?sira:sn); }
+      const {data:mks}=await mq.limit(1); const mk=(mks||[])[0];
+      if(mk){ try{ const r=await turetEksikQC({mk}); total+=(r.made||0); }catch(e){} }
+    }
+    toast(total+' kontrol kaydı türetildi (Supabase)'+(atlanan?(' · '+atlanan+' üretim sistemde yok, atlandı'):''), total?'ok':'err');
+    loadTrace(key,irs,s);
+  }
   async function loadTrace(key, irs, s){
     _izKeep={...(_izKeep||{}), key, irs, s};   // sekme değişince geri yüklensin
     out.innerHTML='<div class="card" style="color:var(--muted)">Yükleniyor…</div>';
@@ -3126,6 +3193,7 @@ async function renderIzleme(root){
       el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end'},
         el('button',{class:'btn sm '+(locked?'':'sec'),style:'flex:0 0 auto;white-space:nowrap',title:locked?'Kilitli — iz donduruldu, değişmez. Tıkla: kilidi aç (yeniden çekilebilir).':'Açık — Yeniden İzle ile güncellenebilir. Tıkla: kilitle (dondur).',onclick:async()=>{ const {error}=await sb.from('izleme_node').update({kilitli:!locked}).eq('trace_key',key); if(error){toast(esc(error.message),'err');return;} toast(locked?'🔓 Kilit açıldı — Yeniden İzle ile güncellenebilir.':'🔒 İz kilitlendi (donduruldu).','ok'); loadTrace(key,irs,s); }}, locked?'🔒 Kilitli':'🔓 Açık'),
         (!locked && s)?el('button',{class:'btn sm sec',style:'flex:0 0 auto;white-space:nowrap',title:'LeanSys’ten yeniden çek (kilit açık)',onclick:()=>doTrace(urun,s,true)},'🔄 Yeniden İzle'):'',
+        isAdmin?el('button',{class:'btn sm',style:'flex:0 0 auto;white-space:nowrap;background:#7c3aed;border-color:#7c3aed',title:'Kontrol planı olan ürünlerde EKSİK seri başı/proses/son + hammadde giriş kalite kayıtlarını plana göre TÜRET — yalnız Supabase (LeanSys’e yazılmaz)',onclick:()=>turetTrace(nodes,key,irs,s)},'🔧 Türet'):'',
         el('button',{class:'btn sm sec',style:'flex:0 0 auto;white-space:nowrap',onclick:()=>out.querySelectorAll('.iz-kids').forEach(k=>k.style.display='')},'⊞ Aç'),
         el('button',{class:'btn sm sec',style:'flex:0 0 auto;white-space:nowrap',onclick:()=>out.querySelectorAll('.iz-kids').forEach(k=>k.style.display='none')},'⊟ Kapat'),
         isAdmin?el('button',{class:'btn sm danger',style:'flex:0 0 auto;white-space:nowrap',onclick:async()=>{ if(!confirm('Bu iz SUPABASE’ten silinsin mi? (LeanSys’e dokunulmaz)'))return; const {error}=await sb.from('izleme_node').delete().eq('trace_key',key); if(error){toast(esc(error.message),'err');return;} _izKeep={...(_izKeep||{}),key:null}; out.innerHTML=''; toast('İz silindi (Supabase).','ok'); }},'🗑 Sil'):''
