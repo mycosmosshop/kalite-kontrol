@@ -1796,7 +1796,7 @@ async function renderPlan(){
             const ids=sorted.map(x=>x.id); const [m]=ids.splice(from,1); ids.splice(oi,0,m); reorderPlan(sc,ids,'Satır taşındı.'); }
         }:{},
         olcuCell,
-        el('td',{},pin(it,'operasyon_karti',{w:'70px'})),
+        el('td',{},pin(it,'operasyon_karti',{w:'96px'})),
         el('td',{},pin(it,'op_no',{num:true,w:'44px'})),
         el('td',{},pin(it,'process_control',{bool:true})),
         el('td',{},pin(it,'giris_kalite',{bool:true})),
@@ -2260,7 +2260,7 @@ function lkpToItems(sc, stokAdi, lines){
     const isNum = r.hedef_nicel!=null;
     return {
       stock_code:sc, stock_name:stokAdi||null, active:true, seq:i+1,
-      op_no: r.op_no!=null?Number(r.op_no):null, operasyon_karti:null,
+      op_no: r.op_no!=null?Number(r.op_no):null, operasyon_karti: r.operasyon_karti||null,
       measure_name:r.olculecek, is_qualitative:!isNum,
       target: isNum ? r.hedef_nicel : null,
       unit: isNum ? (r.hedef_nitel||null) : null,
