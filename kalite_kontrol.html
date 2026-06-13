@@ -3054,27 +3054,35 @@ async function renderIzleme(root){
       (items||[]).forEach(it=>{ if(it.active===false)return; const op=(it.op_no==null?0:Number(it.op_no)); const s=planOps[it.stock_code]||(planOps[it.stock_code]={}); const o=s[op]||(s[op]={proc:0,fin:0}); if(it.process_control!==false)o.proc++; if(it.final_control!==false)o.fin++; });
       // 4) her üretim düğümü için: op kırılımı (plan beklenen + gerçek kayıt)
       const dDiff=(a,b)=>{ if(!a||!b)return 9999; return Math.abs((new Date(a)-new Date(b))/86400000); };
+      // PASS 1: her üretim düğümü için eşleşen üretimler (iş emri ile birebir; yoksa stok+tarih)
+      const nodeMatched={};
+      uret.forEach(n=>{ const wo=(n.work_order==null?'':String(n.work_order).trim()); nodeMatched[n.node_no]= wo ? prodList.filter(p=>p.wo===wo) : prodList.filter(p=>p.stock===n.stok_kodu && dDiff(p.d,n.tarih)<=2); });
+      // MAKİNE-BAZLI PAYLAŞIM: aynı makinedeki op (ör. SICAK SILINDIR laminasyonu) bu izde her seviyede AYNI kontrolleri göstersin
+      const pById={}; prodList.forEach(p=>pById[p.id]=p);
+      const traceIds=new Set(); Object.values(nodeMatched).forEach(arr=>arr.forEach(p=>traceIds.add(p.id)));
+      const machBy={};   // makine -> {seri_basi,proses,son, ids:[]} (izdeki benzersiz üretimlerden)
+      traceIds.forEach(id=>{ const p=pById[id]; if(!p||!p.mac)return; const o=machBy[p.mac]||(machBy[p.mac]={seri_basi:0,proses:0,son:0,ids:[]}); o.ids.push(id); const r=recByPid[id]; if(r){o.seri_basi+=r.seri_basi;o.proses+=r.proses;o.son+=r.son;} });
+      const machHas=m=>{ const s=m&&machBy[m]; return !!(s&&(s.seri_basi+s.proses+s.son)>0); };
+      // PASS 2: gate'leri kur, makine paylaşımını uygula
       uret.forEach(n=>{
-        // ÖNCE iş emri (work_order) ile BİREBİR eşle (bu sevki yapan tek üretim); yoksa stok+tarih penceresine düş
-        const wo=(n.work_order==null?'':String(n.work_order).trim());
-        const matched = wo ? prodList.filter(p=>p.wo===wo) : prodList.filter(p=>p.stock===n.stok_kodu && dDiff(p.d,n.tarih)<=2);
+        const matched=nodeMatched[n.node_no];
         const realByOp={}, opMachine={}, opProdId={}, opProdIds={};
         matched.forEach(p=>{ if(p.op!=null && p.mac && !opMachine[p.op]) opMachine[p.op]=p.mac; if(p.op!=null && !opProdId[p.op]) opProdId[p.op]=p.id; if(p.op!=null){ (opProdIds[p.op]=opProdIds[p.op]||[]).push(p.id); } const r=recByPid[p.id]; if(!r)return; const o=realByOp[p.op]||(realByOp[p.op]={seri_basi:0,proses:0,son:0}); o.seri_basi+=r.seri_basi; o.proses+=r.proses; o.son+=r.son; });
+        const realFor=(op,mac)=>{ if(machHas(mac)){ opProdIds[op]=machBy[mac].ids.slice(); const s=machBy[mac]; return {seri_basi:s.seri_basi,proses:s.proses,son:s.son}; } return realByOp[op]||{seri_basi:0,proses:0,son:0}; };
         const plan=planOps[n.stok_kodu]||{};
         const planKeys=Object.keys(plan).map(Number);
         const planHasRealOps=planKeys.some(o=>o>0);
         let ops;
         if(planHasRealOps){
           const opNos=[...new Set([...planKeys,...Object.keys(realByOp).map(Number)])].sort((a,b)=>a-b);
-          ops=opNos.map(op=>({op_no:op, proc:(plan[op]&&plan[op].proc)||0, fin:(plan[op]&&plan[op].fin)||0, real:realByOp[op]||{seri_basi:0,proses:0,son:0}}));
+          ops=opNos.map(op=>{ const mac=opMachine[op]||''; return {op_no:op, proc:(plan[op]&&plan[op].proc)||0, fin:(plan[op]&&plan[op].fin)||0, real:realFor(op,mac)}; });
         } else {
-          // plan GENEL (op 0/yok) → tüm üretim op'larının kayıtlarını TEK gate'te topla (op eşleşmesi yok)
-          const agg={seri_basi:0,proses:0,son:0}; Object.values(realByOp).forEach(r=>{agg.seri_basi+=r.seri_basi;agg.proses+=r.proses;agg.son+=r.son;});
+          // plan GENEL → tek gate; makinesi = bu üretimin makinesi (üst seviyedeki aynı makine op'uyla paylaşılır)
+          const mac=n.makine||''; if(mac)opMachine[0]=mac;
           const gp=plan[0]||{proc:0,fin:0};
-          ops=[{op_no:0, proc:gp.proc, fin:gp.fin, real:agg}];
-          opProdIds[0]=matched.map(p=>p.id);
+          ops=[{op_no:0, proc:gp.proc, fin:gp.fin, real:realFor(0,mac)}];
         }
-        _qcMap[n.node_no]={ ops, opened:matched.length>0, opMachine, opProdId, opProdIds, prodIds:matched.map(p=>p.id) };
+        _qcMap[n.node_no]={ ops, opened:(matched.length>0 || machHas(n.makine)), opMachine, opProdId, opProdIds, prodIds:matched.map(p=>p.id) };
       });
     }catch(e){}
   }
