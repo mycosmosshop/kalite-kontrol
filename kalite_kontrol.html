@@ -2613,13 +2613,15 @@ function resolutionFor(it){
 }
 function randn(){ let u=0,v=0; while(!u)u=Math.random(); while(!v)v=Math.random(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
 function genMeasure(it){
-  const lo=Number(it.lower_limit),hi=Number(it.upper_limit),t=Number(it.target),res=resolutionFor(it);
+  const lo=Number(it.lower_limit),hi=Number(it.upper_limit),res=resolutionFor(it);
   const d=res>=1?0:(res>=0.1?1:(res>=0.01?2:3));
-  // özel: Yanma Hızı → kompozit (PE+PP) = 50, PE = 0
-  const nm=deTr(it.measure_name||'');
+  let t=Number(it.target);
+  if(!isFinite(t)&&it.nitel_hedef){ const mn=String(it.nitel_hedef).replace(',','.').match(/-?\d+(?:\.\d+)?/); if(mn)t=Number(mn[0]); }   // hedef sayısal değilse nitel hedeften çöz (ör "100mm/dk"→100, "30 Kg/M3"→30)
+  // özel: Yanma Hızı → kompozit (PE+PP/EVA) = 50, saf PE (FR, kendiliğinden söner) = 0 — ölçü adından YA DA ürün adından tespit (PE genelde ürün adında: "...P.E.")
+  const nm=deTr(it.measure_name||''), ctx=nm+' '+deTr(it._prod||it.stock_name||'');
   if(/yanma/.test(nm)){
-    if(/kompozit|pe\+pp|pp\+pe/.test(nm)) return (50).toFixed(d);
-    if(/\bpe\b/.test(nm)) return (0).toFixed(d);
+    if(/kompozit|pe\+pp|pp\+pe|\bpp\b|\beva\b/.test(ctx)) return (50).toFixed(d);
+    if(/\bpe\b|p\.e|polietilen/.test(ctx)) return (0).toFixed(d);
   }
   let mean=isFinite(t)?t:(isFinite(lo)&&isFinite(hi)?(lo+hi)/2:(isFinite(lo)?lo:(isFinite(hi)?hi:0)));
   let std=(isFinite(lo)&&isFinite(hi))?(hi-lo)/6:Math.max(res,Math.abs(mean)*0.01);
@@ -2637,8 +2639,12 @@ const AUTO_MEASURER='Burak Silahlı';   // otomatik üretimlerde ölçümcü (ka
 function shiftForTime(d){ const dt=(d instanceof Date)?d:new Date(d); if(isNaN(dt))return null; const h=dt.getHours(); return (h>=8&&h<20)?1:2; }  // 08:00–20:00 → 1. vardiya, 20:00–08:00 → 2. vardiya
 function genSamples(it,n,override){
   const out=[];
+  // is_qualitative olsa bile ÖLÇÜLEBİLİR olanlar sayı üretsin (kullanıcı: "yanma hızı ölçüsel, değeri olmalı"):
+  //   yanma hızı, ya da nitel hedefi sayı+ölçü birimi olanlar (ör "100mm/dk", "30 Kg/M3") → değer üret; gerçek nitel (GÖZLE/çeşit) boş kalır.
+  const nitel=String(it.nitel_hedef||'');
+  const olculebilir = !it.is_qualitative || /yanma/.test(deTr(it.measure_name||'')) || (/\d/.test(nitel) && /(mm|cm|dk|sn|kg|gr|m3|m2|mpa|mic|%|°)/i.test(nitel));
   for(let i=0;i<n;i++){
-    if(it.is_qualitative){ out.push({value:null,ok:true,by:AUTO_MEASURER}); continue; }
+    if(!olculebilir){ out.push({value:null,ok:true,by:AUTO_MEASURER}); continue; }
     const ov=(override&&override.length)?override[i%override.length]:null;   // ilk yapılan değeri taşı (ör. yanma)
     out.push({value:ov?ov.value:genMeasure(it),ok:true,by:AUTO_MEASURER});
   }
@@ -2669,6 +2675,7 @@ function sampleCount(it,s){ const v=(s==='son'&&it.son_kontrol_ornekleme)?it.son
 function buildAutoRec(p,stage,when,items,priorMap){
   const its=stageItems(items,stage); if(!its.length)return null;
   const vals=its.map(it=>{ const n=sampleCount(it,stage);
+    it._prod=p.stock_name||'';   // genMeasure ürün adından PE/kompozit (yanma) tespiti yapabilsin
     // yanma gibi periyodik ölçümlerde ilk yapılan kaydın değerini taşı
     const ov=(priorMap&&/yanma/.test(deTr(it.measure_name||'')))?priorMap[p.stock_code+'|'+it.measure_name]:null;
     return {plan_item_id:it.id,measure_name:it.measure_name,target:it.target,unit:it.unit,nitel_hedef:it.nitel_hedef,
@@ -2972,10 +2979,12 @@ async function turetEksikQC({prodId=null, mk=null, regen=false, baseDate=null}={
     const irs=(mk.seri||'')+(mk.sira?(' / '+mk.sira):'');
     // dedup: mal_kabul kaydı varsa rec_id ile; yoksa stok+irsaliye ile (iz girişi gerçek LeanSys verisinden)
     let done=[];
-    if(mk.rec_id){ const {data:d}=await sb.from('control_records').select('id').eq('mal_kabul_rec_id',mk.rec_id).limit(1); done=d||[]; }
-    else { const {data:d}=await sb.from('control_records').select('id').eq('stage','giris').eq('stock_code',mk.stok_kodu).eq('giris_irsaliye',irs).limit(1); done=d||[]; }
-    if(done.length && !regen) return {made:0,reason:'giriş zaten var'};
-    if(done.length && regen){ if(mk.rec_id)await sb.from('control_records').delete().eq('mal_kabul_rec_id',mk.rec_id); else await sb.from('control_records').delete().eq('stage','giris').eq('stock_code',mk.stok_kodu).eq('giris_irsaliye',irs); }
+    if(mk.rec_id){ const {data:d}=await sb.from('control_records').select('id,note').eq('mal_kabul_rec_id',mk.rec_id); done=d||[]; }
+    else { const {data:d}=await sb.from('control_records').select('id,note').eq('stage','giris').eq('stock_code',mk.stok_kodu).eq('giris_irsaliye',irs); done=d||[]; }
+    const hepsiTuret = done.length>0 && done.every(x=>x.note==='izleme-türet');   // mevcut giriş kaydı SADECE türetilmişlerden mi?
+    // GERÇEK/manuel giriş varsa DOKUNMA (koru). Yalnız türetilmişse YENİLE (ör. Yanma Hızı değeri düzeldi) — gerçeği silmeden.
+    if(done.length && !regen && !hepsiTuret) return {made:0,reason:'giriş zaten var (gerçek)'};
+    if(done.length && (regen || hepsiTuret)){ if(mk.rec_id)await sb.from('control_records').delete().eq('mal_kabul_rec_id',mk.rec_id).eq('note','izleme-türet'); else await sb.from('control_records').delete().eq('stage','giris').eq('stock_code',mk.stok_kodu).eq('giris_irsaliye',irs).eq('note','izleme-türet'); }
     const iso=girisCtrlISO(mk.tarih); const when=iso?new Date(iso):new Date();
     const p={ id:null, stock_code:mk.stok_kodu, stock_name:mk.stok_adi, machine_code:null, work_order:irs, op_no:null, shift:shiftForTime(when) };
     const rec=buildAutoRec(p,'giris',when,items,null);
