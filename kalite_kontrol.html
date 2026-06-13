@@ -2963,7 +2963,7 @@ async function ensurePlan(stok){
   try{ await _lkpFlush([{sc:stok, lines}]); return true; }catch(e){ return false; }
 }
 // ====== TÜRET: kontrol planına göre EKSİK QC kaydı üret — YALNIZ Supabase'e (LeanSys'e ASLA yazılmaz) ======
-async function turetEksikQC({prodId=null, mk=null, regen=false}={}){
+async function turetEksikQC({prodId=null, mk=null, regen=false, baseDate=null}={}){
   // A) GİRİŞ KALİTE (hammadde mal kabul) — yalnız giriş kalite PLANI olan stoklar
   if(mk){
     const {data:plan}=await sb.from('control_plan_items').select('*').eq('stock_code',mk.stok_kodu).eq('active',true);
@@ -2991,8 +2991,9 @@ async function turetEksikQC({prodId=null, mk=null, regen=false}={}){
   let p=(prods||[])[0];
   if(!p) return {made:0,reason:'üretim yok'};
   if(!p.start_time) return {made:0,reason:'start_time yok'};
-  const start=new Date(p.start_time);
+  let start=new Date(p.start_time);
   let end=p.end_time?new Date(p.end_time):new Date();
+  if(baseDate){ const bd=new Date(baseDate); if(!isNaN(bd.getTime())){ const dur=Math.max(end.getTime()-start.getTime(),6*3600000); const sh=d=>new Date(bd.getFullYear(),bd.getMonth(),bd.getDate(),d.getHours(),d.getMinutes(),d.getSeconds()); start=sh(start); end=new Date(start.getTime()+dur); } }   // türetilen kontroller TRACE tarihini alsın (üretim kaydı eski tarihli olsa da Şubat/Mart gelmesin)
   let finished=!!p.end_time;
   let durMin=Math.round((end.getTime()-start.getTime())/60000);
   if(!p.end_time){ if(end<=start) return {made:0,reason:'bitiş başlamadan önce'}; if(durMin<1)durMin=1; await sb.from('productions').update({end_time:end.toISOString(),duration_min:durMin}).eq('id',p.id); p.end_time=end.toISOString(); finished=true; }
@@ -3351,17 +3352,18 @@ async function renderIzleme(root){
       // bu üretimin iş emri kayıtlarını (op_no ile) çek — bizde yoksa LeanSys'ten /pullprod
       let prods=[];
       if(n.work_order){
-        let {data:pp}=await sb.from('productions').select('id,op_no').eq('work_order',String(n.work_order)).eq('stock_code',n.stok_kodu);
-        if(!pp||!pp.length){ try{ await fetch('http://127.0.0.1:17777/pullprod?wo='+encodeURIComponent(n.work_order),{mode:'cors'}); }catch(e){} ({data:pp}=await sb.from('productions').select('id,op_no').eq('work_order',String(n.work_order)).eq('stock_code',n.stok_kodu)); if(pp&&pp.length)cekilen++; }
+        let {data:pp}=await sb.from('productions').select('id,op_no,prod_date,start_time').eq('work_order',String(n.work_order)).eq('stock_code',n.stok_kodu);
+        if(!pp||!pp.length){ try{ await fetch('http://127.0.0.1:17777/pullprod?wo='+encodeURIComponent(n.work_order),{mode:'cors'}); }catch(e){} ({data:pp}=await sb.from('productions').select('id,op_no,prod_date,start_time').eq('work_order',String(n.work_order)).eq('stock_code',n.stok_kodu)); if(pp&&pp.length)cekilen++; }
         prods=pp||[];
-      } else { const ids=(q&&q.prodIds)||[]; if(ids.length){ const {data:pp}=await sb.from('productions').select('id,op_no').in('id',ids); prods=pp||[]; } }
+      } else { const ids=(q&&q.prodIds)||[]; if(ids.length){ const {data:pp}=await sb.from('productions').select('id,op_no,prod_date,start_time').in('id',ids); prods=pp||[]; } }
       if(!prods.length){ atlanan++; continue; }
-      // HER OP için BİR üretim türet (tüm operasyonlar kapsanır; op başına tek = çoğaltma yok)
-      const byOp={}; prods.forEach(p=>{ const op=(p.op_no==null?'_':String(p.op_no)); if(byOp[op]==null)byOp[op]=p.id; });
+      // HER OP için BİR üretim — trace düğümünün tarihine EN YAKIN olanı (eski Şubat/Mart kaydını değil); op başına tek
+      const nodeMs=n.tarih?new Date(n.tarih).getTime():null;
+      const byOp={}; prods.forEach(p=>{ const op=(p.op_no==null?'_':String(p.op_no)); const pm=p.prod_date?new Date(p.prod_date).getTime():(p.start_time?new Date(p.start_time).getTime():null); const cur=byOp[op]; if(!cur){ byOp[op]={id:p.id,m:pm}; } else if(nodeMs!=null&&pm!=null&&cur.m!=null&&Math.abs(pm-nodeMs)<Math.abs(cur.m-nodeMs)){ byOp[op]={id:p.id,m:pm}; } });
       const allIds=prods.map(p=>p.id);
       try{ await sb.from('control_records').delete().in('production_id',allIds).eq('note','izleme-türet'); }catch(e){}   // eski çoğaltılmışları temizle
       await ensurePlan(n.stok_kodu);   // kontrol planı yoksa LeanSys'ten çek+içe-aktar
-      for(const op in byOp){ try{ const r=await turetEksikQC({prodId:byOp[op]}); total+=(r.made||0); }catch(e){} }
+      for(const op in byOp){ try{ const r=await turetEksikQC({prodId:byOp[op].id, baseDate:n.tarih}); total+=(r.made||0); }catch(e){} }   // baseDate=trace tarihi → kontroller doğru (Haziran) tarihli
     }
     // GİRİŞ KALİTE: iz giriş düğümünün GERÇEK LeanSys verisinden (mal kabul tablosu şart değil); yalnız giriş kalite PLANI olan hammadde
     for(const n of nodes.filter(x=>x.tur==='giris'&&x.stok_kodu)){
