@@ -3212,7 +3212,8 @@ async function renderIzleme(root){
     const fireKabul=!!(mb.duzeltildi&&mb.duzeltildi.fire_kabul);
     const fireKg=mb.fire_kg!=null?Number(mb.fire_kg):((giren!=null&&cikan!=null)?giren-cikan:null);
     const ok=fireKabul||(denge!=null&&Math.abs(denge)<=2); const col=ok?'#15803d':'#b45309';
-    const verdict=fireKabul?('✓ dengeli (fire '+commaFmt(rnd2(fireKg))+' kg kabul)'):(ok?'✓ dengeli (±%2)':('fark '+(denge>0?'+':'')+denge+'% (proses firesi/sapma)'));
+    const duzeltildiVar=!!(mb.duzeltildi);
+    const verdict=fireKabul?('✓ dengeli (fire '+commaFmt(rnd2(fireKg))+' kg kabul)'):(ok?'✓ dengeli (±%2)':('fark '+(denge>0?'+':'')+denge+'% '+(duzeltildiVar?'(sapma)':'(planlanan trim — BOM, ölçülen değil)')));
     const dzBadge=(mb.duzeltildi&&IZ_ADMIN)?(' <span style="color:#7c3aed;font-size:9px;border:1px solid #7c3aed;border-radius:3px;padding:0 3px" title="'+esc((mb.duzeltildi.by||'')+' · '+String(mb.duzeltildi.at||'').slice(0,16).replace('T',' '))+'">düzeltildi</span>'):'';
     const wrap=el('div',{style:'padding:1px 0 3px '+pad+'px'});
     const caret=el('span',{style:'color:var(--accent);cursor:pointer'},'▸ hesabı göster');
@@ -3227,7 +3228,7 @@ async function renderIzleme(root){
     const cikMik=mb.cikti_miktar!=null?Number(mb.cikti_miktar):null;
     let h='<table style="border-collapse:collapse;width:100%;min-width:760px;font-size:10.5px">';
     h+='<thead><tr style="background:var(--panel);font-weight:700;color:var(--muted)">'+
-       ['Malzeme','Tüketilen','kg/birim (formül)','= Tüketilen kg','Reçete oranı','BOM Fire %','Beklenen kg','Gerç. Fire %'].map(x=>'<th style="'+C+';text-align:left">'+x+'</th>').join('')+'</tr></thead><tbody>';
+       ['Malzeme',(mb.duzeltildi?'Tüketilen':'Tüketilen (plan)'),'kg/birim (formül)','= Tüketilen kg','Reçete oranı','BOM Fire %','Beklenen kg','Fark %'].map(x=>'<th style="'+C+';text-align:left">'+x+'</th>').join('')+'</tr></thead><tbody>';
     kalem.forEach(k=>{
       const fr=Number(k.fire||0);
       const netBeklKg=(k.beklenen_kg!=null)?(Number(k.beklenen_kg)/(1+fr/100)):null;   // fire'sız (net ürün içeriği) kg
@@ -3241,7 +3242,7 @@ async function renderIzleme(root){
         '<td style="'+C+';text-align:right">'+(k.oran!=null?(commaFmt(k.oran)+' '+esc(k.birim||'')+'/'+esc(mb.cikti_birim||'br')):'<span style="color:var(--muted)">eşleşmedi</span>')+'</td>'+
         '<td style="'+C+';text-align:right" title="ürün ağacı (LeanSys) fire oranı">'+(k.oran!=null?('%'+commaFmt(fr)):'—')+'</td>'+
         '<td style="'+C+';text-align:right">'+num(k.beklenen_kg)+'</td>'+
-        '<td style="'+C+';text-align:right;color:'+gc+'" title="gerçekleşen fire = (tüketilen − net reçete) / net reçete">'+(gerc==null?'—':((gerc>0?'+':'')+commaFmt(gerc)+'%'))+'</td>'+
+        '<td style="'+C+';text-align:right;color:'+gc+'" title="(tüketilen − net reçete) / net reçete · düzeltilmemişse tüketilen=LeanSys KullanilacakMiktar (PLANLANAN, ölçülen değil)">'+(gerc==null?'—':((gerc>0?'+':'')+commaFmt(gerc)+'%'))+'</td>'+
         '</tr>';
     });
     h+='<tr style="background:var(--panel);font-weight:700">'+
@@ -3260,6 +3261,7 @@ async function renderIzleme(root){
        '</div>';
     const fireli=kalem.filter(k=>k.fire);
     h+='<div style="padding:4px 8px;font-size:10px;color:var(--muted);border-top:1px solid var(--line)">📋 <b>Beklenen</b> = reçete oranı × çıktı × (1 + fire %) — <b>ürün ağacındaki fire % hesaba dahil</b>'+(fireli.length?(': '+fireli.map(k=>esc(k.kod)+' %'+commaFmt(k.fire)).join(' · ')):' (bu üründe tanımlı fire %0)')+'</div>';
+    if(!mb.duzeltildi){ h+='<div style="padding:4px 8px;font-size:10px;color:#b45309;border-top:1px solid var(--line)">ℹ️ <b>Tüketilen = LeanSys “KullanilacakMiktar” (PLANLANAN, ürün ağacından)</b> — gerçek ölçülen tartım değil. Bu yüzden sapma <b>ürün başına sabittir</b> (her üretimde aynı). Gerçek/tolerans değeri için <b>✏️ Düzelt → 🎯 Toleransa getir</b>.</div>'; }
     det.innerHTML=h;
     let open=false; head.onclick=e=>{ e.stopPropagation(); open=!open; det.style.display=open?'':'none'; caret.textContent=open?'▾ hesabı gizle':'▸ hesabı göster'; };
     wrap.append(head,det);
@@ -3270,7 +3272,7 @@ async function renderIzleme(root){
     const kalem=(mb.kalemler||[]).map(k=>({...k}));
     const panel=el('div',{style:'margin:6px 0;border:1px solid #7c3aed;border-radius:8px;padding:8px;background:var(--panel2)'});
     panel.append(el('div',{style:'font-weight:700;font-size:11px;margin-bottom:2px;color:#7c3aed'},'✏️ Kütle denkliği düzelt'));
-    panel.append(el('div',{style:'font-size:10px;color:var(--muted);margin-bottom:6px'},'Kullanılan kg ve/veya reçete (beklenen) kg değerlerini düzenle (çevrim/yoğunluk yanlışsa) → denge canlı hesaplanır. Ya da “Oto dengele” farkı PROSES FİRESİ olarak kabul eder. LeanSys’e yazılmaz.'));
+    panel.append(el('div',{style:'font-size:10px;color:var(--muted);margin-bottom:6px',html:'LeanSys “KullanilacakMiktar” <b>planlanan</b>dır (ölçülen değil) → sapma sabit. <b>🎯 Toleransa getir</b>: kullanılan kg’ları reçeteye ±tolerans içinde gerçekçi ölçüm gibi ayarlar. <b>Oto dengele</b>: farkı proses firesi sayar. Elle de düzenlenir. LeanSys’e yazılmaz.'}));
     let fireKabul=!!(mb.duzeltildi&&mb.duzeltildi.fire_kabul);
     const inputs=[]; const totBox=el('div',{style:'font-size:11px;margin-top:7px;font-weight:600'});
     const recompute=()=>{
@@ -3297,11 +3299,19 @@ async function renderIzleme(root){
     });
     panel.append(tbl,totBox);
     const oto=el('button',{class:'btn sm sec',style:'flex:0;white-space:nowrap',onclick:()=>{ fireKabul=!fireKabul; oto.textContent=fireKabul?'⚖ Fire kabul: AÇIK':'⚖ Oto dengele (fark=fire)'; recompute(); }},'⚖ Oto dengele (fark=fire)');
+    // 🎯 TOLERANSA GETİR: kullanılan kg'ları reçete beklenenine ±tolerans içinde rastgele ("ölçülen gibi") ayarla → denge tolerans içine girer + üretimden üretime değişir
+    const tolIn=el('input',{class:'inp',type:'number',step:'0.5',min:'0',style:'width:50px;padding:2px 4px;font-size:10.5px',value:'2'});
+    const tolBtn=el('button',{class:'btn sm sec',style:'flex:0;white-space:nowrap',title:'Her malzemenin KULLANILAN kg değerini, reçete (beklenen) ± bu tolerans içinde rastgele ölçüm gibi ayarlar → planlanan sabit sapma yerine tolerans içinde gerçekçi denge. LeanSys’e yazılmaz.',onclick:()=>{
+      const T=Math.max(0,parseFloat((tolIn.value||'').replace(',','.'))||0);
+      inputs.forEach(it=>{ const be=parseFloat((it.beIn.value||'').replace(',','.')); if(!isFinite(be)||be===0)return; const jit=(Math.random()*2-1)*T/100; it.kgIn.value=String(Math.round(be*(1+jit)*1000)/1000); });
+      fireKabul=false; oto.textContent='⚖ Oto dengele (fark=fire)'; recompute();
+    }},'🎯 Toleransa getir');
+    const tolWrap=el('div',{style:'display:flex;align-items:center;gap:4px;flex:0',html:'<span style="font-size:10px;color:var(--muted)">Tolerans ±</span>'}); tolWrap.append(tolIn, el('span',{style:'font-size:10px;color:var(--muted)'},'%'), tolBtn);
     const kaydet=el('button',{class:'btn sm',style:'flex:0;background:#7c3aed;border-color:#7c3aed',onclick:async()=>{
       const r=recompute();
       const newKalem=inputs.map(it=>{ const kg=parseFloat((it.kgIn.value||'').replace(',','.')); const be=parseFloat((it.beIn.value||'').replace(',','.')); const nkg=isNaN(kg)?it.k.kg:kg, nbe=isNaN(be)?it.k.beklenen_kg:be; return {...it.k, kg:nkg, beklenen_kg:nbe, sapma:(nbe?Math.round((nkg-nbe)/nbe*1000)/10:it.k.sapma)}; });
       const who=(PROFILE&&(PROFILE.full_name||PROFILE.email))||'admin';
-      const newMb={...mb, kalemler:newKalem, giren_kg:rnd2(r.giren), cikti_kg:rnd2(r.urun), denge_yuzde:r.denge, fire_kg:rnd2(r.fire), duzeltildi:{by:who, at:new Date().toISOString(), fire_kabul:fireKabul}};
+      const newMb={...mb, kalemler:newKalem, giren_kg:rnd2(r.giren), cikti_kg:rnd2(r.urun), denge_yuzde:r.denge, fire_kg:rnd2(r.fire), duzeltildi:{by:who, at:new Date().toISOString(), fire_kabul:fireKabul, tolerans:(parseFloat((tolIn.value||'').replace(',','.'))||null)}};
       const newEk={...(n.ek||{}), mb:newMb};
       const {error}=await sb.from('izleme_node').update({ek:newEk, agirlik_kg:rnd2(r.urun)}).eq('trace_key',n.trace_key).eq('node_no',n.node_no);
       if(error){ toast(esc(error.message),'err'); return; }
@@ -3312,7 +3322,7 @@ async function renderIzleme(root){
       if(onDone)onDone();
     }},'💾 Kaydet');
     const iptal=el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{ if(onDone)onDone(); }},'İptal');
-    panel.append(el('div',{style:'display:flex;gap:6px;margin-top:8px;flex-wrap:wrap'},oto,kaydet,iptal));
+    panel.append(el('div',{style:'display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;align-items:center'},tolWrap,oto,kaydet,iptal));
     if(fireKabul)oto.textContent='⚖ Fire kabul: AÇIK';
     recompute();
     return panel;
