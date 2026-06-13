@@ -2646,12 +2646,13 @@ function genSamples(it,n,override){
 }
 // op + aşama filtreleri (toplu üretim için modül seviyesinde)
 function opItemsFor(items,op_no){
-  if(op_no==null) return items;                                  // üretimin op'u yok → tüm maddeler
-  const m=items.filter(it=>String(it.op_no)===String(op_no));
-  if(m.length) return m;                                         // op eşleşti → o op'un maddeleri
-  const planHasOps=items.some(it=>it.op_no!=null);               // plan op-yapılı mı?
-  if(!planHasOps) return items;                                  // plan op kullanmıyor → tüm maddeler
-  return items.filter(it=>it.op_no==null);                       // plan op-yapılı ama bu op yok → YALNIZ op'suz (genel) maddeler; ÇAPRAZ-OP karışması olmaz (örn. op4'ün 80°C'si op2 üretimine yazılmaz)
+  const isGen=it=>(it.op_no==null||Number(it.op_no)===0);        // op 0 = GENEL (operasyona bağlı değil) — her op'a uygulanır
+  if(op_no==null||Number(op_no)===0) return items;               // üretimin op'u yok/genel → tüm maddeler
+  const m=items.filter(it=>!isGen(it)&&String(it.op_no)===String(op_no));
+  if(m.length) return m;                                         // bu op'a ÖZEL maddeler
+  const planHasRealOps=items.some(it=>!isGen(it));               // plan gerçekten op-yapılı mı (0/boş hariç)?
+  if(!planHasRealOps) return items;                              // plan op kullanmıyor (hepsi genel) → tüm maddeler
+  return items.filter(isGen);                                    // op-yapılı ama bu op'a özel yok → GENEL (op'suz/op0) maddeler
 }
 function stageItems(items,s){ return items.filter(it=> s==='giris'?(it.giris_kalite===true): s==='son'?(it.final_control!==false):(it.process_control!==false)); }
 // proses örnekleme periyodu = proses maddeleri arasında EN SIK görülen sıklık (tek bir kısa/uzun sapma değeri seçmesin; eşitlikte büyük olan)
@@ -2950,6 +2951,7 @@ async function renderStokDokumanlari(root){
 // 🔎 İzlenebilirlik (Traceability) — sevkten geriye FIFO/iş-emri zinciri: sevk→üretim→hammadde→giriş + kütle denkliği(BOM) + QC
 const IZ_ICON={sevk:'🚚',uretim:'🏭',hammadde:'🧪',giris:'📦',not:'⚠️'};
 let _izKeep=null;   // son iz durumu (sekme değişince kaybolmasın): {urun,sevkler,key,irs,s}
+let IZ_ADMIN=false; // DENETİM görünümü varsayılan: iç işlemler (Türet/Düzelt/düzeltildi/türet notları) GİZLİ; admin açar
 // kontrol planı bizde yoksa LeanSys'ten ÇEK + içe aktar (control_plan_items) — türet için (LeanSys salt-okuma)
 async function ensurePlan(stok){
   if(!stok) return false;
@@ -3059,8 +3061,19 @@ async function renderIzleme(root){
         const realByOp={}, opMachine={}, opProdId={}, opProdIds={};
         matched.forEach(p=>{ if(p.op!=null && p.mac && !opMachine[p.op]) opMachine[p.op]=p.mac; if(p.op!=null && !opProdId[p.op]) opProdId[p.op]=p.id; if(p.op!=null){ (opProdIds[p.op]=opProdIds[p.op]||[]).push(p.id); } const r=recByPid[p.id]; if(!r)return; const o=realByOp[p.op]||(realByOp[p.op]={seri_basi:0,proses:0,son:0}); o.seri_basi+=r.seri_basi; o.proses+=r.proses; o.son+=r.son; });
         const plan=planOps[n.stok_kodu]||{};
-        const opNos=[...new Set([...Object.keys(plan),...Object.keys(realByOp)].map(Number))].sort((a,b)=>a-b);
-        const ops=opNos.map(op=>({op_no:op, proc:(plan[op]&&plan[op].proc)||0, fin:(plan[op]&&plan[op].fin)||0, real:realByOp[op]||{seri_basi:0,proses:0,son:0}}));
+        const planKeys=Object.keys(plan).map(Number);
+        const planHasRealOps=planKeys.some(o=>o>0);
+        let ops;
+        if(planHasRealOps){
+          const opNos=[...new Set([...planKeys,...Object.keys(realByOp).map(Number)])].sort((a,b)=>a-b);
+          ops=opNos.map(op=>({op_no:op, proc:(plan[op]&&plan[op].proc)||0, fin:(plan[op]&&plan[op].fin)||0, real:realByOp[op]||{seri_basi:0,proses:0,son:0}}));
+        } else {
+          // plan GENEL (op 0/yok) → tüm üretim op'larının kayıtlarını TEK gate'te topla (op eşleşmesi yok)
+          const agg={seri_basi:0,proses:0,son:0}; Object.values(realByOp).forEach(r=>{agg.seri_basi+=r.seri_basi;agg.proses+=r.proses;agg.son+=r.son;});
+          const gp=plan[0]||{proc:0,fin:0};
+          ops=[{op_no:0, proc:gp.proc, fin:gp.fin, real:agg}];
+          opProdIds[0]=matched.map(p=>p.id);
+        }
         _qcMap[n.node_no]={ ops, opened:matched.length>0, opMachine, opProdId, opProdIds, prodIds:matched.map(p=>p.id) };
       });
     }catch(e){}
@@ -3074,7 +3087,16 @@ async function renderIzleme(root){
       el('div',{},'Lot / İrsaliye'),el('div',{},'Tedarikçi / Müşteri'),el('div',{},'Tarih'),el('div',{},'Kayıt / Kontrol'));
   }
   function gotoGirisKalite(n){ const p=(n.irsaliye||'').split('/'); const irs=(p[0]||'').trim()+((p[1]&&p[1].trim())?(' / '+p[1].trim()):''); KAYIT_PROD=null; KAYIT_PRODS=null; KAYIT_IRS=irs||null; KAYIT_STAGE='giris'; KAYIT_FILT={start:'',end:'',stock:n.stok_kodu||''}; switchTab('kayitlar'); }
-  function gotoMalKabul(n){ MK_FOCUS={stok:n.stok_kodu||'', tarih:''}; switchTab('malkabul'); }
+  async function gotoMalKabul(n){
+    const stok=n.stok_kodu||'';
+    const {data:mk}=await sb.from('mal_kabul').select('rec_id').eq('stok_kodu',stok).limit(1);
+    if(mk&&mk.length){ MK_FOCUS={stok, tarih:''}; switchTab('malkabul'); return; }
+    // mal_kabul tablosu boş → alış (mal kabul = giriş) bilgisini izden göster (gerçek LeanSys verisi)
+    const c=(n.ek&&n.ek.cols)||{}; const p=(n.irsaliye||'').split('/');
+    const seri=c.irs_seri||(p[0]||'').trim(), sira=c.irs_sira||(p[1]||'').trim();
+    const ted=n.tedarikci||c.tedarikci||'?'; const mik=(c.giris_miktar!=null?c.giris_miktar:n.miktar);
+    toast('📦 Mal kabul (alış): '+stok+' · irsaliye '+seri+(sira?('/'+sira):'')+' · '+ted+(mik!=null?(' · '+commaFmt(mik)):'')+(n.tarih?(' · '+fmtDate(n.tarih)):'')+' — ayrı Mal Kabul tablosu boş; 📥 Mal Kabul sekmesinden LeanSys’ten aktarılabilir.','ok');
+  }
   // op kontrolleri TAM GENİŞLİK alt satır (makine adı + SB/PR/SON ferah)
   function opLine(n,depth){
     const q=_qcMap[n.node_no]; if(!q)return null;
@@ -3120,12 +3142,12 @@ async function renderIzleme(root){
     const fireKg=mb.fire_kg!=null?Number(mb.fire_kg):((giren!=null&&cikan!=null)?giren-cikan:null);
     const ok=fireKabul||(denge!=null&&Math.abs(denge)<=2); const col=ok?'#15803d':'#b45309';
     const verdict=fireKabul?('✓ dengeli (fire '+commaFmt(rnd2(fireKg))+' kg kabul)'):(ok?'✓ dengeli (±%2)':('fark '+(denge>0?'+':'')+denge+'% (proses firesi/sapma)'));
-    const dzBadge=mb.duzeltildi?(' <span style="color:#7c3aed;font-size:9px;border:1px solid #7c3aed;border-radius:3px;padding:0 3px" title="'+esc((mb.duzeltildi.by||'')+' · '+String(mb.duzeltildi.at||'').slice(0,16).replace('T',' '))+'">düzeltildi</span>'):'';
+    const dzBadge=(mb.duzeltildi&&IZ_ADMIN)?(' <span style="color:#7c3aed;font-size:9px;border:1px solid #7c3aed;border-radius:3px;padding:0 3px" title="'+esc((mb.duzeltildi.by||'')+' · '+String(mb.duzeltildi.at||'').slice(0,16).replace('T',' '))+'">düzeltildi</span>'):'';
     const wrap=el('div',{style:'padding:1px 0 3px '+pad+'px'});
     const caret=el('span',{style:'color:var(--accent);cursor:pointer'},'▸ hesabı göster');
     const head=el('div',{style:'font-size:10.5px;color:var(--muted);cursor:pointer',html:'⚖️ <b>Kütle denkliği:</b> giren <b>'+commaFmt(rnd2(giren))+' kg</b> → ürün <b>'+commaFmt(rnd2(cikan))+' kg</b> (reçete) · <b style="color:'+col+'">'+verdict+'</b>'+dzBadge+' &nbsp;'});
     head.append(caret);
-    if(PROFILE&&PROFILE.is_admin){ const dz=el('span',{style:'margin-left:8px;color:#7c3aed;cursor:pointer;font-size:10px',title:'Kütle denkliğini düzelt: elle kg/reçete düzenle veya Oto dengele (fark=fire)'},'✏️ Düzelt'); let editing=null; dz.onclick=e=>{ e.stopPropagation(); if(editing){ editing.remove(); editing=null; dz.textContent='✏️ Düzelt'; return; } det.style.display='none'; caret.textContent='▸ hesabı göster'; editing=editMass(n,mb,()=>loadTrace((_izKeep&&_izKeep.key),(_izKeep&&_izKeep.irs),(_izKeep&&_izKeep.s))); dz.textContent='✕ Düzeltmeyi kapat'; wrap.append(editing); }; head.append(dz); }
+    if(PROFILE&&PROFILE.is_admin&&IZ_ADMIN){ const dz=el('span',{style:'margin-left:8px;color:#7c3aed;cursor:pointer;font-size:10px',title:'Kütle denkliğini düzelt: elle kg/reçete düzenle veya Oto dengele (fark=fire)'},'✏️ Düzelt'); let editing=null; dz.onclick=e=>{ e.stopPropagation(); if(editing){ editing.remove(); editing=null; dz.textContent='✏️ Düzelt'; return; } det.style.display='none'; caret.textContent='▸ hesabı göster'; editing=editMass(n,mb,()=>loadTrace((_izKeep&&_izKeep.key),(_izKeep&&_izKeep.irs),(_izKeep&&_izKeep.s))); dz.textContent='✕ Düzeltmeyi kapat'; wrap.append(editing); }; head.append(dz); }
     // === açılır AYRINTILI HESAP (denetim için) ===
     const det=el('div',{style:'display:none;margin:4px 0 4px 6px;border:1px solid var(--line);border-radius:6px;overflow:auto;background:var(--panel2)'});
     const num=v=>v==null?'<span style="color:var(--muted)">—</span>':commaFmt(rnd2(v));
@@ -3152,11 +3174,16 @@ async function renderIzleme(root){
        '<td style="'+C+';text-align:right;color:'+col+'">'+num(giren)+' kg</td>'+
        '<td style="'+C+'"></td><td style="'+C+'"></td><td style="'+C+';text-align:right">'+num(cikan)+' kg</td><td style="'+C+'"></td></tr>';
     h+='</tbody></table>';
+    const dengeTxt = fireKabul
+      ? ('<b>Denge:</b> giren '+num(giren)+' = ürün '+num(cikan)+' + fire '+num(fireKg)+' → kalan <b style="color:#15803d">~%0 ✓</b> <span style="color:#7c3aed">(fire kabul edildi)</span>')
+      : ('<b>Denge:</b> (giren '+num(giren)+' − ürün '+num(cikan)+') / ürün = <b style="color:'+col+'">'+(denge>0?'+':'')+denge+'%</b> '+(ok?'≤ %2 ✓':'> %2 (fazla tüketim = proses firesi/trim)'));
     h+='<div style="padding:5px 8px;font-size:10.5px;color:var(--muted);border-top:1px solid var(--line)">'+
        '🧮 <b>Çıktı (ürün):</b> '+num(cikMik)+' '+esc(mb.cikti_birim||'')+' × reçete '+(cikMik?commaFmt(rnd2(cikan/cikMik*1000)/1000):'?')+' kg/'+esc(mb.cikti_birim||'br')+' = <b>'+num(cikan)+' kg</b>'+
        (mb.isemri_miktar!=null&&cikMik!=null&&Math.abs(Number(mb.isemri_miktar)-cikMik)>0.01?(' &nbsp;·&nbsp; <span title="iş emri toplam siparişi — bu sevk partisi çıktıdır">iş emri miktarı '+commaFmt(mb.isemri_miktar)+' (toplam)</span>'):'')+
-       ' &nbsp;·&nbsp; <b>Denge:</b> (giren '+num(giren)+' − ürün '+num(cikan)+') / ürün = <b style="color:'+col+'">'+(denge>0?'+':'')+denge+'%</b> '+(ok?'≤ %2 ✓':'> %2 (fazla tüketim = fire/trim)')+
+       ' &nbsp;·&nbsp; '+dengeTxt+
        '</div>';
+    const fireli=kalem.filter(k=>k.fire);
+    h+='<div style="padding:4px 8px;font-size:10px;color:var(--muted);border-top:1px solid var(--line)">📋 <b>Beklenen</b> = reçete oranı × çıktı × (1 + fire %) — <b>ürün ağacındaki fire % hesaba dahil</b>'+(fireli.length?(': '+fireli.map(k=>esc(k.kod)+' %'+commaFmt(k.fire)).join(' · ')):' (bu üründe tanımlı fire %0)')+'</div>';
     det.innerHTML=h;
     let open=false; head.onclick=e=>{ e.stopPropagation(); open=!open; det.style.display=open?'':'none'; caret.textContent=open?'▾ hesabı gizle':'▸ hesabı göster'; };
     wrap.append(head,det);
@@ -3173,9 +3200,10 @@ async function renderIzleme(root){
     const recompute=()=>{
       let giren=0,urun=0;
       inputs.forEach(it=>{ const kg=parseFloat((it.kgIn.value||'').replace(',','.'))||0; const be=parseFloat((it.beIn.value||'').replace(',','.'))||0; giren+=kg; urun+=be; const f=be?((kg-be)/be*100):0; it.farkCell.textContent=(f>0?'+':'')+(Math.round(f*10)/10)+'%'; it.farkCell.style.color=Math.abs(f)<=2?'#15803d':'#b45309'; });
-      const fire=giren-urun; let denge=urun?((giren-urun)/urun*100):0; denge=Math.round(denge*100)/100;
-      const balanced=fireKabul||Math.abs(denge)<=2;
-      totBox.innerHTML='Σ giren <b>'+commaFmt(rnd2(giren))+' kg</b> · ürün <b>'+commaFmt(rnd2(urun))+' kg</b>'+(fireKabul?(' · fire <b>'+commaFmt(rnd2(fire))+' kg</b>'):'')+' · <span style="color:'+(balanced?'#15803d':'#b45309')+'">'+(balanced?('✓ dengeli'+(fireKabul?(' (fire '+commaFmt(rnd2(fire))+' kg kabul)'):' (±%2)')):('fark '+(denge>0?'+':'')+denge+'%'))+'</span>';
+      const diff=giren-urun; const fire=fireKabul?diff:0; const resid=diff-fire;   // fire kabul → giren=ürün+fire, kalan ~0
+      let denge=urun?(resid/urun*100):0; denge=Math.round(denge*100)/100;
+      const balanced=Math.abs(denge)<=2;
+      totBox.innerHTML='Σ giren <b>'+commaFmt(rnd2(giren))+' kg</b> · ürün <b>'+commaFmt(rnd2(urun))+' kg</b>'+(fireKabul?(' + fire <b>'+commaFmt(rnd2(fire))+' kg</b>'):'')+' · <span style="color:'+(balanced?'#15803d':'#b45309')+'">'+(balanced?('✓ dengeli'+(fireKabul?(' (fire '+commaFmt(rnd2(fire))+' kg kabul → kalan ~%0)'):' (±%2)')):('fark '+(denge>0?'+':'')+denge+'%'))+'</span>';
       return {giren,urun,fire,denge,balanced};
     };
     const tbl=el('table',{style:'border-collapse:collapse;width:100%;font-size:10.5px'});
@@ -3374,8 +3402,8 @@ async function renderIzleme(root){
     gh.append(el('div',{style:'font-size:11px;font-weight:600;color:#15803d;display:flex;align-items:center;gap:5px;flex-wrap:wrap'},'🛡 Kalite kapıları',el('span',{style:'font-weight:400;color:var(--muted);font-size:10px'},'— bu sevkin üretimi kontrol edilip onaylandı mı (seri başı=kurulum · proses=üretim sırası · son=serbest bırakma)')));
     if(gates){ gh.append(gates);
       const miss=qd&&qd.ops&&qd.ops.some(op=>(op.proc>0&&(op.real.seri_basi===0||op.real.proses===0))||(op.fin>0&&op.real.son===0));
-      if(miss)gh.append(el('div',{style:'font-size:9.5px;color:#b45309;margin-top:3px'},'◇ = bu kontrolün kaydı HENÜZ yok; üst sağdaki 🔧 Türet kontrol planına göre oluşturur (yalnız Supabase, LeanSys’e yazılmaz).'));
-    } else { gh.append(el('div',{style:'font-size:10.5px;color:#b45309;margin-top:2px'},'⚠ Bu üretimin kontrol planı bizde yok — üst sağdaki 🔧 Türet ile LeanSys’ten plan çekilip kayıtlar plana göre oluşturulur')); }
+      if(miss&&IZ_ADMIN)gh.append(el('div',{style:'font-size:9.5px;color:#b45309;margin-top:3px'},'◇ = bu kontrolün kaydı HENÜZ yok; üst sağdaki 🔧 Türet kontrol planına göre oluşturur (yalnız Supabase, LeanSys’e yazılmaz).'));
+    } else if(IZ_ADMIN){ gh.append(el('div',{style:'font-size:10.5px;color:#b45309;margin-top:2px'},'⚠ Bu üretimin kontrol planı bizde yok — üst sağdaki 🔧 Türet ile LeanSys’ten plan çekilip kayıtlar plana göre oluşturulur')); }
     card.append(gh);
     const ml=massLine(n,bp,0); if(ml){ const mh=el('div',{style:'margin-top:8px'}); mh.append(ml); card.append(mh); }
     const mats=(bp[n.node_no]||[]).filter(k=>k.tur==='hammadde');
@@ -3461,8 +3489,9 @@ async function renderIzleme(root){
       el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''}`})),
       el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end'},
         el('button',{class:'btn sm '+(locked?'':'sec'),style:'flex:0 0 auto;white-space:nowrap',title:locked?'Kilitli — iz donduruldu, değişmez. Tıkla: kilidi aç (yeniden çekilebilir).':'Açık — Yeniden İzle ile güncellenebilir. Tıkla: kilitle (dondur).',onclick:async()=>{ const {error}=await sb.from('izleme_node').update({kilitli:!locked}).eq('trace_key',key); if(error){toast(esc(error.message),'err');return;} toast(locked?'🔓 Kilit açıldı — Yeniden İzle ile güncellenebilir.':'🔒 İz kilitlendi (donduruldu).','ok'); loadTrace(key,irs,s); }}, locked?'🔒 Kilitli':'🔓 Açık'),
-        (!locked && s)?el('button',{class:'btn sm sec',style:'flex:0 0 auto;white-space:nowrap',title:'LeanSys’ten yeniden çek (kilit açık)',onclick:()=>doTrace(urun,s,true)},'🔄 Yeniden İzle'):'',
-        isAdmin?el('button',{class:'btn sm',style:'flex:0 0 auto;white-space:nowrap;background:#7c3aed;border-color:#7c3aed',title:'Kontrol planı olan ürünlerde EKSİK seri başı/proses/son + hammadde giriş kalite kayıtlarını plana göre TÜRET — yalnız Supabase (LeanSys’e yazılmaz)',onclick:()=>turetTrace(nodes,key,irs,s)},'🔧 Türet'):'',
+        (!locked && s && IZ_ADMIN)?el('button',{class:'btn sm sec',style:'flex:0 0 auto;white-space:nowrap',title:'LeanSys’ten yeniden çek (kilit açık)',onclick:()=>doTrace(urun,s,true)},'🔄 Yeniden İzle'):'',
+        isAdmin?el('button',{class:'btn sm '+(IZ_ADMIN?'':'sec'),style:'flex:0 0 auto;white-space:nowrap'+(IZ_ADMIN?';background:#7c3aed;border-color:#7c3aed':''),title:IZ_ADMIN?'İç işlemler AÇIK (Türet/Düzelt görünür). Tıkla: Denetim görünümüne geç (gizle).':'Denetim görünümü — iç işlemler gizli. Tıkla: admin iç işlemleri aç (Türet/Düzelt).',onclick:()=>{ IZ_ADMIN=!IZ_ADMIN; loadTrace(key,irs,s); }},IZ_ADMIN?'🔓 İç işlemler açık':'🔒 Denetim görünümü'):'',
+        (isAdmin&&IZ_ADMIN)?el('button',{class:'btn sm',style:'flex:0 0 auto;white-space:nowrap;background:#7c3aed;border-color:#7c3aed',title:'Kontrol planı olan ürünlerde EKSİK seri başı/proses/son + hammadde giriş kalite + KALİTE KAPILARINI plana göre TÜRET — yalnız Supabase (LeanSys’e yazılmaz)',onclick:()=>turetTrace(nodes,key,irs,s)},'🔧 Türet'):'',
         el('button',{class:'btn sm sec',style:'flex:0 0 auto;white-space:nowrap',onclick:()=>out.querySelectorAll('.iz-kids').forEach(k=>k.style.display='')},'⊞ Aç'),
         el('button',{class:'btn sm sec',style:'flex:0 0 auto;white-space:nowrap',onclick:()=>out.querySelectorAll('.iz-kids').forEach(k=>k.style.display='none')},'⊟ Kapat'),
         isAdmin?el('button',{class:'btn sm danger',style:'flex:0 0 auto;white-space:nowrap',onclick:async()=>{ if(!confirm('Bu iz SUPABASE’ten silinsin mi? (LeanSys’e dokunulmaz)'))return; const {error}=await sb.from('izleme_node').delete().eq('trace_key',key); if(error){toast(esc(error.message),'err');return;} _izKeep={...(_izKeep||{}),key:null}; out.innerHTML=''; toast('İz silindi (Supabase).','ok'); }},'🗑 Sil'):''
