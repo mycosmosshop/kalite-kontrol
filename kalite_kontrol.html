@@ -2950,74 +2950,110 @@ async function renderIzleme(root){
   const isAdmin=(PROFILE&&PROFILE.is_admin)||can('import');
   root.append(el('div',{class:'card'},
     el('h3',{style:'margin-top:0'},'🔎 İzlenebilirlik (sevkten geriye)'),
-    el('p',{style:'color:var(--muted);margin:-4px 0 0;font-size:13px',html:'Bir <b>ürün kodu + sevk tarihi</b> (istersen irsaliye) gir → LeanSys’ten <b>geriye iz</b> çıkarılır: <b>sevk → üretim → tüketilen hammaddeler → giriş</b>, gerçek <b>FIFO lot</b> ve <b>irsaliye</b> bilgisiyle. Hammaddelerde <b>BOM teorik karşılaştırma</b> (kütle denkliği) gösterilir. LeanSys salt-okuma; iz bizim Supabase’e yazılır.'})));
-  const fUrun=el('input',{class:'inp',placeholder:'ürün/stok kodu (ör. 700.0.454)',style:'min-width:170px'});
+    el('p',{style:'color:var(--muted);margin:-4px 0 0;font-size:13px',html:'<b>Ürün kodu</b> gir → o ürünün <b>gerçek sevkleri</b> listelenir → bir sevke <b>🔎 İzle</b> de: <b>sevk → üretim → tüketilen hammaddeler → giriş</b> ağacı, gerçek <b>FIFO lot</b> + <b>irsaliye</b> ile. LeanSys’te kaydı olmayan adımları modül <b>BOM’dan türetir</b> ve <b>◇</b> ile işaretler (gerçek = ●). LeanSys salt-okuma.'})));
+  const fUrun=el('input',{class:'inp',placeholder:'ürün/stok kodu (ör. 700.0.454)',style:'min-width:180px'});
+  fUrun.onkeydown=e=>{ if(e.key==='Enter')loadSevkler(); };
   const fFrom=el('input',{type:'date',class:'inp'});
   const fTo=el('input',{type:'date',class:'inp'});
-  const fSeri=el('input',{class:'inp',placeholder:'irs. seri (ops.)',style:'width:120px'});
-  const fSira=el('input',{class:'inp',placeholder:'sıra (ops.)',style:'width:90px'});
-  const goBtn=el('button',{class:'btn sm',style:'flex:0;white-space:nowrap',onclick:doTrace},'🔎 İzle');
+  const getBtn=el('button',{class:'btn sm',style:'flex:0;white-space:nowrap',onclick:loadSevkler},'📋 Sevkleri Getir');
   root.append(el('div',{class:'card'},el('div',{class:'toolbar'},
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Ürün kodu'),fUrun),
-    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Sevk-Başlangıç'),fFrom),
-    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Sevk-Bitiş'),fTo),
-    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'İrsaliye seri'),fSeri),
-    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Sıra'),fSira),
-    goBtn)));
+    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Tarih (ops.)'),fFrom),
+    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'— Bitiş (ops.)'),fTo),
+    getBtn)));
+  const sevkBox=el('div'); root.append(sevkBox);
   const out=el('div'); root.append(out);
 
-  async function doTrace(){
+  async function loadSevkler(){
     const u=(fUrun.value||'').trim(); if(!u){ toast('Önce ürün/stok kodu gir.','err'); return; }
-    goBtn.disabled=true; const _t=goBtn.textContent; goBtn.textContent='⏳ İzleniyor…';
+    getBtn.disabled=true; const _t=getBtn.textContent; getBtn.textContent='⏳ Getiriliyor…'; out.innerHTML='';
+    let res=null;
+    try{ const r=await fetch('http://127.0.0.1:17777/sevkler?urun='+encodeURIComponent(u)+'&from='+encodeURIComponent(fFrom.value||'')+'&to='+encodeURIComponent(fTo.value||''),{mode:'cors'}); res=await r.json(); }catch(e){ res=null; }
+    getBtn.disabled=false; getBtn.textContent=_t;
+    if(!res){ toast('LeanSys ajanı kapalı/erişilemedi. LeanSys_Agent çalışıyor mu?','err'); return; }
+    if(!res.ok){ toast('Sevk çekme hatası: '+esc(res.error||'?'),'err'); return; }
+    const {data,error}=await sb.from('izleme_sevk').select('*').eq('urun_kodu',u).order('tarih',{ascending:false}).limit(600);
+    if(error){ toast(esc(error.message),'err'); return; }
+    renderSevkList(u, data||[]);
+  }
+  function renderSevkList(urun, list){
+    sevkBox.innerHTML='';
+    const card=el('div',{class:'card'});
+    card.append(el('div',{style:'font-weight:700;margin-bottom:6px'},`🚚 ${esc(urun)} — ${list.length} sevk · birine “İzle” de`));
+    if(!list.length){ card.append(el('div',{style:'color:var(--muted)'},'Bu ürün için sevk bulunamadı.')); sevkBox.append(card); return; }
+    const search=el('input',{class:'inp',placeholder:'🔍 irsaliye / müşteri / tarih ara…',style:'width:100%;margin-bottom:6px'});
+    const listDiv=el('div',{style:'max-height:330px;overflow:auto;border:1px solid var(--line);border-radius:8px'});
+    const draw=()=>{ const q=(search.value||'').toLowerCase().trim(); listDiv.innerHTML='';
+      const tb=el('table'); tb.append(el('thead',{},el('tr',{},...['Tarih','İrsaliye','Müşteri','Miktar',''].map(x=>el('th',{},x)))));
+      const body=el('tbody');
+      list.filter(s=>!q||(`${s.seri}/${s.sira} ${s.musteri||''} ${fmtDate(s.tarih)}`).toLowerCase().includes(q)).slice(0,300).forEach(s=>{
+        body.append(el('tr',{},
+          el('td',{style:'white-space:nowrap'},fmtDate(s.tarih)),
+          el('td',{style:'white-space:nowrap;font-weight:600'},(s.seri||'')+'/'+(s.sira||'')),
+          el('td',{style:'font-size:12px'},esc((s.musteri||'').slice(0,32))),
+          el('td',{style:'text-align:right'},s.miktar!=null?commaFmt(s.miktar):''),
+          el('td',{},el('button',{class:'btn sm',style:'flex:0;white-space:nowrap',onclick:()=>doTrace(urun,s)},'🔎 İzle'))
+        ));
+      });
+      tb.append(body); listDiv.innerHTML=''; listDiv.append(el('div',{class:'tbl-wrap'},tb));
+    };
+    search.oninput=draw; draw();
+    card.append(search,listDiv); sevkBox.append(card);
+  }
+  async function doTrace(urun, s){
+    const irs=(s.seri||'')+'/'+(s.sira||'');
+    const key='iz:'+urun+':'+(s.seri||'')+':'+(s.sira||'');
+    out.innerHTML='<div class="card" style="color:var(--muted)">⏳ İz çıkarılıyor ('+esc(irs)+')… (LeanSys taranıyor)</div>';
     let res=null;
     try{
-      const qs='urun='+encodeURIComponent(u)+'&from='+encodeURIComponent(fFrom.value||'')+'&to='+encodeURIComponent(fTo.value||'')
-        +(fSeri.value.trim()?('&seri='+encodeURIComponent(fSeri.value.trim())):'')+(fSira.value.trim()?('&sira='+encodeURIComponent(fSira.value.trim())):'');
+      const qs='urun='+encodeURIComponent(urun)+(s.seri?('&seri='+encodeURIComponent(s.seri)):'')+(s.sira!=null?('&sira='+encodeURIComponent(s.sira)):'')+'&tkey='+encodeURIComponent(key);
       const r=await fetch('http://127.0.0.1:17777/refreshtrace?'+qs,{mode:'cors'}); res=await r.json();
     }catch(e){ res=null; }
-    goBtn.disabled=false; goBtn.textContent=_t;
-    if(!res){ toast('LeanSys ajanı kapalı/erişilemedi. LeanSys_Agent çalışıyor mu?','err'); return; }
-    if(!res.ok){ toast('İzleme hatası: '+esc(res.error||'?'),'err'); return; }
-    toast((res.count||0)+' düğüm — iz oluşturuldu.','ok'); loadTrace(res.key);
+    if(!res){ out.innerHTML=''; toast('LeanSys ajanı kapalı/erişilemedi.','err'); return; }
+    if(!res.ok){ out.innerHTML=''; toast('İzleme hatası: '+esc(res.error||'?'),'err'); return; }
+    loadTrace(key, irs, s);
   }
-  async function loadTrace(key){
+  async function loadTrace(key, irs, s){
     out.innerHTML='<div class="card" style="color:var(--muted)">Yükleniyor…</div>';
     const {data,error}=await sb.from('izleme_node').select('*').eq('trace_key',key).order('node_no');
     if(error){ out.innerHTML=''; out.append(el('div',{class:'msg err',style:'margin:8px'},esc(error.message))); return; }
     const nodes=data||[]; out.innerHTML='';
-    if(!nodes.length){ out.append(el('div',{class:'card'},'Bu kriterde iz/sevk bulunamadı.')); return; }
+    if(!nodes.length){ out.append(el('div',{class:'card'},'İz boş.')); return; }
     const byParent={}; nodes.forEach(n=>{ const p=(n.parent_no==null)?0:n.parent_no; (byParent[p]=byParent[p]||[]).push(n); });
     const roots=byParent[0]||[];
+    const tahminiN=nodes.filter(n=>n.tahmini).length;
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'},
-      el('div',{style:'font-size:12px;color:var(--muted)'},`İz: ${esc(key)} · ${nodes.length} düğüm · ${roots.length} sevk`),
+      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN} türetilmiş`:''}`})),
       el('div',{style:'display:flex;gap:6px;flex-wrap:nowrap'},
-        el('button',{class:'btn sm sec',style:'flex:0 0 auto;white-space:nowrap',onclick:()=>out.querySelectorAll('.iz-kids').forEach(k=>k.style.display='')},'⊞ Tümünü Aç'),
+        el('button',{class:'btn sm sec',style:'flex:0 0 auto;white-space:nowrap',onclick:()=>out.querySelectorAll('.iz-kids').forEach(k=>k.style.display='')},'⊞ Aç'),
         el('button',{class:'btn sm sec',style:'flex:0 0 auto;white-space:nowrap',onclick:()=>out.querySelectorAll('.iz-kids').forEach(k=>k.style.display='none')},'⊟ Kapat'),
-        isAdmin?el('button',{class:'btn sm danger',style:'flex:0 0 auto;white-space:nowrap',onclick:async()=>{ if(!confirm('Bu iz SUPABASE’ten silinsin mi? (LeanSys’e dokunulmaz)'))return; const {error}=await sb.from('izleme_node').delete().eq('trace_key',key); if(error){toast(esc(error.message),'err');return;} out.innerHTML=''; toast('İz silindi (Supabase).','ok'); }},'🗑 İzi sil'):''
+        isAdmin?el('button',{class:'btn sm danger',style:'flex:0 0 auto;white-space:nowrap',onclick:async()=>{ if(!confirm('Bu iz SUPABASE’ten silinsin mi? (LeanSys’e dokunulmaz)'))return; const {error}=await sb.from('izleme_node').delete().eq('trace_key',key); if(error){toast(esc(error.message),'err');return;} out.innerHTML=''; toast('İz silindi (Supabase).','ok'); }},'🗑 Sil'):''
       )));
     const tree=el('div',{style:'margin-top:10px'});
     roots.forEach(r=>tree.append(izNode(r,byParent)));
     card.append(tree); out.append(card);
-    out.append(el('div',{style:'color:var(--muted);font-size:11.5px;margin:8px 4px'},'⚠️ “BOM teorik” = ürün ağacı oranı × üretim çıktısı (referans). Ağırlık bazlı gerçek kütle denkliği ve ileri-yön izleme sonraki fazda.'));
+    out.append(el('div',{style:'color:var(--muted);font-size:11.5px;margin:8px 4px',html:'<b>●</b> gerçek (LeanSys) · <b style="color:#b45309">◇</b> LeanSys’te kaydı yok, BOM’dan türetildi. “BOM teorik” = ürün ağacı oranı × üretim çıktısı (referans). Ağırlık bazlı kütle denkliği ve ileri-yön izleme sonraki fazda.'}));
   }
   function izNode(n,byParent){
     const kids=byParent[n.node_no]||[];
     const ic=IZ_ICON[n.tur]||'•';
+    const T=!!n.tahmini;
     const bits=[];
     if(n.tur==='sevk'){ bits.push(`<b>${esc(n.stok_kodu||'')}</b> sevk`); if(n.musteri)bits.push('→ '+esc(n.musteri)); if(n.irsaliye&&n.irsaliye!=='/')bits.push('irs '+esc(n.irsaliye)); if(n.tarih)bits.push(fmtDate(n.tarih)); if(n.miktar!=null)bits.push('<b>'+commaFmt(n.miktar)+'</b>'); }
     else if(n.tur==='uretim'){ bits.push(`<b>${esc(n.stok_kodu||'')}</b> üretildi`); if(n.miktar!=null)bits.push(commaFmt(n.miktar)); if(n.makine)bits.push(esc((n.makine||'').slice(0,34))); if(n.tarih)bits.push(fmtDate(n.tarih)); if(n.lot_no)bits.push('lot '+esc(n.lot_no)); if(n.notu)bits.push('<i style="color:var(--muted)">'+esc(n.notu)+'</i>'); }
     else if(n.tur==='hammadde'){ bits.push(`<b>${esc(n.stok_kodu||'')}</b>`); if(n.stok_adi)bits.push('<span style="color:var(--muted)">'+esc((n.stok_adi||'').slice(0,28))+'</span>'); if(n.miktar!=null)bits.push('tük '+commaFmt(n.miktar)); if(n.lot_no)bits.push('lot '+esc(n.lot_no)); if(n.fifo_giris)bits.push('FIFO '+fmtDate(n.fifo_giris)); }
-    else if(n.tur==='giris'){ bits.push('giriş'); if(n.irsaliye&&n.irsaliye!=='/')bits.push('irs '+esc(n.irsaliye)); if(n.tarih)bits.push(fmtDate(n.tarih)); if(n.miktar!=null)bits.push(commaFmt(n.miktar)+(n.birim?(' '+esc(n.birim)):'')); }
+    else if(n.tur==='giris'){ bits.push('giriş'); if(n.irsaliye&&n.irsaliye!=='/')bits.push('irs '+esc(n.irsaliye)); if(n.tarih)bits.push(fmtDate(n.tarih)); if(n.miktar!=null)bits.push(commaFmt(n.miktar)+(n.birim?(' '+esc(n.birim)):'')); if(n.notu==='giris kaydi yok')bits.push('<i style="color:#b45309">kayıt yok</i>'); }
     else { bits.push('<i style="color:var(--muted)">'+esc(n.notu||'')+'</i>'); }
     let extra='';
-    if(n.tur==='hammadde'&&n.bom_beklenen!=null){ const s=n.sapma_yuzde; const col=(s!=null&&Math.abs(s)>10)?'#b45309':'#15803d'; extra+=`<span style="margin-left:6px;font-size:11px;color:${col}">BOM teorik ${commaFmt(n.bom_beklenen)}${s!=null?` (${s>0?'+':''}${s}%)`:''}</span>`; }
+    if(n.tur==='hammadde'&&n.bom_beklenen!=null&&!T){ const s=n.sapma_yuzde; const col=(s!=null&&Math.abs(s)>10)?'#b45309':'#15803d'; extra+=`<span style="margin-left:6px;font-size:11px;color:${col}">BOM teorik ${commaFmt(n.bom_beklenen)}${s!=null?` (${s>0?'+':''}${s}%)`:''}</span>`; }
     if(n.qc&&n.qc.giris_kontrol!=null){ extra+=`<span style="margin-left:6px;font-size:11px;color:#2563eb">giriş-QC: ${esc(String(n.qc.giris_kontrol))}</span>`; }
     const hasKids=kids.length>0;
+    const mark=el('span',{style:'display:inline-block;width:14px;font-weight:700;color:'+(T?'#b45309':'#16a34a')},T?'◇':'●');
     const caret=el('span',{style:'display:inline-block;width:13px;color:#2563eb;font-weight:700;'+(hasKids?'cursor:pointer':'')},hasKids?'▾':'·');
-    const rowTxt=el('span',{html:ic+' '+bits.join(' · ')+extra});
-    const row=el('div',{style:'padding:4px 2px;font-size:12.5px;display:flex;align-items:baseline;gap:4px'},caret,rowTxt);
-    const wrap=el('div',{style:'border-left:2px solid var(--line);margin-left:7px;padding-left:9px'});
+    const rowTxt=el('span',{style:T?'opacity:.85':'',html:ic+' '+bits.join(' · ')+extra});
+    const row=el('div',{style:'padding:4px 2px;font-size:12.5px;display:flex;align-items:baseline;gap:2px'},caret,mark,rowTxt);
+    const wrap=el('div',{style:'border-left:2px solid '+(T?'#fde68a':'var(--line)')+';margin-left:7px;padding-left:9px'});
     wrap.append(row);
     if(hasKids){
       const kidBox=el('div',{class:'iz-kids'}); kids.forEach(k=>kidBox.append(izNode(k,byParent))); wrap.append(kidBox);
