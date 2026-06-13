@@ -3054,7 +3054,9 @@ async function renderIzleme(root){
         el('td',{},esc(r.stok_kodu||'')),
         el('td',{style:'font-size:12px'},esc((r.musteri||'').slice(0,28))),
         el('td',{style:'text-align:right'},r.miktar!=null?commaFmt(r.miktar):''),
-        el('td',{},el('button',{class:'btn sm sec',style:'flex:0;white-space:nowrap',onclick:()=>{ _izKeep={...(_izKeep||{}),urun:r.stok_kodu,key:r.trace_key,irs:r.irsaliye,s:sObj}; loadTrace(r.trace_key, r.irsaliye, sObj); }},'📂 Aç'))));
+        el('td',{},el('div',{style:'display:flex;gap:5px;justify-content:flex-end'},
+          el('button',{class:'btn sm sec',style:'flex:0;white-space:nowrap',onclick:()=>{ _izKeep={...(_izKeep||{}),urun:r.stok_kodu,key:r.trace_key,irs:r.irsaliye,s:sObj}; loadTrace(r.trace_key, r.irsaliye, sObj); }},'📂 Aç'),
+          el('button',{class:'btn sm sec',style:'flex:0;white-space:nowrap',title:'Kayıtlı listeden kaldır (dondurmayı açar; iz SİLİNMEZ, sevkten yeniden izlenebilir)',onclick:async(e)=>{ e.stopPropagation(); if(!confirm('“'+(r.irsaliye||'')+'” kayıtlı izlerden kaldırılsın mı?\n(İz silinmez — sadece dondurma kalkar, sevkten yeniden izleyebilirsin.)'))return; const {error}=await sb.from('izleme_node').update({kilitli:false}).eq('trace_key',r.trace_key); if(error){toast(esc(error.message),'err');return;} toast('Listeden kaldırıldı (iz korundu).','ok'); loadSaved(); }},'✕ Kaldır'))) ));
     });
     tb.append(body); list.append(el('div',{class:'tbl-wrap'},tb));
     card.append(list); savedBox.append(card);
