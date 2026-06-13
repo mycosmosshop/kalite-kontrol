@@ -2947,6 +2947,7 @@ async function renderStokDokumanlari(root){
 
 // 🔎 İzlenebilirlik (Traceability) — sevkten geriye FIFO/iş-emri zinciri: sevk→üretim→hammadde→giriş + kütle denkliği(BOM) + QC
 const IZ_ICON={sevk:'🚚',uretim:'🏭',hammadde:'🧪',giris:'📦',not:'⚠️'};
+let _izKeep=null;   // son iz durumu (sekme değişince kaybolmasın): {urun,sevkler,key,irs,s}
 async function renderIzleme(root){
   root.innerHTML='';
   const isAdmin=(PROFILE&&PROFILE.is_admin)||can('import');
@@ -3056,6 +3057,7 @@ async function renderIzleme(root){
     if(!res.ok){ toast('Sevk çekme hatası: '+esc(res.error||'?'),'err'); return; }
     const {data,error}=await sb.from('izleme_sevk').select('*').eq('urun_kodu',u).order('tarih',{ascending:false}).limit(600);
     if(error){ toast(esc(error.message),'err'); return; }
+    _izKeep={...(_izKeep||{}), urun:u, sevkler:(data||[])};   // sekme değişince geri yüklensin
     renderSevkList(u, data||[]);
   }
   function renderSevkList(urun, list){
@@ -3082,9 +3084,15 @@ async function renderIzleme(root){
     search.oninput=draw; draw();
     card.append(search,listDiv); sevkBox.append(card);
   }
-  async function doTrace(urun, s){
+  async function doTrace(urun, s, force){
     const irs=(s.seri||'')+'/'+(s.sira||'');
     const key='iz:'+urun+':'+(s.seri||'')+':'+(s.sira||'');
+    _izKeep={...(_izKeep||{}), urun, key, irs, s};
+    // KİLİT mantığı: iz daha önce çıkarılmışsa YENİDEN ÇEKME — kayıtlı (donmuş) hali yükle.
+    // Yeniden çekme YALNIZCA: ilk kez (yok) ya da force (kilit açıkken 'Yeniden İzle').
+    const {data:ex}=await sb.from('izleme_node').select('kilitli').eq('trace_key',key).limit(1);
+    const varMi=ex&&ex.length;
+    if(varMi && !force){ if(ex[0].kilitli)toast('🔒 Kilitli iz yüklendi (değiştirmek için kilidi aç → Yeniden İzle).','ok'); loadTrace(key, irs, s); return; }
     out.innerHTML='<div class="card" style="color:var(--muted)">⏳ İz çıkarılıyor ('+esc(irs)+')… (LeanSys taranıyor)</div>';
     let res=null;
     try{
@@ -3093,9 +3101,12 @@ async function renderIzleme(root){
     }catch(e){ res=null; }
     if(!res){ out.innerHTML=''; toast('LeanSys ajanı kapalı/erişilemedi.','err'); return; }
     if(!res.ok){ out.innerHTML=''; toast('İzleme hatası: '+esc(res.error||'?'),'err'); return; }
+    // İLK türetmede otomatik KİLİTLE (yeniden çekildikçe değişmesin); kilidi açık yeniden çekmede kilitsiz kalır
+    if(!varMi){ try{ await sb.from('izleme_node').update({kilitli:true}).eq('trace_key',key); }catch(e){} }
     loadTrace(key, irs, s);
   }
   async function loadTrace(key, irs, s){
+    _izKeep={...(_izKeep||{}), key, irs, s};   // sekme değişince geri yüklensin
     out.innerHTML='<div class="card" style="color:var(--muted)">Yükleniyor…</div>';
     const {data,error}=await sb.from('izleme_node').select('*').eq('trace_key',key).order('node_no');
     if(error){ out.innerHTML=''; out.append(el('div',{class:'msg err',style:'margin:8px'},esc(error.message))); return; }
@@ -3105,13 +3116,17 @@ async function renderIzleme(root){
     const roots=byParent[0]||[];
     await loadQc(nodes);   // seri başı/proses/son kontrol kayıtlarını (bizim) bağla
     const tahminiN=nodes.filter(n=>n.tahmini).length;
+    const locked=!!nodes[0].kilitli;
+    const urun=(_izKeep&&_izKeep.urun)||(key.split(':')[1]||'');
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'},
       el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN} türetilmiş`:''}`})),
-      el('div',{style:'display:flex;gap:6px;flex-wrap:nowrap'},
+      el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end'},
+        el('button',{class:'btn sm '+(locked?'':'sec'),style:'flex:0 0 auto;white-space:nowrap',title:locked?'Kilitli — iz donduruldu, değişmez. Tıkla: kilidi aç (yeniden çekilebilir).':'Açık — Yeniden İzle ile güncellenebilir. Tıkla: kilitle (dondur).',onclick:async()=>{ const {error}=await sb.from('izleme_node').update({kilitli:!locked}).eq('trace_key',key); if(error){toast(esc(error.message),'err');return;} toast(locked?'🔓 Kilit açıldı — Yeniden İzle ile güncellenebilir.':'🔒 İz kilitlendi (donduruldu).','ok'); loadTrace(key,irs,s); }}, locked?'🔒 Kilitli':'🔓 Açık'),
+        (!locked && s)?el('button',{class:'btn sm sec',style:'flex:0 0 auto;white-space:nowrap',title:'LeanSys’ten yeniden çek (kilit açık)',onclick:()=>doTrace(urun,s,true)},'🔄 Yeniden İzle'):'',
         el('button',{class:'btn sm sec',style:'flex:0 0 auto;white-space:nowrap',onclick:()=>out.querySelectorAll('.iz-kids').forEach(k=>k.style.display='')},'⊞ Aç'),
         el('button',{class:'btn sm sec',style:'flex:0 0 auto;white-space:nowrap',onclick:()=>out.querySelectorAll('.iz-kids').forEach(k=>k.style.display='none')},'⊟ Kapat'),
-        isAdmin?el('button',{class:'btn sm danger',style:'flex:0 0 auto;white-space:nowrap',onclick:async()=>{ if(!confirm('Bu iz SUPABASE’ten silinsin mi? (LeanSys’e dokunulmaz)'))return; const {error}=await sb.from('izleme_node').delete().eq('trace_key',key); if(error){toast(esc(error.message),'err');return;} out.innerHTML=''; toast('İz silindi (Supabase).','ok'); }},'🗑 Sil'):''
+        isAdmin?el('button',{class:'btn sm danger',style:'flex:0 0 auto;white-space:nowrap',onclick:async()=>{ if(!confirm('Bu iz SUPABASE’ten silinsin mi? (LeanSys’e dokunulmaz)'))return; const {error}=await sb.from('izleme_node').delete().eq('trace_key',key); if(error){toast(esc(error.message),'err');return;} _izKeep={...(_izKeep||{}),key:null}; out.innerHTML=''; toast('İz silindi (Supabase).','ok'); }},'🗑 Sil'):''
       )));
     const tree=el('div',{style:'margin-top:10px;border:1px solid var(--line);border-radius:8px;overflow:auto;max-height:68vh'});
     tree.append(izHeaderRow());
@@ -3165,6 +3180,12 @@ async function renderIzleme(root){
       turCell.style.cursor='pointer'; turCell.onclick=e=>{ if(e.target===caret)return; toggle(); };
     }
     return wrap;
+  }
+  // Sekme yeniden açıldığında son izi/sevk listesini geri yükle (kaybolmasın)
+  if(_izKeep){
+    if(_izKeep.urun){ fUrun.value=_izKeep.urun; }
+    if(_izKeep.sevkler&&_izKeep.sevkler.length){ renderSevkList(_izKeep.urun, _izKeep.sevkler); }
+    if(_izKeep.key){ loadTrace(_izKeep.key, _izKeep.irs, _izKeep.s); }
   }
 }
 // 🌳 Ürün Ağaçları (LeanSys SBT071/072, BOM) — tüketim satırları; kod ile çek, akordeon, Supabase'ten sil
