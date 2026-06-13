@@ -3100,37 +3100,41 @@ async function renderIzleme(root){
       // PASS 1: her üretim düğümü için eşleşen üretimler (iş emri ile birebir; yoksa stok+tarih)
       const nodeMatched={};
       uret.forEach(n=>{ const wo=(n.work_order==null?'':String(n.work_order).trim()); nodeMatched[n.node_no]= wo ? prodList.filter(p=>p.wo===wo) : prodList.filter(p=>p.stock===n.stok_kodu && dDiff(p.d,n.tarih)<=2); });
-      // MAKİNE-BAZLI PAYLAŞIM: aynı makinedeki op (ör. SICAK SILINDIR laminasyonu) bu izde her seviyede AYNI kontrolleri göstersin
-      const pById={}; prodList.forEach(p=>pById[p.id]=p);
-      const traceIds=new Set(); Object.values(nodeMatched).forEach(arr=>arr.forEach(p=>traceIds.add(p.id)));
+      // SEVK TARİHİ — op üretimleri BUNA göre seçilir (eski parti değil, sevki yapan koşum: kullanıcı "aynı gün/1-2 gün öncesi")
       const sevkNode=nodes.find(x=>x.tur==='sevk'); const sevkDate=sevkNode?sevkNode.tarih:null;
-      // SEVKE KAPSA: makine başına TEK üretim (sevke en yakın tarihli) — partinin tüm koşumlarını TOPLAMA (sayılar şişmesin; kullanıcı: "sevke yetecek kadar")
-      const machProds={}; traceIds.forEach(id=>{ const p=pById[id]; if(p&&p.mac)(machProds[p.mac]=machProds[p.mac]||[]).push(p); });
-      const machBy={};   // makine -> {seri_basi,proses,son, ids:[tek id]}
-      Object.keys(machProds).forEach(mac=>{ const p=machProds[mac].slice().sort((a,b)=>dDiff(a.d,sevkDate)-dDiff(b.d,sevkDate))[0]; const r=recByPid[p.id]||{seri_basi:0,proses:0,son:0}; machBy[mac]={seri_basi:r.seri_basi,proses:r.proses,son:r.son,ids:[p.id],d:p.d}; });
-      const machHas=m=>{ const s=m&&machBy[m]; return !!(s&&(s.seri_basi+s.proses+s.son)>0); };
-      // PASS 2: gate'leri kur, makine paylaşımını uygula
+      const anchorMs = sevkDate ? new Date(sevkDate).getTime() : null;
+      // PASS 2: her op için SEVK tarihine EN YAKIN (tercihen sevk günü/öncesi) üretimi seç — iş emrine kilitleme (gerçek koşum başka iş emri altında olabilir)
       uret.forEach(n=>{
         const matched=nodeMatched[n.node_no];
         const realByOp={}, opMachine={}, opProdId={}, opProdIds={}, opProdDate={};
-        // SEVKE KAPSA: op başına TEK üretim (trace tarihine en yakın) — partinin tüm koşumlarını toplama (SB8/PR23 yerine sevke giden koşum)
-        const byOpArr={}; matched.forEach(p=>{ if(p.op!=null)(byOpArr[p.op]=byOpArr[p.op]||[]).push(p); });
-        Object.keys(byOpArr).forEach(opK=>{ const op=Number(opK); const p=byOpArr[opK].slice().sort((a,b)=>dDiff(a.d,n.tarih)-dDiff(b.d,n.tarih))[0]; if(p.mac)opMachine[op]=p.mac; opProdId[op]=p.id; opProdIds[op]=[p.id]; opProdDate[op]=p.d; const r=recByPid[p.id]; if(r)realByOp[op]={seri_basi:r.seri_basi,proses:r.proses,son:r.son}; });
-        const realFor=(op,mac)=>{ if(machHas(mac)){ opProdIds[op]=machBy[mac].ids.slice(); if(!opProdDate[op])opProdDate[op]=machBy[mac].d; const s=machBy[mac]; return {seri_basi:s.seri_basi,proses:s.proses,son:s.son}; } return realByOp[op]||{seri_basi:0,proses:0,son:0}; };
+        // ADAY HAVUZ: bu STOĞUN o op üretimleri (HER iş emri) + node'un kendi wo'sundan gelenler (farklı kod altındaysa)
+        const byOp={}; prodList.forEach(p=>{ if(p.stock===n.stok_kodu && p.op!=null)(byOp[p.op]=byOp[p.op]||[]).push(p); });
+        matched.forEach(p=>{ if(p.op!=null){ const a=byOp[p.op]=byOp[p.op]||[]; if(!a.some(x=>x.id===p.id))a.push(p); } });
+        const nodeMs = n.tarih?new Date(n.tarih).getTime():null; const ref = anchorMs!=null?anchorMs:nodeMs;
+        const pick=arr=>{ if(!arr||!arr.length)return null; if(ref==null)return arr[0];
+          const onBefore=arr.filter(p=>p.d && new Date(p.d).getTime()<=ref+86400000);   // sevk günü +1'e kadar (tercih: aynı gün/öncesi)
+          const pool=onBefore.length?onBefore:arr;
+          return pool.slice().sort((a,b)=>Math.abs(new Date(a.d).getTime()-ref)-Math.abs(new Date(b.d).getTime()-ref))[0]; };
+        let foundAny=false;
+        Object.keys(byOp).forEach(opK=>{ const op=Number(opK); const p=pick(byOp[opK]); if(!p)return; foundAny=true; if(p.mac)opMachine[op]=p.mac; opProdId[op]=p.id; opProdIds[op]=[p.id]; opProdDate[op]=p.d; const r=recByPid[p.id]; if(r)realByOp[op]={seri_basi:r.seri_basi,proses:r.proses,son:r.son}; });
         const plan=planOps[n.stok_kodu]||{};
         const planKeys=Object.keys(plan).map(Number);
         const planHasRealOps=planKeys.some(o=>o>0);
         let ops;
         if(planHasRealOps){
           const opNos=[...new Set([...planKeys,...Object.keys(realByOp).map(Number)])].sort((a,b)=>a-b);
-          ops=opNos.map(op=>{ const mac=opMachine[op]||''; return {op_no:op, proc:(plan[op]&&plan[op].proc)||0, fin:(plan[op]&&plan[op].fin)||0, real:realFor(op,mac)}; });
+          ops=opNos.map(op=>({op_no:op, proc:(plan[op]&&plan[op].proc)||0, fin:(plan[op]&&plan[op].fin)||0, real:realByOp[op]||{seri_basi:0,proses:0,son:0}}));
         } else {
-          // plan GENEL → tek gate; makinesi = bu üretimin makinesi (üst seviyedeki aynı makine op'uyla paylaşılır)
-          const mac=n.makine||''; if(mac)opMachine[0]=mac;
+          // plan GENEL (op'a bölünmemiş) → tek gate; bulunan op kayıtlarını TOPLA; tarih/makine = sevke en yakın koşum
+          if(!opMachine[0] && n.makine)opMachine[0]=n.makine;
           const gp=plan[0]||{proc:0,fin:0};
-          ops=[{op_no:0, proc:gp.proc, fin:gp.fin, real:realFor(0,mac)}];
+          const agg={seri_basi:0,proses:0,son:0}; Object.values(realByOp).forEach(r=>{agg.seri_basi+=r.seri_basi;agg.proses+=r.proses;agg.son+=r.son;});
+          const rep=pick(Object.values(byOp).flat());
+          if(rep){ if(!opProdDate[0])opProdDate[0]=rep.d; if(rep.mac&&!opMachine[0])opMachine[0]=rep.mac; }
+          const allIds=Object.values(opProdId); opProdIds[0]=allIds.length?allIds:(rep?[rep.id]:[]);
+          ops=[{op_no:0, proc:gp.proc, fin:gp.fin, real:agg}];
         }
-        _qcMap[n.node_no]={ ops, opened:(matched.length>0 || machHas(n.makine)), opMachine, opProdId, opProdIds, opProdDate, prodIds:matched.map(p=>p.id) };
+        _qcMap[n.node_no]={ ops, opened:(foundAny||matched.length>0), opMachine, opProdId, opProdIds, opProdDate, prodIds:matched.map(p=>p.id) };
       });
       // 5) MALZEME GİRİŞ KALİTE PLANI: her hammadde/giriş stoğu için planında giriş kalite var mı?
       //    (kullanıcı akışı: önce plan → planda giriş kalite YOKSA pill gösterme; varsa o tarihte gerçek kayıt yoksa Türet)
@@ -3407,32 +3411,33 @@ async function renderIzleme(root){
     if(!(PROFILE&&PROFILE.is_admin)){ toast('Yetki yok (admin).','err'); return; }
     if(!confirm('Eksik kontroller — kontrol planı OLAN ürünlerde seri başı/proses/son + hammadde giriş kalite — kontrol planına göre TÜRETİLİP yalnız bizim QC sistemimize (Supabase control_records) yazılacak.\n\n⛔ LeanSys’e HİÇBİR ŞEY yazılmaz. Mal kabul/hammadde/müşteri türetilmez (gerçek veri). Türetilenler sonradan silinebilir.\n\nDevam?')) return;
     let total=0, atlanan=0, plansiz=0, giris=0, cekilen=0, sentetikOp=0;
+    const sevkN=nodes.find(x=>x.tur==='sevk'); const sevkD=sevkN?sevkN.tarih:null;   // sentetik op'lar sevke yakın tarihlensin
     for(const n of nodes.filter(x=>x.tur==='uretim')){
       const q=_qcMap[n.node_no];
-      // bu üretimin iş emri kayıtlarını (op_no ile) çek — bizde yoksa LeanSys'ten /pullprod
-      let prods=[];
-      if(n.work_order){
+      // GATE'in SEÇTİĞİ (sevke yakın) üretimleri türet — gate ne gösteriyorsa o dolsun (eski iş emrine kilitleme)
+      let picks = (q&&q.opProdId) ? Object.entries(q.opProdId).map(([op,id])=>({op:Number(op),id})) : [];
+      // gate boşsa (üretim bizde yok) → node'un wo'sundan çek, gerekirse /pullprod (fallback)
+      if(!picks.length && n.work_order){
         let {data:pp}=await sb.from('productions').select('id,op_no,prod_date,start_time').eq('work_order',String(n.work_order));
         if(!pp||!pp.length){ try{ await fetch('http://127.0.0.1:17777/pullprod?wo='+encodeURIComponent(n.work_order),{mode:'cors'}); }catch(e){} ({data:pp}=await sb.from('productions').select('id,op_no,prod_date,start_time').eq('work_order',String(n.work_order))); if(pp&&pp.length)cekilen++; }
-        prods=pp||[];
-      } else { const ids=(q&&q.prodIds)||[]; if(ids.length){ const {data:pp}=await sb.from('productions').select('id,op_no,prod_date,start_time').in('id',ids); prods=pp||[]; } }
-      if(!prods.length){ atlanan++; continue; }
-      // HER OP için BİR üretim — trace düğümünün tarihine EN YAKIN olanı (eski Şubat/Mart kaydını değil); op başına tek
-      const nodeMs=n.tarih?new Date(n.tarih).getTime():null;
-      const byOp={}; prods.forEach(p=>{ const op=(p.op_no==null?'_':String(p.op_no)); const pm=p.prod_date?new Date(p.prod_date).getTime():(p.start_time?new Date(p.start_time).getTime():null); const cur=byOp[op]; if(!cur){ byOp[op]={id:p.id,m:pm}; } else if(nodeMs!=null&&pm!=null&&cur.m!=null&&Math.abs(pm-nodeMs)<Math.abs(cur.m-nodeMs)){ byOp[op]={id:p.id,m:pm}; } });
-      const allIds=prods.map(p=>p.id);
-      try{ await sb.from('control_records').delete().in('production_id',allIds).eq('note','izleme-türet'); }catch(e){}   // eski çoğaltılmışları temizle
+        const ref=(sevkD||n.tarih)?new Date(sevkD||n.tarih).getTime():null; const byOp={};
+        (pp||[]).forEach(p=>{ if(p.op_no==null)return; const op=String(p.op_no); const pm=p.prod_date?new Date(p.prod_date).getTime():(p.start_time?new Date(p.start_time).getTime():null); const cur=byOp[op]; if(!cur||(ref!=null&&pm!=null&&cur.m!=null&&Math.abs(pm-ref)<Math.abs(cur.m-ref)))byOp[op]={id:p.id,m:pm,op:Number(p.op_no)}; });
+        picks = Object.values(byOp).map(x=>({op:x.op,id:x.id}));
+      }
+      if(!picks.length){ atlanan++; continue; }
+      const allIds=picks.map(x=>x.id);
+      try{ await sb.from('control_records').delete().in('production_id',allIds).eq('note','izleme-türet'); }catch(e){}   // eski türetilmişleri temizle (gerçeği koru)
       await ensurePlan(n.stok_kodu);   // kontrol planı yoksa LeanSys'ten çek+içe-aktar
-      for(const op in byOp){ try{ const r=await turetEksikQC({prodId:byOp[op].id, baseDate:n.tarih}); total+=(r.made||0); }catch(e){} }   // baseDate=trace tarihi → kontroller doğru (Haziran) tarihli
-      // EKSİK OP: planda var ama bu iş emrinde ÜRETİM YOK → SENTETİK üretim oluştur + türet (kullanıcı: "op eksikse sanal türet")
+      for(const x of picks){ try{ const r=await turetEksikQC({prodId:x.id}); total+=(r.made||0); }catch(e){} }   // baseDate YOK → üretimin GERÇEK (sevke yakın) tarihini kullanır
+      // EKSİK OP: planda var ama bu üretimde YOK → SENTETİK üretim (sevke yakın) oluştur + türet (kullanıcı: "op eksikse sanal türet")
       const {data:pli}=await sb.from('control_plan_items').select('op_no,process_control,final_control,production_equipment').eq('stock_code',n.stok_kodu).eq('active',true);
       const planOpM={}; (pli||[]).forEach(it=>{ const op=(it.op_no==null?0:Number(it.op_no)); if(op<=0)return; const o=planOpM[op]||(planOpM[op]={proc:false,fin:false,eq:''}); if(it.process_control)o.proc=true; if(it.final_control)o.fin=true; if(it.production_equipment&&!o.eq)o.eq=it.production_equipment; });
-      const realOps=new Set(prods.map(p=>p.op_no==null?-1:Number(p.op_no)));
+      const realOps=new Set(picks.map(x=>x.op));
       for(const op in planOpM){ const opN=Number(op); if(realOps.has(opN))continue; const pe=planOpM[op]; if(!pe.proc&&!pe.fin)continue;
-        const bd=n.tarih?new Date(n.tarih):new Date(); const st=new Date(bd.getFullYear(),bd.getMonth(),bd.getDate(),8,0,0).toISOString(); const en=new Date(new Date(st).getTime()+6*3600000).toISOString();
+        const bd=(sevkD||n.tarih)?new Date(sevkD||n.tarih):new Date(); const st=new Date(bd.getFullYear(),bd.getMonth(),bd.getDate(),8,0,0).toISOString(); const en=new Date(new Date(st).getTime()+6*3600000).toISOString();
         const fp='SENTETIK|'+(n.work_order||'')+'|'+n.stok_kodu+'|'+opN;
-        const {data:sp}=await sb.from('productions').upsert({work_order:String(n.work_order||''), stock_code:n.stok_kodu, stock_name:n.stok_adi, op_no:opN, machine_name:(pe.eq||('Op'+opN)), start_time:st, end_time:en, prod_date:((n.tarih||'').slice(0,10)||null), quantity:n.miktar, fingerprint:fp, sentetik:true},{onConflict:'fingerprint'}).select();
-        if(sp&&sp[0]){ await sb.from('control_records').delete().eq('production_id',sp[0].id).eq('note','izleme-türet'); try{ const r=await turetEksikQC({prodId:sp[0].id, baseDate:n.tarih}); total+=(r.made||0); if(r.made)sentetikOp++; }catch(e){} }
+        const {data:sp}=await sb.from('productions').upsert({work_order:String(n.work_order||''), stock_code:n.stok_kodu, stock_name:n.stok_adi, op_no:opN, machine_name:(pe.eq||('Op'+opN)), start_time:st, end_time:en, prod_date:((sevkD||n.tarih||'').slice(0,10)||null), quantity:n.miktar, fingerprint:fp, sentetik:true},{onConflict:'fingerprint'}).select();
+        if(sp&&sp[0]){ await sb.from('control_records').delete().eq('production_id',sp[0].id).eq('note','izleme-türet'); try{ const r=await turetEksikQC({prodId:sp[0].id, baseDate:(sevkD||n.tarih)}); total+=(r.made||0); if(r.made)sentetikOp++; }catch(e){} }
       }
     }
     // GİRİŞ KALİTE: iz giriş düğümünün GERÇEK LeanSys verisinden (mal kabul tablosu şart değil); yalnız giriş kalite PLANI olan hammadde
