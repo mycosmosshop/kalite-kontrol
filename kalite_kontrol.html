@@ -3033,9 +3033,32 @@ async function renderIzleme(root){
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Tarih (ops.)'),fFrom),
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'— Bitiş (ops.)'),fTo),
     getBtn)));
+  const savedBox=el('div'); root.append(savedBox);   // 📁 kayıtlı (dondurulmuş) izler
   const sevkBox=el('div'); root.append(sevkBox);
   const out=el('div'); root.append(out);
   let _qcMap={};   // node_no -> {ops:[{op_no,proc,fin,real:{seri_basi,proses,son}}], opened:bool}
+  // 📁 KAYITLI İZLER — 💾 Kaydet ile dondurulan (kilitli) izler; tıkla → aç
+  async function loadSaved(){
+    savedBox.innerHTML='';
+    const {data}=await sb.from('izleme_node').select('trace_key,stok_kodu,irsaliye,musteri,tarih,miktar').eq('tur','sevk').eq('kilitli',true).order('tarih',{ascending:false}).limit(300);
+    if(!data||!data.length)return;
+    const card=el('div',{class:'card'});
+    card.append(el('div',{style:'font-weight:700;margin-bottom:6px'},'📁 Kayıtlı (dondurulmuş) izler — '+data.length+' · birine “Aç” de'));
+    const list=el('div',{style:'max-height:230px;overflow:auto;border:1px solid var(--line);border-radius:8px'});
+    const tb=el('table'); tb.append(el('thead',{},el('tr',{},...['Tarih','İrsaliye','Ürün','Müşteri','Miktar',''].map(x=>el('th',{},x)))));
+    const body=el('tbody');
+    data.forEach(r=>{ const p=(r.irsaliye||'').split('/'); const sObj={seri:(p[0]||'').trim(),sira:(p[1]||'').trim(),musteri:r.musteri,tarih:r.tarih,miktar:r.miktar};
+      body.append(el('tr',{},
+        el('td',{style:'white-space:nowrap'},r.tarih?fmtDate(r.tarih):''),
+        el('td',{style:'white-space:nowrap;font-weight:600'},r.irsaliye||''),
+        el('td',{},esc(r.stok_kodu||'')),
+        el('td',{style:'font-size:12px'},esc((r.musteri||'').slice(0,28))),
+        el('td',{style:'text-align:right'},r.miktar!=null?commaFmt(r.miktar):''),
+        el('td',{},el('button',{class:'btn sm sec',style:'flex:0;white-space:nowrap',onclick:()=>{ _izKeep={...(_izKeep||{}),urun:r.stok_kodu,key:r.trace_key,irs:r.irsaliye,s:sObj}; loadTrace(r.trace_key, r.irsaliye, sObj); }},'📂 Aç'))));
+    });
+    tb.append(body); list.append(el('div',{class:'tbl-wrap'},tb));
+    card.append(list); savedBox.append(card);
+  }
 
   async function loadQc(nodes){
     _qcMap={};
@@ -3519,12 +3542,12 @@ async function renderIzleme(root){
         el('div',{class:'autozone'},
           el('button',{class:'autozone-handle',title:'Kilit · iç işlemler (admin)',onclick:e=>{e.stopPropagation();toggleAutozone(e.currentTarget);}},'⚙'),
           el('div',{class:'auto-menu'},
-            el('button',{class:'btn sm',style:'background:#15803d;border-color:#15803d',title:'Bu izi DONDUR — şu anki hali kalıcı kaydedilir; yeniden çekilince/türetilince değişmez',onclick:async()=>{ const {error}=await sb.from('izleme_node').update({kilitli:true}).eq('trace_key',key); if(error){toast(esc(error.message),'err');return;} toast('💾 İz kaydedildi — bu hali donduruldu (değişmez).','ok'); loadTrace(key,irs,s); }},'💾 Kaydet'),
-            el('button',{class:'btn sm '+(locked?'':'sec'),title:locked?'Kilitli — iz donduruldu. Tıkla: kilidi aç (değiştirilebilir).':'Açık — değiştirilebilir. Tıkla: kilitle (dondur).',onclick:async()=>{ const {error}=await sb.from('izleme_node').update({kilitli:!locked}).eq('trace_key',key); if(error){toast(esc(error.message),'err');return;} toast(locked?'🔓 Kilit açıldı.':'🔒 İz kilitlendi.','ok'); loadTrace(key,irs,s); }}, locked?'🔒 Kilitli':'🔓 Açık'),
+            el('button',{class:'btn sm',style:'background:#15803d;border-color:#15803d',title:'Bu izi DONDUR — şu anki hali kalıcı kaydedilir; aşağıdaki “Kayıtlı izler” listesinde görünür; yeniden çekilince/türetilince değişmez',onclick:async()=>{ const {error}=await sb.from('izleme_node').update({kilitli:true}).eq('trace_key',key); if(error){toast(esc(error.message),'err');return;} toast('💾 İz kaydedildi — “📁 Kayıtlı izler” listesine eklendi (donduruldu).','ok'); loadSaved(); loadTrace(key,irs,s); }},'💾 Kaydet'),
+            el('button',{class:'btn sm '+(locked?'':'sec'),title:locked?'Kilitli — iz donduruldu. Tıkla: kilidi aç (değiştirilebilir).':'Açık — değiştirilebilir. Tıkla: kilitle (dondur).',onclick:async()=>{ const {error}=await sb.from('izleme_node').update({kilitli:!locked}).eq('trace_key',key); if(error){toast(esc(error.message),'err');return;} toast(locked?'🔓 Kilit açıldı.':'🔒 İz kilitlendi.','ok'); loadSaved(); loadTrace(key,irs,s); }}, locked?'🔒 Kilitli':'🔓 Açık'),
             (!locked && s && IZ_ADMIN)?el('button',{class:'btn sm sec',title:'LeanSys’ten yeniden çek (kilit açık)',onclick:()=>doTrace(urun,s,true)},'🔄 Yeniden İzle'):'',
             isAdmin?el('button',{class:'btn sm '+(IZ_ADMIN?'':'sec'),style:(IZ_ADMIN?'background:#7c3aed;border-color:#7c3aed':''),title:IZ_ADMIN?'İç işlemler AÇIK — Türet/Düzelt görünür. Tıkla: KAPAT (denetim).':'İç işlemler KAPALI — denetçiye temiz görünüm. Tıkla: AÇ (admin).',onclick:()=>{ IZ_ADMIN=!IZ_ADMIN; loadTrace(key,irs,s); }},IZ_ADMIN?'🔓 İç işlemler: açık':'🔒 İç işlemler: kapalı'):'',
             (isAdmin&&IZ_ADMIN)?el('button',{class:'btn sm',style:'background:#7c3aed;border-color:#7c3aed',title:'Eksik seri başı/proses/son + giriş kalite + kalite kapılarını plana göre TÜRET (yalnız Supabase)',onclick:()=>turetTrace(nodes,key,irs,s)},'🔧 Türet'):'',
-            isAdmin?el('button',{class:'btn sm danger',onclick:async()=>{ if(!confirm('Bu iz SUPABASE’ten silinsin mi? (LeanSys’e dokunulmaz)'))return; const {error}=await sb.from('izleme_node').delete().eq('trace_key',key); if(error){toast(esc(error.message),'err');return;} _izKeep={...(_izKeep||{}),key:null}; out.innerHTML=''; toast('İz silindi (Supabase).','ok'); }},'🗑 Sil'):''
+            isAdmin?el('button',{class:'btn sm danger',onclick:async()=>{ if(!confirm('Bu iz SUPABASE’ten silinsin mi? (LeanSys’e dokunulmaz)'))return; const {error}=await sb.from('izleme_node').delete().eq('trace_key',key); if(error){toast(esc(error.message),'err');return;} _izKeep={...(_izKeep||{}),key:null}; out.innerHTML=''; toast('İz silindi (Supabase).','ok'); loadSaved(); }},'🗑 Sil'):''
           )),
         el('button',{class:'btn sm sec',style:'flex:0 0 auto;white-space:nowrap',onclick:()=>out.querySelectorAll('.iz-kids').forEach(k=>k.style.display='')},'⊞ Aç'),
         el('button',{class:'btn sm sec',style:'flex:0 0 auto;white-space:nowrap',onclick:()=>out.querySelectorAll('.iz-kids').forEach(k=>k.style.display='none')},'⊟ Kapat')
@@ -3590,6 +3613,7 @@ async function renderIzleme(root){
     return wrap;
   }
   // Sekme yeniden açıldığında son izi/sevk listesini geri yükle (kaybolmasın)
+  loadSaved();   // 📁 kayıtlı izler listesini göster
   if(_izKeep){
     if(_izKeep.urun){ fUrun.value=_izKeep.urun; }
     if(_izKeep.sevkler&&_izKeep.sevkler.length){ renderSevkList(_izKeep.urun, _izKeep.sevkler); }
