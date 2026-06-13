@@ -3090,7 +3090,7 @@ async function renderIzleme(root){
     const cikan = n.agirlik_kg!=null? Number(n.agirlik_kg): null;
     const rnd=x=>Math.round(x*100)/100;
     const sty='font-size:10.5px;color:var(--muted);padding:1px 0 3px '+(depth*15+22)+'px';
-    if(cikan==null){ return el('div',{style:sty,html:'⚖️ Kütle: giren <b>'+commaFmt(rnd(known))+' kg</b>'+(eksik?(' · '+eksik+' kalemde kg yok'):'')+' ↔ çıkan <i>ürün kg’ı yok (Adet birimli)</i>'}); }
+    if(cikan==null){ return el('div',{style:sty,html:'⚖️ <b>Montaj / ambalaj</b> (Adet ürün — kütle denkliği bu adımda uygulanmaz) · ağırlıklı malzeme girişi <b>'+commaFmt(rnd(known))+' kg</b>'+(eksik?(' · '+eksik+' kalemde kg yok'):'')}); }
     let giren=known, turetildi=0;
     if(eksik>0){ const res=cikan-known; if(res>0){ turetildi=res; giren=cikan; } }   // eksik kg'ı dengeye göre türet
     const fark = cikan!==0 ? Math.round((giren-cikan)/cikan*1000)/10 : 0;
