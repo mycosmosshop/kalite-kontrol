@@ -3112,11 +3112,17 @@ async function renderIzleme(root){
         matched.forEach(p=>{ if(p.op!=null){ const a=byOp[p.op]=byOp[p.op]||[]; if(!a.some(x=>x.id===p.id))a.push(p); } });
         const nodeMs = n.tarih?new Date(n.tarih).getTime():null; const ref = anchorMs!=null?anchorMs:nodeMs;
         const pick=arr=>{ if(!arr||!arr.length)return null; if(ref==null)return arr[0];
-          const onBefore=arr.filter(p=>p.d && new Date(p.d).getTime()<=ref+86400000);   // sevk günü +1'e kadar (tercih: aynı gün/öncesi)
+          const onBefore=arr.filter(p=>p.d && new Date(p.d).getTime()<=ref);   // sevk tarihine kadar (dahil) — kesinlikle sonrasına izin yok
           const pool=onBefore.length?onBefore:arr;
           return pool.slice().sort((a,b)=>Math.abs(new Date(a.d).getTime()-ref)-Math.abs(new Date(b.d).getTime()-ref))[0]; };
         let foundAny=false;
         Object.keys(byOp).forEach(opK=>{ const op=Number(opK); const p=pick(byOp[opK]); if(!p)return; foundAny=true; if(p.mac)opMachine[op]=p.mac; opProdId[op]=p.id; opProdIds[op]=[p.id]; opProdDate[op]=p.d; const r=recByPid[p.id]; if(r)realByOp[op]={seri_basi:r.seri_basi,proses:r.proses,son:r.son}; });
+        // Sıralı tarih zorla: Op1≤Op2≤Op3≤Op4, hiçbiri sevk tarihini geçemez
+        { const opNums=Object.keys(opProdDate).map(Number).sort((a,b)=>a-b); let prevMs=null;
+          opNums.forEach(op=>{ let d=opProdDate[op]; let dMs=d?new Date(d).getTime():null;
+            if(ref&&dMs&&dMs>ref){dMs=ref;d=new Date(ref).toISOString().slice(0,10);}
+            if(prevMs&&dMs&&dMs<prevMs){dMs=prevMs;d=new Date(prevMs).toISOString().slice(0,10);}
+            opProdDate[op]=d; if(dMs)prevMs=dMs; }); }
         const plan=planOps[n.stok_kodu]||{};
         const planKeys=Object.keys(plan).map(Number);
         const planHasRealOps=planKeys.some(o=>o>0);
