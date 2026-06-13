@@ -2955,11 +2955,14 @@ async function turetEksikQC({prodId=null, mk=null, regen=false}={}){
     const {data:plan}=await sb.from('control_plan_items').select('*').eq('stock_code',mk.stok_kodu).eq('active',true);
     const items=(plan||[]).filter(it=>it.giris_kalite===true);
     if(!items.length) return {made:0,reason:'giriş kalite planı yok'};
-    const {data:done}=await sb.from('control_records').select('id').eq('mal_kabul_rec_id',mk.rec_id).limit(1);
-    if((done||[]).length && !regen) return {made:0,reason:'giriş zaten var'};
-    if((done||[]).length && regen) await sb.from('control_records').delete().eq('mal_kabul_rec_id',mk.rec_id);
-    const iso=girisCtrlISO(mk.tarih); const when=iso?new Date(iso):new Date();
     const irs=(mk.seri||'')+(mk.sira?(' / '+mk.sira):'');
+    // dedup: mal_kabul kaydı varsa rec_id ile; yoksa stok+irsaliye ile (iz girişi gerçek LeanSys verisinden)
+    let done=[];
+    if(mk.rec_id){ const {data:d}=await sb.from('control_records').select('id').eq('mal_kabul_rec_id',mk.rec_id).limit(1); done=d||[]; }
+    else { const {data:d}=await sb.from('control_records').select('id').eq('stage','giris').eq('stock_code',mk.stok_kodu).eq('giris_irsaliye',irs).limit(1); done=d||[]; }
+    if(done.length && !regen) return {made:0,reason:'giriş zaten var'};
+    if(done.length && regen){ if(mk.rec_id)await sb.from('control_records').delete().eq('mal_kabul_rec_id',mk.rec_id); else await sb.from('control_records').delete().eq('stage','giris').eq('stock_code',mk.stok_kodu).eq('giris_irsaliye',irs); }
+    const iso=girisCtrlISO(mk.tarih); const when=iso?new Date(iso):new Date();
     const p={ id:null, stock_code:mk.stok_kodu, stock_name:mk.stok_adi, machine_code:null, work_order:irs, op_no:null, shift:shiftForTime(when) };
     const rec=buildAutoRec(p,'giris',when,items,null);
     if(!rec) return {made:0,reason:'giriş maddesi yok'};
@@ -3159,19 +3162,21 @@ async function renderIzleme(root){
   async function turetTrace(nodes,key,irs,s){
     if(!(PROFILE&&PROFILE.is_admin)){ toast('Yetki yok (admin).','err'); return; }
     if(!confirm('Eksik kontroller — kontrol planı OLAN ürünlerde seri başı/proses/son + hammadde giriş kalite — kontrol planına göre TÜRETİLİP yalnız bizim QC sistemimize (Supabase control_records) yazılacak.\n\n⛔ LeanSys’e HİÇBİR ŞEY yazılmaz. Mal kabul/hammadde/müşteri türetilmez (gerçek veri). Türetilenler sonradan silinebilir.\n\nDevam?')) return;
-    let total=0, atlanan=0;
+    let total=0, atlanan=0, plansiz=0, giris=0;
     for(const n of nodes.filter(x=>x.tur==='uretim')){
       const q=_qcMap[n.node_no]; const pids=(q&&q.prodIds)||[];
       if(!pids.length){ atlanan++; continue; }                 // üretim bizim sistemde yok → türetilemez (Üretimler'den çek)
       for(const pid of pids){ try{ const r=await turetEksikQC({prodId:pid}); total+=(r.made||0); }catch(e){} }
     }
-    for(const n of nodes.filter(x=>x.tur==='giris'&&x.stok_kodu&&x.irsaliye&&x.irsaliye!=='/')){
+    // GİRİŞ KALİTE: iz giriş düğümünün GERÇEK LeanSys verisinden (mal kabul tablosu şart değil); yalnız giriş kalite PLANI olan hammadde
+    for(const n of nodes.filter(x=>x.tur==='giris'&&x.stok_kodu)){
       const parts=(n.irsaliye||'').split('/'); const seri=(parts[0]||'').trim(); const sira=(parts[1]||'').trim();
-      let mq=sb.from('mal_kabul').select('*').eq('stok_kodu',n.stok_kodu); if(seri)mq=mq.eq('seri',seri); if(sira){ const sn=Number(sira); mq=mq.eq('sira',isNaN(sn)?sira:sn); }
-      const {data:mks}=await mq.limit(1); const mk=(mks||[])[0];
-      if(mk){ try{ const r=await turetEksikQC({mk}); total+=(r.made||0); }catch(e){} }
+      let mkRec=null;
+      if(seri){ let mq=sb.from('mal_kabul').select('rec_id').eq('stok_kodu',n.stok_kodu).eq('seri',seri); if(sira){ const sn=Number(sira); mq=mq.eq('sira',isNaN(sn)?sira:sn); } const {data:mks}=await mq.limit(1); if(mks&&mks.length)mkRec=mks[0].rec_id; }
+      const mk={ rec_id:mkRec, stok_kodu:n.stok_kodu, stok_adi:n.stok_adi, cari_adi:n.tedarikci, seri, sira, miktar:n.miktar, birim:n.birim, tarih:(n.tarih||'').slice(0,10) };
+      try{ const r=await turetEksikQC({mk}); if(r.made){ total+=r.made; giris+=r.made; } else if(r.reason==='giriş kalite planı yok'){ plansiz++; } }catch(e){}
     }
-    toast(total+' kontrol kaydı türetildi (Supabase)'+(atlanan?(' · '+atlanan+' üretim sistemde yok, atlandı'):''), total?'ok':'err');
+    toast(total+' kontrol türetildi ('+giris+' giriş kalite) (Supabase)'+(atlanan?(' · '+atlanan+' üretim sistemde yok'):'')+(plansiz?(' · '+plansiz+' hammadde giriş kalite planı yok'):''), total?'ok':'err');
     loadTrace(key,irs,s);
   }
   async function loadTrace(key, irs, s){
