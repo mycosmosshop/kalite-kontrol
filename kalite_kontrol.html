@@ -3116,11 +3116,16 @@ async function renderIzleme(root){
       return el('div',{style:sty,html:'⚖️ <b>Montaj / ambalaj</b> (Adet ürün — kütle denkliği uygulanmaz) · ağırlıklı malzeme girişi <b>'+commaFmt(rnd2(known))+' kg</b>'+(eksik?(' · '+eksik+' kalemde kg yok'):'')});
     }
     const giren=mb.giren_kg!=null?Number(mb.giren_kg):null, cikan=mb.cikti_kg!=null?Number(mb.cikti_kg):null, denge=mb.denge_yuzde!=null?Number(mb.denge_yuzde):null;
-    const ok=denge!=null&&Math.abs(denge)<=2; const col=ok?'#15803d':'#b45309';
+    const fireKabul=!!(mb.duzeltildi&&mb.duzeltildi.fire_kabul);
+    const fireKg=mb.fire_kg!=null?Number(mb.fire_kg):((giren!=null&&cikan!=null)?giren-cikan:null);
+    const ok=fireKabul||(denge!=null&&Math.abs(denge)<=2); const col=ok?'#15803d':'#b45309';
+    const verdict=fireKabul?('✓ dengeli (fire '+commaFmt(rnd2(fireKg))+' kg kabul)'):(ok?'✓ dengeli (±%2)':('fark '+(denge>0?'+':'')+denge+'% (proses firesi/sapma)'));
+    const dzBadge=mb.duzeltildi?(' <span style="color:#7c3aed;font-size:9px;border:1px solid #7c3aed;border-radius:3px;padding:0 3px" title="'+esc((mb.duzeltildi.by||'')+' · '+String(mb.duzeltildi.at||'').slice(0,16).replace('T',' '))+'">düzeltildi</span>'):'';
     const wrap=el('div',{style:'padding:1px 0 3px '+pad+'px'});
     const caret=el('span',{style:'color:var(--accent);cursor:pointer'},'▸ hesabı göster');
-    const head=el('div',{style:'font-size:10.5px;color:var(--muted);cursor:pointer',html:'⚖️ <b>Kütle denkliği:</b> giren <b>'+commaFmt(rnd2(giren))+' kg</b> → ürün <b>'+commaFmt(rnd2(cikan))+' kg</b> (reçete) · <b style="color:'+col+'">'+(ok?'✓ dengeli (±%2)':('fark '+(denge>0?'+':'')+denge+'% (proses firesi/sapma)'))+'</b> &nbsp;'});
+    const head=el('div',{style:'font-size:10.5px;color:var(--muted);cursor:pointer',html:'⚖️ <b>Kütle denkliği:</b> giren <b>'+commaFmt(rnd2(giren))+' kg</b> → ürün <b>'+commaFmt(rnd2(cikan))+' kg</b> (reçete) · <b style="color:'+col+'">'+verdict+'</b>'+dzBadge+' &nbsp;'});
     head.append(caret);
+    if(PROFILE&&PROFILE.is_admin){ const dz=el('span',{style:'margin-left:8px;color:#7c3aed;cursor:pointer;font-size:10px',title:'Kütle denkliğini düzelt: elle kg/reçete düzenle veya Oto dengele (fark=fire)'},'✏️ Düzelt'); let editing=null; dz.onclick=e=>{ e.stopPropagation(); if(editing){ editing.remove(); editing=null; dz.textContent='✏️ Düzelt'; return; } det.style.display='none'; caret.textContent='▸ hesabı göster'; editing=editMass(n,mb,()=>loadTrace((_izKeep&&_izKeep.key),(_izKeep&&_izKeep.irs),(_izKeep&&_izKeep.s))); dz.textContent='✕ Düzeltmeyi kapat'; wrap.append(editing); }; head.append(dz); }
     // === açılır AYRINTILI HESAP (denetim için) ===
     const det=el('div',{style:'display:none;margin:4px 0 4px 6px;border:1px solid var(--line);border-radius:6px;overflow:auto;background:var(--panel2)'});
     const num=v=>v==null?'<span style="color:var(--muted)">—</span>':commaFmt(rnd2(v));
@@ -3156,6 +3161,57 @@ async function renderIzleme(root){
     let open=false; head.onclick=e=>{ e.stopPropagation(); open=!open; det.style.display=open?'':'none'; caret.textContent=open?'▾ hesabı gizle':'▸ hesabı göster'; };
     wrap.append(head,det);
     return wrap;
+  }
+  // Kütle denkliği DÜZELT (admin): elle kullanılan kg / reçete (beklenen) kg + Oto dengele (fark=fire). Yalnız Supabase.
+  function editMass(n,mb,onDone){
+    const kalem=(mb.kalemler||[]).map(k=>({...k}));
+    const panel=el('div',{style:'margin:6px 0;border:1px solid #7c3aed;border-radius:8px;padding:8px;background:var(--panel2)'});
+    panel.append(el('div',{style:'font-weight:700;font-size:11px;margin-bottom:2px;color:#7c3aed'},'✏️ Kütle denkliği düzelt'));
+    panel.append(el('div',{style:'font-size:10px;color:var(--muted);margin-bottom:6px'},'Kullanılan kg ve/veya reçete (beklenen) kg değerlerini düzenle (çevrim/yoğunluk yanlışsa) → denge canlı hesaplanır. Ya da “Oto dengele” farkı PROSES FİRESİ olarak kabul eder. LeanSys’e yazılmaz.'));
+    let fireKabul=!!(mb.duzeltildi&&mb.duzeltildi.fire_kabul);
+    const inputs=[]; const totBox=el('div',{style:'font-size:11px;margin-top:7px;font-weight:600'});
+    const recompute=()=>{
+      let giren=0,urun=0;
+      inputs.forEach(it=>{ const kg=parseFloat((it.kgIn.value||'').replace(',','.'))||0; const be=parseFloat((it.beIn.value||'').replace(',','.'))||0; giren+=kg; urun+=be; const f=be?((kg-be)/be*100):0; it.farkCell.textContent=(f>0?'+':'')+(Math.round(f*10)/10)+'%'; it.farkCell.style.color=Math.abs(f)<=2?'#15803d':'#b45309'; });
+      const fire=giren-urun; let denge=urun?((giren-urun)/urun*100):0; denge=Math.round(denge*100)/100;
+      const balanced=fireKabul||Math.abs(denge)<=2;
+      totBox.innerHTML='Σ giren <b>'+commaFmt(rnd2(giren))+' kg</b> · ürün <b>'+commaFmt(rnd2(urun))+' kg</b>'+(fireKabul?(' · fire <b>'+commaFmt(rnd2(fire))+' kg</b>'):'')+' · <span style="color:'+(balanced?'#15803d':'#b45309')+'">'+(balanced?('✓ dengeli'+(fireKabul?(' (fire '+commaFmt(rnd2(fire))+' kg kabul)'):' (±%2)')):('fark '+(denge>0?'+':'')+denge+'%'))+'</span>';
+      return {giren,urun,fire,denge,balanced};
+    };
+    const tbl=el('table',{style:'border-collapse:collapse;width:100%;font-size:10.5px'});
+    tbl.append(el('tr',{style:'background:var(--panel);color:var(--muted);font-weight:700'},
+      ...['Malzeme','Kullanılan kg','Reçete (beklenen) kg','Fark'].map(x=>el('td',{style:'padding:3px 6px;text-align:left'},x))));
+    kalem.forEach(k=>{
+      const kgIn=el('input',{class:'inp',style:'width:88px;padding:2px 4px;font-size:10.5px',value:(k.kg!=null?String(k.kg):'')});
+      const beIn=el('input',{class:'inp',style:'width:88px;padding:2px 4px;font-size:10.5px',value:(k.beklenen_kg!=null?String(k.beklenen_kg):'')});
+      const farkCell=el('td',{style:'padding:3px 6px;text-align:right'});
+      kgIn.oninput=recompute; beIn.oninput=recompute;
+      inputs.push({k,kgIn,beIn,farkCell});
+      tbl.append(el('tr',{},
+        el('td',{style:'padding:3px 6px',html:'<b>'+esc(k.kod||'')+'</b> <span style="color:var(--muted)">'+esc((k.ad||'').slice(0,22))+'</span>'}),
+        el('td',{style:'padding:3px 6px'},kgIn), el('td',{style:'padding:3px 6px'},beIn), farkCell));
+    });
+    panel.append(tbl,totBox);
+    const oto=el('button',{class:'btn sm sec',style:'flex:0;white-space:nowrap',onclick:()=>{ fireKabul=!fireKabul; oto.textContent=fireKabul?'⚖ Fire kabul: AÇIK':'⚖ Oto dengele (fark=fire)'; recompute(); }},'⚖ Oto dengele (fark=fire)');
+    const kaydet=el('button',{class:'btn sm',style:'flex:0;background:#7c3aed;border-color:#7c3aed',onclick:async()=>{
+      const r=recompute();
+      const newKalem=inputs.map(it=>{ const kg=parseFloat((it.kgIn.value||'').replace(',','.')); const be=parseFloat((it.beIn.value||'').replace(',','.')); const nkg=isNaN(kg)?it.k.kg:kg, nbe=isNaN(be)?it.k.beklenen_kg:be; return {...it.k, kg:nkg, beklenen_kg:nbe, sapma:(nbe?Math.round((nkg-nbe)/nbe*1000)/10:it.k.sapma)}; });
+      const who=(PROFILE&&(PROFILE.full_name||PROFILE.email))||'admin';
+      const newMb={...mb, kalemler:newKalem, giren_kg:rnd2(r.giren), cikti_kg:rnd2(r.urun), denge_yuzde:r.denge, fire_kg:rnd2(r.fire), duzeltildi:{by:who, at:new Date().toISOString(), fire_kabul:fireKabul}};
+      const newEk={...(n.ek||{}), mb:newMb};
+      const {error}=await sb.from('izleme_node').update({ek:newEk, agirlik_kg:rnd2(r.urun)}).eq('trace_key',n.trace_key).eq('node_no',n.node_no);
+      if(error){ toast(esc(error.message),'err'); return; }
+      try{ const cikMik=mb.cikti_miktar?Number(mb.cikti_miktar):null;   // ürün ağırlığını parent HAMMADDE'ye yansıt (etkileşim)
+        if(cikMik&&n.parent_no){ const {data:par}=await sb.from('izleme_node').select('miktar,tur').eq('trace_key',n.trace_key).eq('node_no',n.parent_no).limit(1);
+          if(par&&par[0]&&par[0].tur==='hammadde'&&par[0].miktar!=null){ await sb.from('izleme_node').update({agirlik_kg:rnd2(Number(par[0].miktar)*r.urun/cikMik)}).eq('trace_key',n.trace_key).eq('node_no',n.parent_no); } } }catch(e){}
+      toast('Kütle denkliği düzeltildi (Supabase) · LeanSys’e yazılmadı.','ok');
+      if(onDone)onDone();
+    }},'💾 Kaydet');
+    const iptal=el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{ if(onDone)onDone(); }},'İptal');
+    panel.append(el('div',{style:'display:flex;gap:6px;margin-top:8px;flex-wrap:wrap'},oto,kaydet,iptal));
+    if(fireKabul)oto.textContent='⚖ Fire kabul: AÇIK';
+    recompute();
+    return panel;
   }
 
   // LeanSys izlenebilirlik sütunları — açılır detay (sevk/giriş/hammadde)
