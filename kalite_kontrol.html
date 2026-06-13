@@ -3155,18 +3155,21 @@ async function renderIzleme(root){
     const cikMik=mb.cikti_miktar!=null?Number(mb.cikti_miktar):null;
     let h='<table style="border-collapse:collapse;width:100%;min-width:760px;font-size:10.5px">';
     h+='<thead><tr style="background:var(--panel);font-weight:700;color:var(--muted)">'+
-       ['Malzeme','Tüketilen','kg/birim (formül)','= Tüketilen kg','Reçete oranı','Beklenen','Beklenen kg','Fark %'].map(x=>'<th style="'+C+';text-align:left">'+x+'</th>').join('')+'</tr></thead><tbody>';
+       ['Malzeme','Tüketilen','kg/birim (formül)','= Tüketilen kg','Reçete oranı','BOM Fire %','Beklenen kg','Gerç. Fire %'].map(x=>'<th style="'+C+';text-align:left">'+x+'</th>').join('')+'</tr></thead><tbody>';
     kalem.forEach(k=>{
-      const sap=k.sapma; const sc=(sap==null)?'var(--muted)':(Math.abs(Number(sap))<=2?'#15803d':'#b45309');
+      const fr=Number(k.fire||0);
+      const netBeklKg=(k.beklenen_kg!=null)?(Number(k.beklenen_kg)/(1+fr/100)):null;   // fire'sız (net ürün içeriği) kg
+      const gerc=(netBeklKg&&k.kg!=null&&netBeklKg!==0)?Math.round(((Number(k.kg)-netBeklKg)/netBeklKg)*1000)/10:null;   // GERÇEKLEŞEN fire (net reçeteye göre)
+      const gc=(gerc==null)?'var(--muted)':(Math.abs(gerc)<=2?'#15803d':'#b45309');
       h+='<tr>'+
         '<td style="'+C+'"><b>'+esc(k.kod||'')+'</b> <span style="color:var(--muted)">'+esc((k.ad||'').slice(0,30))+'</span></td>'+
         '<td style="'+C+';text-align:right">'+num(k.tuketilen)+' <span style="color:var(--muted)">'+esc(k.birim||'')+'</span></td>'+
         '<td style="'+C+';color:var(--muted)">'+esc(k.formul||(k.kgbirim!=null?(commaFmt(rnd2(k.kgbirim))+' kg/'+(k.birim||'br')):'—'))+'</td>'+
         '<td style="'+C+';text-align:right"><b>'+num(k.kg)+'</b></td>'+
-        '<td style="'+C+';text-align:right">'+(k.oran!=null?(commaFmt(k.oran)+' '+esc(k.birim||'')+'/'+esc(mb.cikti_birim||'br')):'<span style="color:var(--muted)">eşleşmedi</span>')+(k.fire?(' <span style="color:#b45309">+%'+k.fire+' fire</span>'):'')+'</td>'+
-        '<td style="'+C+';text-align:right">'+num(k.beklenen)+'</td>'+
+        '<td style="'+C+';text-align:right">'+(k.oran!=null?(commaFmt(k.oran)+' '+esc(k.birim||'')+'/'+esc(mb.cikti_birim||'br')):'<span style="color:var(--muted)">eşleşmedi</span>')+'</td>'+
+        '<td style="'+C+';text-align:right" title="ürün ağacı (LeanSys) fire oranı">'+(k.oran!=null?('%'+commaFmt(fr)):'—')+'</td>'+
         '<td style="'+C+';text-align:right">'+num(k.beklenen_kg)+'</td>'+
-        '<td style="'+C+';text-align:right;color:'+sc+'">'+(sap==null?'—':((sap>0?'+':'')+sap+'%'))+'</td>'+
+        '<td style="'+C+';text-align:right;color:'+gc+'" title="gerçekleşen fire = (tüketilen − net reçete) / net reçete">'+(gerc==null?'—':((gerc>0?'+':'')+commaFmt(gerc)+'%'))+'</td>'+
         '</tr>';
     });
     h+='<tr style="background:var(--panel);font-weight:700">'+
@@ -3343,8 +3346,12 @@ async function renderIzleme(root){
         pids=(pp||[]).map(p=>p.id); if(pids.length)cekilen++;
       }
       if(!pids.length){ atlanan++; continue; }
+      // bu LOTU yapan TEK üretim (iş emrinin tüm op'larına ÇOĞALTMA): node op'una eşleşen, yoksa ilk
+      let chosen=pids[0];
+      if(n.op_no!=null && q && q.opProdIds && q.opProdIds[Number(n.op_no)] && q.opProdIds[Number(n.op_no)].length) chosen=q.opProdIds[Number(n.op_no)][0];
+      try{ await sb.from('control_records').delete().in('production_id',pids).eq('note','izleme-türet'); }catch(e){}   // eski türetilmiş (çoğaltılmış) kayıtları temizle → tek lotluk yeniden türet
       await ensurePlan(n.stok_kodu);   // kontrol planı yoksa LeanSys'ten çek+içe-aktar
-      for(const pid of pids){ try{ const r=await turetEksikQC({prodId:pid}); total+=(r.made||0); }catch(e){} }
+      try{ const r=await turetEksikQC({prodId:chosen}); total+=(r.made||0); }catch(e){}
     }
     // GİRİŞ KALİTE: iz giriş düğümünün GERÇEK LeanSys verisinden (mal kabul tablosu şart değil); yalnız giriş kalite PLANI olan hammadde
     for(const n of nodes.filter(x=>x.tur==='giris'&&x.stok_kodu)){
