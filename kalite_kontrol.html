@@ -2963,21 +2963,50 @@ async function renderIzleme(root){
     getBtn)));
   const sevkBox=el('div'); root.append(sevkBox);
   const out=el('div'); root.append(out);
-  let _qcMap={};   // stok_kodu -> {seri_basi,proses,son,giris} sayilari (bizim control_records)
+  let _qcMap={};   // node_no -> {real:{seri_basi,proses,son}, plan:{...}, opened:bool}
 
   async function loadQc(nodes){
     _qcMap={};
-    const codes=[...new Set(nodes.filter(n=>(n.tur==='uretim'||n.tur==='sevk')&&n.stok_kodu).map(n=>n.stok_kodu))];
+    const uret=nodes.filter(n=>n.tur==='uretim'&&n.stok_kodu);
+    const codes=[...new Set(uret.map(n=>n.stok_kodu))];
     if(!codes.length)return;
     try{
-      const {data:recs}=await sb.from('control_records').select('stage,stock_code').in('stock_code',codes).limit(10000);
-      (recs||[]).forEach(r=>{ const o=_qcMap[r.stock_code]||(_qcMap[r.stock_code]={seri_basi:0,proses:0,son:0,giris:0}); if(o[r.stage]!=null)o[r.stage]++; });
+      // 1) bu stoklara ait BİZİM üretim kayıtları (id, stok, tarih)
+      const {data:prods}=await sb.from('productions').select('id,stock_code,prod_date').in('stock_code',codes).limit(6000);
+      const prodList=(prods||[]).map(p=>({id:p.id,stock:p.stock_code,d:(p.prod_date||'').slice(0,10)}));
+      // 2) o üretimlere ait kontrol kayıtları (stage)
+      const recByPid={}; const pids=prodList.map(p=>p.id);
+      for(let i=0;i<pids.length;i+=300){ const chunk=pids.slice(i,i+300); if(!chunk.length)break;
+        const {data:recs}=await sb.from('control_records').select('production_id,stage').in('production_id',chunk);
+        (recs||[]).forEach(r=>{ const o=recByPid[r.production_id]||(recByPid[r.production_id]={seri_basi:0,proses:0,son:0}); if(o[r.stage]!=null)o[r.stage]++; });
+      }
+      // 3) kontrol planı maddeleri → her aşamanın olması gereken madde sayısı
+      const {data:items}=await sb.from('control_plan_items').select('stock_code,process_control,final_control,active').in('stock_code',codes).limit(9000);
+      const planByStock={};
+      (items||[]).forEach(it=>{ if(it.active===false)return; const o=planByStock[it.stock_code]||(planByStock[it.stock_code]={proc:0,fin:0}); if(it.process_control!==false)o.proc++; if(it.final_control!==false)o.fin++; });
+      // 4) her üretim düğümü için: bu üretime (stok + tarih ±2 gün) ait gerçek + plandan beklenen
+      const dDiff=(a,b)=>{ if(!a||!b)return 9999; const t=(new Date(a)-new Date(b))/86400000; return Math.abs(t); };
+      uret.forEach(n=>{
+        const matched=prodList.filter(p=>p.stock===n.stok_kodu && dDiff(p.d,n.tarih)<=2);
+        const real={seri_basi:0,proses:0,son:0};
+        matched.forEach(p=>{ const r=recByPid[p.id]; if(r){ real.seri_basi+=r.seri_basi; real.proses+=r.proses; real.son+=r.son; } });
+        const pl=planByStock[n.stok_kodu]||{proc:0,fin:0};
+        _qcMap[n.node_no]={ real, plan:{seri_basi:pl.proc, proses:pl.proc, son:pl.fin}, opened:matched.length>0 };
+      });
     }catch(e){}
   }
-  function qcBadges(row,stok){
-    const qc=_qcMap[stok]; if(!qc)return;
-    const mkB=(stage,lab,cls)=>{ const c=qc[stage]||0; const b=el('span',{class:'pill '+cls,style:'cursor:pointer;margin-left:4px;font-size:10px'+(c?'':';opacity:.4'),title:STAGES[stage]+' kayıtları ('+c+') — tıkla: kayıtlara git',onclick:e=>{e.stopPropagation();KAYIT_PROD=null;KAYIT_STAGE=stage;KAYIT_FILT={start:'',end:'',stock:stok};switchTab('kayitlar');}},lab+' '+c); return b; };
-    row.append(mkB('seri_basi','🏁SB','seri'),mkB('proses','⚙️PR','proses'),mkB('son','🏆SON','son'));
+  function qcBadges(row,n){
+    const q=_qcMap[n.node_no]; if(!q)return;
+    if(!q.opened) row.append(el('span',{style:'margin-left:6px;font-size:10px;color:#92400e;background:#fef3c7;border-radius:4px;padding:1px 5px',title:'Bu üretim bizim QC sisteminde açılmamış'},'üretim açılmamış'));
+    const mk=(stage,lab,cls)=>{ const c=q.real[stage]||0; const plan=q.plan[stage]||0; const has=c>0;
+      if(!has && plan<=0)return null;
+      const b=el('span',{class:'pill '+cls,style:'cursor:pointer;margin-left:4px;font-size:10px'+(has?'':';opacity:.75;outline:1px dashed #b45309;outline-offset:-1px'),
+        title: has?(STAGES[stage]+': '+c+' kayıt — tıkla, kayıtlara git'):(STAGES[stage]+' kaydı YOK — planda '+plan+' madde, türetilmeli (◇)'),
+        onclick:e=>{e.stopPropagation();KAYIT_PROD=null;KAYIT_STAGE=stage;KAYIT_FILT={start:'',end:'',stock:n.stok_kodu};switchTab('kayitlar');}},
+        has?(lab+' '+c):(lab+' ◇'+plan));
+      return b;
+    };
+    [['seri_basi','🏁SB','seri'],['proses','⚙️PR','proses'],['son','🏆SON','son']].forEach(a=>{ const b=mk(a[0],a[1],a[2]); if(b)row.append(b); });
   }
 
   async function loadSevkler(){
@@ -3050,7 +3079,7 @@ async function renderIzleme(root){
     const tree=el('div',{style:'margin-top:10px'});
     roots.forEach(r=>tree.append(izNode(r,byParent)));
     card.append(tree); out.append(card);
-    out.append(el('div',{style:'color:var(--muted);font-size:11.5px;margin:8px 4px',html:'<b>●</b> gerçek (LeanSys) · <b style="color:#b45309">◇</b> LeanSys’te kaydı yok, BOM’dan türetildi · <b>🏁SB ⚙️PR 🏆SON</b> = bu ürünün seri başı / proses / son kontrol kayıt sayıları (tıkla → kayıtlara git). “BOM teorik” = ürün ağacı oranı × üretim çıktısı (referans). Ağırlık bazlı kütle denkliği ve ileri-yön izleme sonraki fazda.'}));
+    out.append(el('div',{style:'color:var(--muted);font-size:11.5px;margin:8px 4px',html:'<b>●</b> gerçek (LeanSys) · <b style="color:#b45309">◇</b> LeanSys’te kaydı yok, BOM’dan türetildi · <b>🏁SB ⚙️PR 🏆SON</b> = <b>bu üretimin</b> (stok+tarih) seri başı/proses/son kontrolleri: sayı = girilmiş kayıt; <b>◇N</b> = kayıt yok, planda N madde (türetilmeli). “üretim açılmamış” = bu üretim QC sistemimizde yok. Tıkla → kayıtlara git. Ağırlık bazlı kütle denkliği ve ileri-yön izleme sonraki fazda.'}));
   }
   function izNode(n,byParent){
     const kids=byParent[n.node_no]||[];
@@ -3070,7 +3099,7 @@ async function renderIzleme(root){
     const caret=el('span',{style:'display:inline-block;width:13px;color:#2563eb;font-weight:700;'+(hasKids?'cursor:pointer':'')},hasKids?'▾':'·');
     const rowTxt=el('span',{style:T?'opacity:.85':'',html:ic+' '+bits.join(' · ')+extra});
     const row=el('div',{style:'padding:4px 2px;font-size:12.5px;display:flex;align-items:baseline;gap:2px;flex-wrap:wrap'},caret,mark,rowTxt);
-    if(n.tur==='uretim'||n.tur==='sevk') qcBadges(row,n.stok_kodu);
+    if(n.tur==='uretim') qcBadges(row,n);
     const wrap=el('div',{style:'border-left:2px solid '+(T?'#fde68a':'var(--line)')+';margin-left:7px;padding-left:9px'});
     wrap.append(row);
     if(hasKids){
