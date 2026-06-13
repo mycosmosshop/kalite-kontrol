@@ -3000,18 +3000,21 @@ async function renderIzleme(root){
     }catch(e){}
   }
   function opBreakdown(n){
-    const q=_qcMap[n.node_no]; if(!q||!q.ops||!q.ops.length)return null;
-    const box=el('div',{style:'margin:1px 0 3px 24px;border-left:2px dotted var(--line);padding-left:8px'});
-    if(!q.opened) box.append(el('div',{style:'font-size:10px;color:#92400e;background:#fef3c7;border-radius:4px;padding:1px 6px;display:inline-block;margin:2px 0'},'⚠ bu üretim QC sistemde açılmamış — op kontrolleri türetilmeli'));
-    q.ops.forEach(op=>{
-      const r=op.real||{seri_basi:0,proses:0,son:0};
-      const opRow=el('div',{style:'display:flex;align-items:baseline;gap:3px;flex-wrap:wrap;font-size:11.5px;padding:1px 0'});
-      opRow.append(el('span',{html:`⚙️ <b>${op.op_no?('Op'+op.op_no):'Genel'}</b> <span style="color:var(--muted)">${op.proc} proses${op.fin?(' · '+op.fin+' son'):''}</span>`}));
+    const q=_qcMap[n.node_no]; if(!q)return null;
+    // yalnız kontrol planı maddesi OLAN ya da gerçek kaydı olan op'ları göster (boş "0 proses" satırları gizle)
+    const ops=(q.ops||[]).filter(op=>(op.proc+op.fin)>0 || (op.real.seri_basi+op.real.proses+op.real.son)>0);
+    const box=el('div',{style:'margin:1px 0 3px 24px;border-left:2px dotted var(--line);padding-left:8px;font-size:11.5px'});
+    if(!ops.length){ box.append(el('span',{style:'color:var(--muted)'}, q.opened?'(bu ürün için kontrol planı yok)':'⚠ üretim QC sistemde açılmamış')); return box; }
+    if(!q.opened) box.append(el('div',{style:'font-size:10px;color:#92400e;background:#fef3c7;border-radius:4px;padding:1px 6px;display:inline-block;margin:1px 0'},'⚠ üretim QC sistemde açılmamış'));
+    ops.forEach(op=>{
+      const r=op.real;
+      const opRow=el('div',{style:'display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:1px 0'});
+      opRow.append(el('b',{style:'min-width:38px'}, op.op_no?('Op'+op.op_no):'Genel'));
       const mk=(stage,lab,cls,exp)=>{ if(exp<=0)return; const c=r[stage]||0; const has=c>0;
-        const b=el('span',{class:'pill '+cls,style:'cursor:pointer;font-size:9.5px;margin-left:2px'+(has?'':';opacity:.7;outline:1px dashed #b45309;outline-offset:-1px'),
-          title: has?(STAGES[stage]+' Op'+op.op_no+': '+c+' kayıt — tıkla, kayıtlara git'):(STAGES[stage]+' Op'+op.op_no+' kaydı YOK — '+exp+' madde, türetilmeli'),
+        const b=el('span',{class:'pill '+cls,style:'cursor:pointer;font-size:9.5px'+(has?'':';opacity:.6;outline:1px dashed #b45309;outline-offset:-1px'),
+          title: has?(STAGES[stage]+': '+c+' kontrol kaydı girilmiş (planda '+exp+' ölçüm maddesi) — tıkla, kayıtlara git'):(STAGES[stage]+' kaydı YOK — planda '+exp+' ölçüm maddesi, türetilmeli'),
           onclick:e=>{e.stopPropagation();KAYIT_PROD=null;KAYIT_STAGE=stage;KAYIT_FILT={start:'',end:'',stock:n.stok_kodu};switchTab('kayitlar');}},
-          has?(lab+' '+c):(lab+' ◇'+exp));
+          has?(lab+' '+c):(lab+' ◇'));
         opRow.append(b);
       };
       mk('seri_basi','SB','seri',op.proc); mk('proses','PR','proses',op.proc); mk('son','SON','son',op.fin);
@@ -3090,7 +3093,7 @@ async function renderIzleme(root){
     const tree=el('div',{style:'margin-top:10px'});
     roots.forEach(r=>tree.append(izNode(r,byParent)));
     card.append(tree); out.append(card);
-    out.append(el('div',{style:'color:var(--muted);font-size:11.5px;margin:8px 4px',html:'<b>●</b> gerçek (LeanSys) · <b style="color:#b45309">◇</b> LeanSys’te yok, BOM’dan türetildi. Üretimin altında <b>⚙️ Op1/Op2…</b> = kontrol planındaki <b>operasyonlar</b>; her op için <b>SB/PR/SON</b>: sayı = o op’a girilmiş kayıt; <b>◇N</b> = kayıt yok, planda N madde (türetilmeli). “üretim açılmamış” = bu üretim QC sistemimizde yok. Op rozetine tıkla → kayıtlara git. Ağırlık bazlı kütle denkliği ve ileri-yön sonraki fazda.'}));
+    out.append(el('div',{style:'color:var(--muted);font-size:11.5px;margin:8px 4px',html:'<b>●</b> gerçek · <b style="color:#b45309">◇</b> türetildi (LeanSys’te yok). Üretim altı: <b>Op</b> = plan operasyonu; <b>SB/PR/SON</b> = o op’a girilmiş kontrol kaydı sayısı, <b>◇</b> = kayıt yok. Tıkla → kayıtlar.'}));
   }
   function izNode(n,byParent){
     const kids=byParent[n.node_no]||[];
