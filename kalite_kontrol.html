@@ -3007,7 +3007,7 @@ async function turetEksikQC({prodId=null, mk=null, regen=false}={}){
   const recs=[]; const endMs=(end.getTime()>start.getTime())?end.getTime():(start.getTime()+6*60000);
   const offWhen=()=>new Date(Math.min(start.getTime()+Math.round((1+Math.random()*4)*60000), endMs-30000));
   if(!have.has('seri_basi')){ const r=buildAutoRec(p,'seri_basi',offWhen(),items,null); if(r){r.note='izleme-türet';recs.push(r);} }
-  if(!have.has('proses')){ let n=0; for(let t=freq;t<durMin&&n<120;t+=freq,n++){ const jit=Math.round((Math.random()*10-5)*60000); let tm=start.getTime()+t*60000+jit; tm=Math.min(Math.max(tm,start.getTime()+60000),end.getTime()-60000); const r=buildAutoRec(p,'proses',new Date(tm),items,null); if(r){r.note='izleme-türet';recs.push(r);} } }
+  if(!have.has('proses')){ const N=Math.min(3,Math.max(1,Math.round(durMin/Math.max(freq,1)))); for(let i=1;i<=N;i++){ let tm=start.getTime()+Math.round(durMin*i/(N+1))*60000; tm=Math.min(Math.max(tm,start.getTime()+60000),end.getTime()-60000); const r=buildAutoRec(p,'proses',new Date(tm),items,null); if(r){r.note='izleme-türet';recs.push(r);} } }   // YETECEK KADAR: op başına en çok 3 proses (eşit aralıklı)
   if(finished && !have.has('son')){ const r=buildAutoRec(p,'son',end,items,null); if(r){r.note='izleme-türet';recs.push(r);} }
   if(!have.has('giris') && stageItems(items,'giris').length){ const r=buildAutoRec(p,'giris',offWhen(),items,null); if(r){r.note='izleme-türet';recs.push(r);} }
   if(recs.length){ const {data:ins,error}=await sb.from('control_records').insert(recs).select(); if(error) return {made:0,error:error.message}; for(const rc of (ins||[])) if(rc.overall_result==='RET'){ try{ await autoOpenNCR(rc,p); }catch(e){} } return {made:recs.length}; }
@@ -3451,8 +3451,13 @@ async function renderIzleme(root){
       const grow=el('div',{style:'display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:4px'});
       grow.append(el('span',{style:'font-size:10.5px;color:var(--muted)'},'📥 Alış: '+info));
       grow.append(el('span',{class:'pill gray',style:'cursor:pointer;font-size:9px;padding:1px 6px',title:'Giriş kalite kayıtları',onclick:e=>{e.stopPropagation();gotoGirisKalite(giris);}},'giriş kalite'));
-      grow.append(el('span',{class:'pill gray',style:'cursor:pointer;font-size:9px;padding:1px 6px',title:'Mal kabul kaydı',onclick:e=>{e.stopPropagation();gotoMalKabul(giris);}},'mal kabul'));
-      wrap.append(grow);
+      // MAL KABUL → tıkla → KALICI inline kart (LeanSys gerçek alış bilgisi)
+      const cmk=(giris.ek&&giris.ek.cols)||{};
+      const mkBox=el('div',{style:'display:none;margin-top:4px;font-size:10.5px;background:rgba(21,128,61,.07);border:1px solid #15803d;border-radius:6px;padding:6px 9px',html:'📦 <b>Mal kabul (alış)</b> · '+esc(giris.stok_kodu||'')+(giris.stok_adi?(' — '+esc((giris.stok_adi||'').slice(0,30))):'')+'<br>İrsaliye <b>'+esc(((cmk.irs_seri||'')+(cmk.irs_sira?('/'+cmk.irs_sira):''))||giris.irsaliye||'—')+'</b> · Tedarikçi <b>'+esc(giris.tedarikci||cmk.tedarikci||'—')+'</b>'+(cmk.giris_miktar!=null?(' · Miktar <b>'+commaFmt(cmk.giris_miktar)+(cmk.birim?(' '+esc(cmk.birim)):'')+'</b>'):'')+' · Tarih <b>'+(giris.tarih?fmtDate(giris.tarih):'—')+'</b>'+(cmk.fifo_toplam!=null?(' · FIFO toplam <b>'+commaFmt(cmk.fifo_toplam)+'</b>'):'')+'<br><span style="color:var(--muted);font-size:9.5px">kaynak: LeanSys FIFO_HAREKET (alış irsaliyesi · gerçek veri)</span>'});
+      const mkPill=el('span',{class:'pill gray',style:'cursor:pointer;font-size:9px;padding:1px 6px',title:'Mal kabul (alış) bilgisini göster/gizle'},'mal kabul');
+      mkPill.onclick=e=>{e.stopPropagation(); mkBox.style.display=(mkBox.style.display==='none')?'':'none';};
+      grow.append(mkPill);
+      wrap.append(grow, mkBox);
     } else if(T){
       wrap.append(el('div',{style:'font-size:10px;color:#b45309;margin-top:3px'},'◇ giriş/üretim kaydı yok'));
     }
@@ -3509,7 +3514,8 @@ async function renderIzleme(root){
         el('div',{class:'autozone'},
           el('button',{class:'autozone-handle',title:'Kilit · iç işlemler (admin)',onclick:e=>{e.stopPropagation();toggleAutozone(e.currentTarget);}},'⚙'),
           el('div',{class:'auto-menu'},
-            el('button',{class:'btn sm '+(locked?'':'sec'),title:locked?'Kilitli — iz donduruldu. Tıkla: kilidi aç.':'Açık. Tıkla: kilitle (dondur).',onclick:async()=>{ const {error}=await sb.from('izleme_node').update({kilitli:!locked}).eq('trace_key',key); if(error){toast(esc(error.message),'err');return;} toast(locked?'🔓 Kilit açıldı.':'🔒 İz kilitlendi.','ok'); loadTrace(key,irs,s); }}, locked?'🔒 Kilitli':'🔓 Açık'),
+            el('button',{class:'btn sm',style:'background:#15803d;border-color:#15803d',title:'Bu izi DONDUR — şu anki hali kalıcı kaydedilir; yeniden çekilince/türetilince değişmez',onclick:async()=>{ const {error}=await sb.from('izleme_node').update({kilitli:true}).eq('trace_key',key); if(error){toast(esc(error.message),'err');return;} toast('💾 İz kaydedildi — bu hali donduruldu (değişmez).','ok'); loadTrace(key,irs,s); }},'💾 Kaydet'),
+            el('button',{class:'btn sm '+(locked?'':'sec'),title:locked?'Kilitli — iz donduruldu. Tıkla: kilidi aç (değiştirilebilir).':'Açık — değiştirilebilir. Tıkla: kilitle (dondur).',onclick:async()=>{ const {error}=await sb.from('izleme_node').update({kilitli:!locked}).eq('trace_key',key); if(error){toast(esc(error.message),'err');return;} toast(locked?'🔓 Kilit açıldı.':'🔒 İz kilitlendi.','ok'); loadTrace(key,irs,s); }}, locked?'🔒 Kilitli':'🔓 Açık'),
             (!locked && s && IZ_ADMIN)?el('button',{class:'btn sm sec',title:'LeanSys’ten yeniden çek (kilit açık)',onclick:()=>doTrace(urun,s,true)},'🔄 Yeniden İzle'):'',
             isAdmin?el('button',{class:'btn sm '+(IZ_ADMIN?'':'sec'),style:(IZ_ADMIN?'background:#7c3aed;border-color:#7c3aed':''),title:IZ_ADMIN?'İç işlemler AÇIK — Türet/Düzelt görünür. Tıkla: KAPAT (denetim).':'İç işlemler KAPALI — denetçiye temiz görünüm. Tıkla: AÇ (admin).',onclick:()=>{ IZ_ADMIN=!IZ_ADMIN; loadTrace(key,irs,s); }},IZ_ADMIN?'🔓 İç işlemler: açık':'🔒 İç işlemler: kapalı'):'',
             (isAdmin&&IZ_ADMIN)?el('button',{class:'btn sm',style:'background:#7c3aed;border-color:#7c3aed',title:'Eksik seri başı/proses/son + giriş kalite + kalite kapılarını plana göre TÜRET (yalnız Supabase)',onclick:()=>turetTrace(nodes,key,irs,s)},'🔧 Türet'):'',
