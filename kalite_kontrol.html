@@ -838,6 +838,7 @@ async function renderMalKabul(){
   let _mkSeq=0;
   async function load(){
     const my=++_mkSeq;   // yarış koruması: yalnız EN SON çağrı render eder (eski filtresiz tablo kalmasın)
+    if(MK_FOCUS){ fSearch.value=MK_FOCUS.stok||''; if(MK_FOCUS.tarih){fFrom.value=MK_FOCUS.tarih;fTo.value=MK_FOCUS.tarih;} fTur.value=''; MK_FOCUS=null; }  // izlenebilirlikten odak
     out.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
     let q=sb.from('mal_kabul').select('*').order('tarih',{ascending:false}).limit(500);
     const t=(fSearch.value||'').trim(); if(t){ const s=t.replace(/[,()%]/g,' ').trim(); q=q.or(`stok_kodu.ilike.%${s}%,stok_adi.ilike.%${s}%,cari_adi.ilike.%${s}%`); }
@@ -2830,6 +2831,7 @@ let KAYIT_STAGE='seri_basi';
 let KAYIT_FILT={start:'',end:'',stock:''};
 let _kayitDeb=null; // tarih yazarken her tuşta yeniden çizmesin
 let KAYIT_PROD=null;   // belirli bir üretimin kayıtlarına odaklanma
+let MK_FOCUS=null;     // izlenebilirlikten mal kabul'a odak {stok,tarih}
 // kayıt durumu: ölçüm girilmemişse 'empty', RET ise 'ret', değilse 'ok'
 function recStatus(r){
   const vals=r.vals||[];
@@ -2999,29 +3001,44 @@ async function renderIzleme(root){
       });
     }catch(e){}
   }
-  function opBreakdown(n){
+  // === TABLO render yardımcıları ===
+  const IZ_COLS='display:grid;grid-template-columns:minmax(166px,240px) minmax(150px,1fr) 92px 80px minmax(100px,138px) minmax(118px,1fr) 74px minmax(116px,180px);gap:8px;align-items:center;padding:5px 8px;font-size:12px';
+  const IZ_TUR={sevk:'SEVK',uretim:'ÜRETİM',hammadde:'HAMMADDE',giris:'GİRİŞ',not:'NOT'};
+  function izHeaderRow(){
+    return el('div',{style:IZ_COLS+';border-bottom:1.5px solid var(--line);background:var(--panel2);font-weight:700;font-size:10px;text-transform:uppercase;color:var(--muted);position:sticky;top:0;z-index:1'},
+      el('div',{},'Tür'),el('div',{},'Kod / Ad'),el('div',{style:'text-align:right'},'Miktar'),el('div',{style:'text-align:right'},'Kg'),
+      el('div',{},'Lot / İrsaliye'),el('div',{},'Tedarikçi / Müşteri'),el('div',{},'Tarih'),el('div',{},'Kayıt / Kontrol'));
+  }
+  function gotoGirisKalite(n){ const d=(n.tarih||'').slice(0,10); KAYIT_PROD=null; KAYIT_STAGE='giris'; KAYIT_FILT={start:d,end:d,stock:n.stok_kodu||''}; switchTab('kayitlar'); }
+  function gotoMalKabul(n){ MK_FOCUS={stok:n.stok_kodu||'', tarih:(n.tarih||'').slice(0,10)}; switchTab('malkabul'); }
+  function ctrlCell(n){
     const q=_qcMap[n.node_no]; if(!q)return null;
-    // YALNIZ kontrol planı maddesi olan op'ları göster; planı olmayan ürünlerde op satırı hiç çıkmaz
-    const ops=(q.ops||[]).filter(op=>(op.proc+op.fin)>0);
-    if(!ops.length) return null;
-    const box=el('div',{style:'margin:1px 0 3px 24px;border-left:2px dotted var(--line);padding-left:8px;font-size:11.5px'});
-    box.append(el('span',{style:'color:var(--muted);font-size:10px'},'kontroller:'));
-    if(!q.opened) box.append(el('div',{style:'font-size:10px;color:#92400e;background:#fef3c7;border-radius:4px;padding:1px 6px;display:inline-block;margin:1px 0 1px 6px'},'⚠ üretim QC sistemde açılmamış'));
-    ops.forEach(op=>{
-      const r=op.real;
-      const opRow=el('div',{style:'display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:1px 0'});
-      opRow.append(el('b',{style:'min-width:38px'}, op.op_no?('Op'+op.op_no):'Genel'));
+    const ops=(q.ops||[]).filter(op=>(op.proc+op.fin)>0); if(!ops.length)return null;
+    const box=el('div',{style:'display:flex;flex-direction:column;gap:1px'});
+    if(!q.opened) box.append(el('span',{style:'font-size:9px;color:#92400e'},'⚠ QC açılmamış'));
+    ops.forEach(op=>{ const r=op.real;
+      const opRow=el('div',{style:'display:flex;align-items:center;gap:3px;flex-wrap:wrap'});
+      opRow.append(el('span',{style:'font-size:9px;color:var(--muted);min-width:28px'}, op.op_no?('Op'+op.op_no):'Gnl'));
       const mk=(stage,lab,cls,exp)=>{ if(exp<=0)return; const c=r[stage]||0; const has=c>0;
-        const b=el('span',{class:'pill '+cls,style:'cursor:pointer;font-size:9.5px'+(has?'':';opacity:.6;outline:1px dashed #b45309;outline-offset:-1px'),
-          title: has?(STAGES[stage]+': '+c+' kontrol kaydı girilmiş (planda '+exp+' ölçüm maddesi) — tıkla, kayıtlara git'):(STAGES[stage]+' kaydı YOK — planda '+exp+' ölçüm maddesi, türetilmeli'),
-          onclick:e=>{e.stopPropagation();KAYIT_PROD=null;KAYIT_STAGE=stage;KAYIT_FILT={start:'',end:'',stock:n.stok_kodu};switchTab('kayitlar');}},
-          has?(lab+' '+c):(lab+' ◇'));
-        opRow.append(b);
-      };
+        opRow.append(el('span',{class:'pill '+cls,style:'cursor:pointer;font-size:8.5px;padding:0 5px'+(has?'':';opacity:.55;outline:1px dashed #b45309;outline-offset:-1px'),
+          title:has?(STAGES[stage]+': '+c+' kayıt — tıkla'):(STAGES[stage]+' kaydı yok'),
+          onclick:e=>{e.stopPropagation();KAYIT_PROD=null;KAYIT_STAGE=stage;KAYIT_FILT={start:'',end:'',stock:n.stok_kodu};switchTab('kayitlar');}}, has?(lab+' '+c):(lab+' ◇'))); };
       mk('seri_basi','SB','seri',op.proc); mk('proses','PR','proses',op.proc); mk('son','SON','son',op.fin);
       box.append(opRow);
     });
     return box;
+  }
+  function massLine(n,byParent,depth){
+    const kids=(byParent[n.node_no]||[]).filter(k=>k.tur==='hammadde');
+    if(!kids.length) return null;
+    let giren=0, kapsanan=0, eksik=0;
+    kids.forEach(k=>{ if(k.agirlik_kg!=null){ giren+=Number(k.agirlik_kg); kapsanan++; } else eksik++; });
+    const cikan = n.agirlik_kg!=null? Number(n.agirlik_kg): null;
+    const rnd=x=>Math.round(x*100)/100;
+    let txt='⚖️ Kütle denkliği: giren <b>'+commaFmt(rnd(giren))+' kg</b> ('+kapsanan+' kalem'+(eksik?(' · '+eksik+' ◇ çevrimsiz'):'')+')';
+    if(cikan!=null){ const fark=cikan!==0?Math.round((giren-cikan)/cikan*1000)/10:null; const col=(fark!=null&&Math.abs(fark)>15)?'#b45309':'#15803d'; txt+=' ↔ çıkan <b>'+commaFmt(rnd(cikan))+' kg</b>'+(fark!=null?(' · <b style="color:'+col+'">fark '+(fark>0?'+':'')+fark+'%</b>'):''); }
+    else txt+=' ↔ çıkan: <i>ürün kg’ı yok (Adet)</i>';
+    return el('div',{style:'font-size:10.5px;color:var(--muted);padding:1px 0 3px '+(depth*15+22)+'px',html:txt});
   }
 
   async function loadSevkler(){
@@ -3091,33 +3108,49 @@ async function renderIzleme(root){
         el('button',{class:'btn sm sec',style:'flex:0 0 auto;white-space:nowrap',onclick:()=>out.querySelectorAll('.iz-kids').forEach(k=>k.style.display='none')},'⊟ Kapat'),
         isAdmin?el('button',{class:'btn sm danger',style:'flex:0 0 auto;white-space:nowrap',onclick:async()=>{ if(!confirm('Bu iz SUPABASE’ten silinsin mi? (LeanSys’e dokunulmaz)'))return; const {error}=await sb.from('izleme_node').delete().eq('trace_key',key); if(error){toast(esc(error.message),'err');return;} out.innerHTML=''; toast('İz silindi (Supabase).','ok'); }},'🗑 Sil'):''
       )));
-    const tree=el('div',{style:'margin-top:10px'});
-    roots.forEach(r=>tree.append(izNode(r,byParent)));
+    const tree=el('div',{style:'margin-top:10px;border:1px solid var(--line);border-radius:8px;overflow:auto;max-height:68vh'});
+    tree.append(izHeaderRow());
+    roots.forEach(r=>tree.append(izRow(r,byParent,0)));
     card.append(tree); out.append(card);
-    out.append(el('div',{style:'color:var(--muted);font-size:11.5px;margin:8px 4px',html:'<b>●</b> gerçek · <b style="color:#b45309">◇</b> türetildi (LeanSys’te yok). Üretim altı: <b>Op</b> = plan operasyonu; <b>SB/PR/SON</b> = o op’a girilmiş kontrol kaydı sayısı, <b>◇</b> = kayıt yok. Tıkla → kayıtlar.'}));
+    out.append(el('div',{style:'color:var(--muted);font-size:11px;margin:8px 4px',html:'<b>●</b> gerçek · <b style="color:#b45309">◇</b> kayıt/çevrim yok. <b>Kg</b> = ağırlık (çevrilemeyen ◇). Üretimde <b>⚖️ kütle denkliği</b> (giren↔çıkan) ve <b>op kontrolleri</b> (SB/PR/SON). Giriş satırında <b>giriş kalite</b> / <b>mal kabul</b>, üretimde <b>proses/son</b> rozetine tıkla → ilgili kayıtlara git.'}));
   }
-  function izNode(n,byParent){
+  function izRow(n,byParent,depth){
+    const wrap=el('div');
     const kids=byParent[n.node_no]||[];
-    const ic=IZ_ICON[n.tur]||'•';
-    const T=!!n.tahmini;
-    const bits=[];
-    if(n.tur==='sevk'){ bits.push(`<b>SEVK:</b> ${esc(n.stok_kodu||'')}`); if(n.musteri)bits.push('→ '+esc(n.musteri)); if(n.miktar!=null)bits.push('<b>'+commaFmt(n.miktar)+'</b> adet'); if(n.irsaliye&&n.irsaliye!=='/')bits.push('irsaliye '+esc(n.irsaliye)); if(n.tarih)bits.push(fmtDate(n.tarih)); }
-    else if(n.tur==='uretim'){ bits.push(`<b>ÜRETİM:</b> ${esc(n.stok_kodu||'')}`); if(n.notu)bits.push('<span style="color:var(--muted)">'+esc(n.notu)+'</span>'); else if(n.miktar!=null)bits.push(commaFmt(n.miktar)); if(n.makine)bits.push(esc((n.makine||'').slice(0,30))); if(n.tarih)bits.push(fmtDate(n.tarih)); }
-    else if(n.tur==='hammadde'){ bits.push(`<b>${esc(n.stok_kodu||'')}</b>`); if(n.stok_adi)bits.push('<span style="color:var(--muted)">'+esc((n.stok_adi||'').slice(0,32))+'</span>'); if(n.miktar!=null)bits.push('kullanılan '+commaFmt(n.miktar)+(n.birim?(' '+esc(n.birim)):'')); if(n.lot_no)bits.push('lot '+esc(n.lot_no)); }
-    else if(n.tur==='giris'){ bits.push('<b>GİRİŞ:</b>'); if(n.tedarikci)bits.push('← <b>'+esc((n.tedarikci||'').slice(0,34))+'</b>'); if(n.irsaliye&&n.irsaliye!=='/')bits.push('irsaliye '+esc(n.irsaliye)); if(n.tarih)bits.push(fmtDate(n.tarih)); if(n.miktar!=null)bits.push(commaFmt(n.miktar)+(n.birim?(' '+esc(n.birim)):'')); if(n.notu==='giris kaydi yok')bits.push('<i style="color:#b45309">kayıt bulunamadı</i>'); }
-    else { bits.push('<i style="color:var(--muted)">'+esc(n.notu||'')+'</i>'); }
-    let extra='';
     const hasKids=kids.length>0;
-    const mark=el('span',{style:'display:inline-block;width:14px;font-weight:700;color:'+(T?'#b45309':'#16a34a')},T?'◇':'●');
-    const caret=el('span',{style:'display:inline-block;width:13px;color:#2563eb;font-weight:700;'+(hasKids?'cursor:pointer':'')},hasKids?'▾':'·');
-    const rowTxt=el('span',{style:T?'opacity:.85':'',html:ic+' '+bits.join(' · ')+extra});
-    const row=el('div',{style:'padding:4px 2px;font-size:12.5px;display:flex;align-items:baseline;gap:2px;flex-wrap:wrap'},caret,mark,rowTxt);
-    const wrap=el('div',{style:'border-left:2px solid '+(T?'#fde68a':'var(--line)')+';margin-left:7px;padding-left:9px'});
+    const T=!!n.tahmini;
+    const ic=IZ_ICON[n.tur]||'•';
+    const caret=el('span',{style:'display:inline-block;width:13px;text-align:center;flex:0 0 13px;color:var(--accent);font-weight:700;'+(hasKids?'cursor:pointer':'')},hasKids?'▾':'·');
+    const turCell=el('div',{style:'display:flex;align-items:center;gap:4px;min-width:0;padding-left:'+(depth*15)+'px'},
+      caret, el('span',{style:'flex:0 0 auto'},ic), el('b',{style:'white-space:nowrap;font-size:10px;'+(T?'color:#b45309':'')}, IZ_TUR[n.tur]||n.tur));
+    const kodAd='<b>'+esc(n.stok_kodu||'')+'</b>'+(n.stok_adi?('<span style="color:var(--muted)"> — '+esc((n.stok_adi||'').slice(0,44))+'</span>'):'')+(n.tur==='uretim'&&n.makine?('<span style="color:var(--muted)"> · '+esc((n.makine||'').slice(0,22))+'</span>'):'');
+    const tedMus=(n.tur==='sevk'?(n.musteri||''):(n.tedarikci||''));
+    const miktarHtml=(n.miktar!=null?commaFmt(n.miktar):'')+(n.birim?(' <span style="color:var(--muted);font-size:10px">'+esc(n.birim)+'</span>'):'');
+    let kayitCell;
+    if(n.tur==='giris'){ kayitCell=el('div',{style:'display:flex;gap:4px;flex-wrap:wrap'},
+        el('span',{class:'pill gray',style:'cursor:pointer;font-size:9px;padding:1px 6px',title:'Giriş kalite kayıtlarına git',onclick:e=>{e.stopPropagation();gotoGirisKalite(n);}},'📥 giriş kalite'),
+        el('span',{class:'pill gray',style:'cursor:pointer;font-size:9px;padding:1px 6px',title:'Mal kabul kaydına git',onclick:e=>{e.stopPropagation();gotoMalKabul(n);}},'🚚 mal kabul')); }
+    else if(n.tur==='uretim'){ kayitCell=ctrlCell(n)||el('span',{style:'color:var(--muted)'},'·'); }
+    else kayitCell=el('span',{style:'color:var(--muted)'},'·');
+    const baseBg=depth?'rgba(125,125,125,.035)':'';
+    const lotIrs=n.lot_no||((n.irsaliye&&n.irsaliye!=='/')?n.irsaliye:'');
+    const row=el('div',{style:IZ_COLS+';border-bottom:1px solid var(--line)'+(baseBg?(';background:'+baseBg):'')+(T?';opacity:.92':'')},
+      turCell,
+      el('div',{title:n.stok_adi||'',style:'overflow:hidden;text-overflow:ellipsis;white-space:nowrap',html:kodAd}),
+      el('div',{style:'text-align:right;white-space:nowrap',html:miktarHtml}),
+      el('div',{style:'text-align:right;white-space:nowrap'+((n.agirlik_kg==null)?';color:#b45309':'')}, n.agirlik_kg!=null?commaFmt(n.agirlik_kg):'◇'),
+      el('div',{title:lotIrs,style:'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px'}, lotIrs),
+      el('div',{title:tedMus,style:'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px'}, (tedMus||'').slice(0,42)),
+      el('div',{style:'white-space:nowrap;font-size:11px'}, n.tarih?fmtDate(n.tarih):''),
+      kayitCell);
     wrap.append(row);
-    if(n.tur==='uretim'){ const ob=opBreakdown(n); if(ob)wrap.append(ob); }   // op bazlı kontrol kırılımı
+    if(n.tur==='uretim'){ const ml=massLine(n,byParent,depth); if(ml)wrap.append(ml); }
+    if(n.tur==='sevk'&&n.stok_kalan!=null){ const neg=Number(n.stok_kalan)<0; wrap.append(el('div',{style:'font-size:10.5px;padding:1px 0 3px '+(depth*15+22)+'px;color:'+(neg?'#b45309':'var(--muted)'),html:'📦 sevk sonrası stokta kalan: <b>'+commaFmt(n.stok_kalan)+'</b>'+(neg?' ⚠ (kayıtlı giriş eksik olabilir)':'')})); }
     if(hasKids){
-      const kidBox=el('div',{class:'iz-kids'}); kids.forEach(k=>kidBox.append(izNode(k,byParent))); wrap.append(kidBox);
-      caret.onclick=()=>{ const open=kidBox.style.display!=='none'; kidBox.style.display=open?'none':''; caret.textContent=open?'▸':'▾'; };
+      const kidBox=el('div',{class:'iz-kids'}); kids.forEach(k=>kidBox.append(izRow(k,byParent,depth+1))); wrap.append(kidBox);
+      const toggle=()=>{ const open=kidBox.style.display!=='none'; kidBox.style.display=open?'none':''; caret.textContent=open?'▸':'▾'; };
+      caret.onclick=e=>{ e.stopPropagation(); toggle(); };
+      turCell.style.cursor='pointer'; turCell.onclick=e=>{ if(e.target===caret)return; toggle(); };
     }
     return wrap;
   }
