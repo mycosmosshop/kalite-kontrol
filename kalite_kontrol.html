@@ -3288,7 +3288,7 @@ async function renderIzleme(root){
     const urun=(_izKeep&&_izKeep.urun)||(key.split(':')[1]||'');
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'},
-      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN} türetilmiş`:''}`})),
+      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''}`})),
       el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end'},
         el('button',{class:'btn sm '+(locked?'':'sec'),style:'flex:0 0 auto;white-space:nowrap',title:locked?'Kilitli — iz donduruldu, değişmez. Tıkla: kilidi aç (yeniden çekilebilir).':'Açık — Yeniden İzle ile güncellenebilir. Tıkla: kilitle (dondur).',onclick:async()=>{ const {error}=await sb.from('izleme_node').update({kilitli:!locked}).eq('trace_key',key); if(error){toast(esc(error.message),'err');return;} toast(locked?'🔓 Kilit açıldı — Yeniden İzle ile güncellenebilir.':'🔒 İz kilitlendi (donduruldu).','ok'); loadTrace(key,irs,s); }}, locked?'🔒 Kilitli':'🔓 Açık'),
         (!locked && s)?el('button',{class:'btn sm sec',style:'flex:0 0 auto;white-space:nowrap',title:'LeanSys’ten yeniden çek (kilit açık)',onclick:()=>doTrace(urun,s,true)},'🔄 Yeniden İzle'):'',
@@ -3301,7 +3301,7 @@ async function renderIzleme(root){
     tree.append(izHeaderRow());
     roots.forEach(r=>tree.append(izRow(r,byParent,0)));
     card.append(tree); out.append(card);
-    out.append(el('div',{style:'color:var(--muted);font-size:11px;margin:8px 4px',html:'<b style="color:#b45309">◇ türetilmiş</b> = LeanSys’te kayıt YOK (BOM’dan); işaretsiz satırlar <b>gerçek LeanSys verisi</b>. <b>Kg</b> sütununda <b>—</b> = ağırlık çevrimi yok (veri türetilmiş değil). Üretim altında <b>op kontrolleri</b> (makine + SB/PR/SON) ve <b>⚖️ kütle denkliği</b>. Giriş satırında <b>giriş kalite / mal kabul</b>, op rozetlerinde <b>proses/son</b> → tıkla, kayıtlara git.'}));
+    out.append(el('div',{style:'color:var(--muted);font-size:11px;margin:8px 4px',html:'<b style="color:#b45309">◇</b> = LeanSys’te kayıt YOK (BOM’dan türetildi); işaretsiz satırlar <b>gerçek LeanSys verisi</b>. <b>Kg</b> sütununda <b>—</b> = ağırlık çevrimi yok (veri türetilmiş değil). Üretim altında <b>op kontrolleri</b> (makine + SB/PR/SON) ve <b>⚖️ kütle denkliği</b>. Giriş satırında <b>giriş kalite / mal kabul</b>, op rozetlerinde <b>proses/son</b> → tıkla, kayıtlara git.'}));
   }
   function izRow(n,byParent,depth){
     const wrap=el('div');
@@ -3312,7 +3312,7 @@ async function renderIzleme(root){
     const caret=el('span',{style:'display:inline-block;width:13px;text-align:center;flex:0 0 13px;color:var(--accent);font-weight:700;'+(hasKids?'cursor:pointer':'')},hasKids?'▾':'·');
     const turCell=el('div',{style:'display:flex;align-items:center;gap:4px;min-width:0;padding-left:'+(depth*15)+'px'},
       caret, el('span',{style:'flex:0 0 auto'},ic), el('b',{style:'white-space:nowrap;font-size:10px;'+(T?'color:#b45309':'')}, IZ_TUR[n.tur]||n.tur),
-      T?el('span',{style:'color:#b45309;font-size:8.5px;font-weight:700;border:1px dashed #b45309;border-radius:3px;padding:0 3px;flex:0 0 auto',title:'LeanSys’te kayıt yok — BOM’dan türetildi'},'◇ türetilmiş'):'');
+      T?el('span',{style:'color:#b45309;font-size:10px;font-weight:700;border:1px dashed #b45309;border-radius:3px;padding:0 4px;flex:0 0 auto',title:'LeanSys’te kayıt yok — BOM’dan türetildi'},'◇'):'');
     const kodAd='<b>'+esc(n.stok_kodu||'')+'</b>'+(n.stok_adi?('<span style="color:var(--muted)"> — '+esc((n.stok_adi||'').slice(0,44))+'</span>'):'')+(n.tur==='uretim'&&n.makine?('<span style="color:var(--muted)"> · '+esc((n.makine||'').slice(0,22))+'</span>'):'');
     const tedMus=(n.tur==='sevk'?(n.musteri||''):(n.tedarikci||''));
     const miktarHtml=(n.miktar!=null?commaFmt(n.miktar):'')+(n.birim?(' <span style="color:var(--muted);font-size:10px">'+esc(n.birim)+'</span>'):'');
