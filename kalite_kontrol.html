@@ -3001,11 +3001,12 @@ async function renderIzleme(root){
   }
   function opBreakdown(n){
     const q=_qcMap[n.node_no]; if(!q)return null;
-    // yalnız kontrol planı maddesi OLAN ya da gerçek kaydı olan op'ları göster (boş "0 proses" satırları gizle)
-    const ops=(q.ops||[]).filter(op=>(op.proc+op.fin)>0 || (op.real.seri_basi+op.real.proses+op.real.son)>0);
+    // YALNIZ kontrol planı maddesi olan op'ları göster; planı olmayan ürünlerde op satırı hiç çıkmaz
+    const ops=(q.ops||[]).filter(op=>(op.proc+op.fin)>0);
+    if(!ops.length) return null;
     const box=el('div',{style:'margin:1px 0 3px 24px;border-left:2px dotted var(--line);padding-left:8px;font-size:11.5px'});
-    if(!ops.length){ box.append(el('span',{style:'color:var(--muted)'}, q.opened?'(bu ürün için kontrol planı yok)':'⚠ üretim QC sistemde açılmamış')); return box; }
-    if(!q.opened) box.append(el('div',{style:'font-size:10px;color:#92400e;background:#fef3c7;border-radius:4px;padding:1px 6px;display:inline-block;margin:1px 0'},'⚠ üretim QC sistemde açılmamış'));
+    box.append(el('span',{style:'color:var(--muted);font-size:10px'},'kontroller:'));
+    if(!q.opened) box.append(el('div',{style:'font-size:10px;color:#92400e;background:#fef3c7;border-radius:4px;padding:1px 6px;display:inline-block;margin:1px 0 1px 6px'},'⚠ üretim QC sistemde açılmamış'));
     ops.forEach(op=>{
       const r=op.real;
       const opRow=el('div',{style:'display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:1px 0'});
@@ -3100,14 +3101,12 @@ async function renderIzleme(root){
     const ic=IZ_ICON[n.tur]||'•';
     const T=!!n.tahmini;
     const bits=[];
-    if(n.tur==='sevk'){ bits.push(`<b>${esc(n.stok_kodu||'')}</b> sevk`); if(n.musteri)bits.push('→ '+esc(n.musteri)); if(n.irsaliye&&n.irsaliye!=='/')bits.push('irs '+esc(n.irsaliye)); if(n.tarih)bits.push(fmtDate(n.tarih)); if(n.miktar!=null)bits.push('<b>'+commaFmt(n.miktar)+'</b>'); }
-    else if(n.tur==='uretim'){ bits.push(`<b>${esc(n.stok_kodu||'')}</b> üretildi`); if(n.miktar!=null)bits.push(commaFmt(n.miktar)); if(n.makine)bits.push(esc((n.makine||'').slice(0,34))); if(n.tarih)bits.push(fmtDate(n.tarih)); if(n.lot_no)bits.push('lot '+esc(n.lot_no)); if(n.notu)bits.push('<i style="color:var(--muted)">'+esc(n.notu)+'</i>'); }
-    else if(n.tur==='hammadde'){ bits.push(`<b>${esc(n.stok_kodu||'')}</b>`); if(n.stok_adi)bits.push('<span style="color:var(--muted)">'+esc((n.stok_adi||'').slice(0,28))+'</span>'); if(n.miktar!=null)bits.push('tük '+commaFmt(n.miktar)); if(n.lot_no)bits.push('lot '+esc(n.lot_no)); if(n.fifo_giris)bits.push('FIFO '+fmtDate(n.fifo_giris)); }
-    else if(n.tur==='giris'){ bits.push('giriş'); if(n.irsaliye&&n.irsaliye!=='/')bits.push('irs '+esc(n.irsaliye)); if(n.tedarikci)bits.push('← <b>'+esc((n.tedarikci||'').slice(0,30))+'</b>'); if(n.tarih)bits.push(fmtDate(n.tarih)); if(n.miktar!=null)bits.push(commaFmt(n.miktar)+(n.birim?(' '+esc(n.birim)):'')); if(n.notu==='giris kaydi yok')bits.push('<i style="color:#b45309">kayıt yok</i>'); }
+    if(n.tur==='sevk'){ bits.push(`<b>SEVK:</b> ${esc(n.stok_kodu||'')}`); if(n.musteri)bits.push('→ '+esc(n.musteri)); if(n.miktar!=null)bits.push('<b>'+commaFmt(n.miktar)+'</b> adet'); if(n.irsaliye&&n.irsaliye!=='/')bits.push('irsaliye '+esc(n.irsaliye)); if(n.tarih)bits.push(fmtDate(n.tarih)); }
+    else if(n.tur==='uretim'){ bits.push(`<b>ÜRETİM:</b> ${esc(n.stok_kodu||'')}`); if(n.notu)bits.push('<span style="color:var(--muted)">'+esc(n.notu)+'</span>'); else if(n.miktar!=null)bits.push(commaFmt(n.miktar)); if(n.makine)bits.push(esc((n.makine||'').slice(0,30))); if(n.tarih)bits.push(fmtDate(n.tarih)); }
+    else if(n.tur==='hammadde'){ bits.push(`<b>${esc(n.stok_kodu||'')}</b>`); if(n.stok_adi)bits.push('<span style="color:var(--muted)">'+esc((n.stok_adi||'').slice(0,32))+'</span>'); if(n.miktar!=null)bits.push('kullanılan '+commaFmt(n.miktar)+(n.birim?(' '+esc(n.birim)):'')); if(n.lot_no)bits.push('lot '+esc(n.lot_no)); }
+    else if(n.tur==='giris'){ bits.push('<b>GİRİŞ:</b>'); if(n.tedarikci)bits.push('← <b>'+esc((n.tedarikci||'').slice(0,34))+'</b>'); if(n.irsaliye&&n.irsaliye!=='/')bits.push('irsaliye '+esc(n.irsaliye)); if(n.tarih)bits.push(fmtDate(n.tarih)); if(n.miktar!=null)bits.push(commaFmt(n.miktar)+(n.birim?(' '+esc(n.birim)):'')); if(n.notu==='giris kaydi yok')bits.push('<i style="color:#b45309">kayıt bulunamadı</i>'); }
     else { bits.push('<i style="color:var(--muted)">'+esc(n.notu||'')+'</i>'); }
     let extra='';
-    if(n.tur==='hammadde'&&n.bom_beklenen!=null&&!T){ const s=n.sapma_yuzde; const col=(s!=null&&Math.abs(s)>10)?'#b45309':'#15803d'; extra+=`<span style="margin-left:6px;font-size:11px;color:${col}">BOM teorik ${commaFmt(n.bom_beklenen)}${s!=null?` (${s>0?'+':''}${s}%)`:''}</span>`; }
-    if(n.qc&&n.qc.giris_kontrol!=null){ extra+=`<span style="margin-left:6px;font-size:11px;color:#2563eb">giriş-QC: ${esc(String(n.qc.giris_kontrol))}</span>`; }
     const hasKids=kids.length>0;
     const mark=el('span',{style:'display:inline-block;width:14px;font-weight:700;color:'+(T?'#b45309':'#16a34a')},T?'◇':'●');
     const caret=el('span',{style:'display:inline-block;width:13px;color:#2563eb;font-weight:700;'+(hasKids?'cursor:pointer':'')},hasKids?'▾':'·');
