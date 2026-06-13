@@ -3037,6 +3037,7 @@ async function renderIzleme(root){
   const sevkBox=el('div'); root.append(sevkBox);
   const out=el('div'); root.append(out);
   let _qcMap={};   // node_no -> {ops:[{op_no,proc,fin,real:{seri_basi,proses,son}}], opened:bool}
+  let _izGiris={};   // stok_kodu -> {plan:bool(kontrol planı var mı), giris:bool(planında giriş kalite var mı)} — malzeme giriş kalite gösterimi koşulu
   // 📁 KAYITLI İZLER — 💾 Kaydet ile dondurulan (kilitli) izler; tıkla → aç
   async function loadSaved(){
     savedBox.innerHTML='';
@@ -3122,6 +3123,15 @@ async function renderIzleme(root){
         }
         _qcMap[n.node_no]={ ops, opened:(matched.length>0 || machHas(n.makine)), opMachine, opProdId, opProdIds, opProdDate, prodIds:matched.map(p=>p.id) };
       });
+      // 5) MALZEME GİRİŞ KALİTE PLANI: her hammadde/giriş stoğu için planında giriş kalite var mı?
+      //    (kullanıcı akışı: önce plan → planda giriş kalite YOKSA pill gösterme; varsa o tarihte gerçek kayıt yoksa Türet)
+      _izGiris={};
+      const matCodes=[...new Set(nodes.filter(n=>n.tur==='hammadde'||n.tur==='giris').map(n=>n.stok_kodu).filter(Boolean))];
+      for(let i=0;i<matCodes.length;i+=400){ const chunk=matCodes.slice(i,i+400); if(!chunk.length)break;
+        const {data:gp}=await sb.from('control_plan_items').select('stock_code,giris_kalite,active').in('stock_code',chunk);
+        (gp||[]).forEach(it=>{ if(it.active===false)return; const cur=_izGiris[it.stock_code]||{plan:false,giris:false}; cur.plan=true; if(it.giris_kalite===true)cur.giris=true; _izGiris[it.stock_code]=cur; });
+      }
+      matCodes.forEach(c=>{ if(!_izGiris[c])_izGiris[c]={plan:false,giris:false}; });
     }catch(e){}
   }
   // === TABLO render yardımcıları ===
@@ -3393,8 +3403,8 @@ async function renderIzleme(root){
       // bu üretimin iş emri kayıtlarını (op_no ile) çek — bizde yoksa LeanSys'ten /pullprod
       let prods=[];
       if(n.work_order){
-        let {data:pp}=await sb.from('productions').select('id,op_no,prod_date,start_time').eq('work_order',String(n.work_order)).eq('stock_code',n.stok_kodu);
-        if(!pp||!pp.length){ try{ await fetch('http://127.0.0.1:17777/pullprod?wo='+encodeURIComponent(n.work_order),{mode:'cors'}); }catch(e){} ({data:pp}=await sb.from('productions').select('id,op_no,prod_date,start_time').eq('work_order',String(n.work_order)).eq('stock_code',n.stok_kodu)); if(pp&&pp.length)cekilen++; }
+        let {data:pp}=await sb.from('productions').select('id,op_no,prod_date,start_time').eq('work_order',String(n.work_order));
+        if(!pp||!pp.length){ try{ await fetch('http://127.0.0.1:17777/pullprod?wo='+encodeURIComponent(n.work_order),{mode:'cors'}); }catch(e){} ({data:pp}=await sb.from('productions').select('id,op_no,prod_date,start_time').eq('work_order',String(n.work_order))); if(pp&&pp.length)cekilen++; }
         prods=pp||[];
       } else { const ids=(q&&q.prodIds)||[]; if(ids.length){ const {data:pp}=await sb.from('productions').select('id,op_no,prod_date,start_time').in('id',ids); prods=pp||[]; } }
       if(!prods.length){ atlanan++; continue; }
@@ -3503,7 +3513,10 @@ async function renderIzleme(root){
       const info=['lot '+(giris.lot_no||giris.irsaliye||'—'), giris.tedarikci?('🚚 '+(giris.tedarikci||'').slice(0,30)):'', giris.tarih?fmtDate(giris.tarih):''].filter(Boolean).join(' · ');
       const grow=el('div',{style:'display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:4px'});
       grow.append(el('span',{style:'font-size:10.5px;color:var(--muted)'},'📥 Alış: '+info));
-      grow.append(el('span',{class:'pill gray',style:'cursor:pointer;font-size:9px;padding:1px 6px',title:'Giriş kalite kayıtları',onclick:e=>{e.stopPropagation();gotoGirisKalite(giris);}},'giriş kalite'));
+      // GİRİŞ KALİTE — yalnız bu malzemenin kontrol PLANINDA giriş kalite varsa (kullanıcı akışı). Yoksa neden gösterme.
+      const gk=_izGiris[giris.stok_kodu];
+      if(gk&&gk.giris){ grow.append(el('span',{class:'pill gray',style:'cursor:pointer;font-size:9px;padding:1px 6px',title:'Bu malzemenin kontrol planında giriş kalite VAR — o tarihteki gerçek kayıt varsa onu kullanır, yoksa 🔧 Türet plana göre oluşturur',onclick:e=>{e.stopPropagation();gotoGirisKalite(giris);}},'giriş kalite')); }
+      else { grow.append(el('span',{style:'font-size:9px;color:var(--muted);border:1px dashed var(--line);border-radius:3px;padding:0 5px',title:(gk&&gk.plan)?'Bu malzemenin kontrol planında giriş kalite TANIMLI DEĞİL → giriş kalite gerekmez':'Bu malzeme için kontrol planı yok → giriş kalite uygulanmaz'},(gk&&gk.plan)?'giriş kalitesi yok (plan)':'kontrol planı yok')); }
       // MAL KABUL → tıkla → KALICI inline kart (LeanSys gerçek alış bilgisi)
       const cmk=(giris.ek&&giris.ek.cols)||{};
       const mkBox=el('div',{style:'display:none;margin-top:4px;font-size:10.5px;background:rgba(21,128,61,.07);border:1px solid #15803d;border-radius:6px;padding:6px 9px',html:'📦 <b>Mal kabul (alış)</b> · '+esc(giris.stok_kodu||'')+(giris.stok_adi?(' — '+esc((giris.stok_adi||'').slice(0,30))):'')+'<br>İrsaliye <b>'+esc(((cmk.irs_seri||'')+(cmk.irs_sira?('/'+cmk.irs_sira):''))||giris.irsaliye||'—')+'</b> · Tedarikçi <b>'+esc(giris.tedarikci||cmk.tedarikci||'—')+'</b>'+(cmk.giris_miktar!=null?(' · Miktar <b>'+commaFmt(cmk.giris_miktar)+(cmk.birim?(' '+esc(cmk.birim)):'')+'</b>'):'')+' · Tarih <b>'+(giris.tarih?fmtDate(giris.tarih):'—')+'</b>'+(cmk.fifo_toplam!=null?(' · FIFO toplam <b>'+commaFmt(cmk.fifo_toplam)+'</b>'):'')+'<br><span style="color:var(--muted);font-size:9.5px">kaynak: LeanSys FIFO_HAREKET (alış irsaliyesi · gerçek veri)</span>'});
