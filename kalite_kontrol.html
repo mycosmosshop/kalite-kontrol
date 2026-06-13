@@ -3273,6 +3273,88 @@ async function renderIzleme(root){
     toast(total+' kontrol türetildi ('+giris+' giriş kalite) (Supabase)'+(cekilen?(' · '+cekilen+' üretim LeanSys’ten çekildi'):'')+(atlanan?(' · '+atlanan+' üretim çekilemedi'):'')+(plansiz?(' · '+plansiz+' giriş kalite planı yok'):''), total?'ok':'err');
     loadTrace(key,irs,s);
   }
+  // ===== SEVK DOSYASI (dossier) — temiz, hikâye anlatan görünüm =====
+  const DCARD='border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--panel)';
+  const DLAB='font-size:10px;letter-spacing:.04em;color:var(--muted);font-weight:700';
+  const DSRC=t=>el('div',{style:'font-size:9.5px;color:var(--muted);opacity:.75;margin-top:6px'},'kaynak: '+t);
+  function dossierSevk(n,bp){
+    const wrap=el('div',{style:'display:flex;flex-direction:column;gap:9px'});
+    const head=el('div',{style:DCARD+';background:rgba(37,99,235,.06)'});
+    head.append(el('div',{style:'display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px'},
+      el('div',{style:'min-width:0'},
+        el('div',{style:DLAB},'1 · SEVK — ne sevk edildi, kime'),
+        el('div',{style:'font-size:14px;font-weight:600',html:'<b>'+esc(n.stok_kodu||'')+'</b>'+(n.stok_adi?('<span style="color:var(--muted);font-weight:400"> — '+esc((n.stok_adi||'').slice(0,46))+'</span>'):'')}),
+        el('div',{style:'font-size:11px;color:var(--muted);margin-top:1px'}, ['İrsaliye '+(n.irsaliye||''), (n.siparis&&n.siparis!=='/')?('Sipariş '+n.siparis):'', n.musteri_sip?('Müş.Sip '+n.musteri_sip):'', n.tarih?fmtDate(n.tarih):''].filter(Boolean).join(' · '))
+      ),
+      el('div',{style:'text-align:right;flex:0 0 auto'},
+        el('div',{style:'font-size:18px;font-weight:600',html:(n.miktar!=null?commaFmt(n.miktar):'')+' <span style="font-size:11px;color:var(--muted)">'+esc(n.birim||'')+'</span>'}),
+        n.musteri?el('div',{style:'font-size:12px;color:#2563eb'},'🏭 '+esc((n.musteri||'').slice(0,30))):''
+      )
+    ));
+    if(n.aciklama)head.append(el('div',{style:'font-size:11px;color:var(--muted);margin-top:3px'},'Açıklama: '+esc((n.aciklama||'').slice(0,80))));
+    head.append(DSRC('LeanSys RAP005_SEVKIYAT_VW'));
+    wrap.append(head);
+    (bp[n.node_no]||[]).forEach(c=>{
+      if(c.tur==='uretim') wrap.append(dossierProduction(c,bp,false));
+      else if(c.tur==='hammadde') wrap.append(dossierMaterial(c,bp));
+    });
+    return wrap;
+  }
+  function dossierProduction(n,bp,nested){
+    const card=el('div',{style:DCARD+(nested?';border-left:3px solid var(--accent)':'')});
+    card.append(el('div',{style:'display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px'},
+      el('div',{style:'min-width:0'},
+        el('div',{style:DLAB}, nested?'ÜRETİM — kendi imalatımız':'2 · ÜRETİM PARTİSİ — nasıl üretildi'),
+        el('div',{style:'font-size:13px;font-weight:600',html:'<b>'+esc(n.stok_kodu||'')+'</b>'+(n.stok_adi?('<span style="color:var(--muted);font-weight:400"> — '+esc((n.stok_adi||'').slice(0,40))+'</span>'):'')}),
+        el('div',{style:'font-size:11px;color:var(--muted);margin-top:1px'}, [n.work_order?('İş emri '+n.work_order):(n.isemri?('İş emri '+n.isemri):''), n.makine||'', n.tarih?fmtDate(n.tarih):''].filter(Boolean).join(' · '))
+      ),
+      el('div',{style:'text-align:right;flex:0 0 auto'},
+        el('div',{style:'font-size:14px;font-weight:600',html:'çıktı '+(n.miktar!=null?commaFmt(n.miktar):'')+' <span style="font-size:10px;color:var(--muted)">'+esc(n.birim||'')+'</span>'})
+      )
+    ));
+    const gates=opLine(n,0);
+    const gh=el('div',{style:'margin-top:8px'});
+    gh.append(el('div',{style:'font-size:11px;font-weight:600;color:#15803d;display:flex;align-items:center;gap:5px;flex-wrap:wrap'},'🛡 Kalite kapıları',el('span',{style:'font-weight:400;color:var(--muted);font-size:10px'},'— bu sevkin üretimi kontrol edilip onaylandı mı (seri başı=kurulum · proses=üretim sırası · son=serbest bırakma)')));
+    if(gates){ gh.append(gates); } else { gh.append(el('div',{style:'font-size:10.5px;color:#b45309;margin-top:2px'},'⚠ Bu üretim QC sisteminde açılmamış / kontrol planı yok — 🔧 Türet ile plana göre üretilebilir')); }
+    card.append(gh);
+    const ml=massLine(n,bp,0); if(ml){ const mh=el('div',{style:'margin-top:8px'}); mh.append(ml); card.append(mh); }
+    const mats=(bp[n.node_no]||[]).filter(k=>k.tur==='hammadde');
+    if(mats.length){
+      card.append(el('div',{style:DLAB+';margin-top:9px'}, nested?'KULLANILAN HAMMADDELER':'3 · KULLANILAN HAMMADDELER — neyden yapıldı'));
+      const mbx=el('div',{style:'display:flex;flex-direction:column;gap:5px;margin-top:4px'});
+      mats.forEach(m=>mbx.append(dossierMaterial(m,bp)));
+      card.append(mbx);
+    }
+    return card;
+  }
+  function dossierMaterial(m,bp){
+    const childProd=(bp[m.node_no]||[]).find(k=>k.tur==='uretim');
+    const giris=(bp[m.node_no]||[]).find(k=>k.tur==='giris');
+    const T=!!m.tahmini;
+    const wrap=el('div',{style:'border:1px solid var(--line);border-radius:7px;padding:6px 8px;background:rgba(125,125,125,.03)'});
+    const kullanilan=m.miktar!=null?(commaFmt(m.miktar)+' '+(m.birim||'')):'—';
+    const kg=m.agirlik_kg!=null?(commaFmt(m.agirlik_kg)+' kg'):'';
+    wrap.append(el('div',{style:'display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;align-items:baseline'},
+      el('div',{style:'min-width:0',html:(IZ_ICON['hammadde']||'•')+' <b>'+esc(m.stok_kodu||'')+'</b>'+(m.stok_adi?('<span style="color:var(--muted)"> — '+esc((m.stok_adi||'').slice(0,36))+'</span>'):'')+(T?' <span style="color:#b45309;border:1px dashed #b45309;border-radius:3px;padding:0 3px;font-size:9px">◇</span>':'')}),
+      el('div',{style:'font-size:11px;white-space:nowrap;flex:0 0 auto',html:'kullanılan <b>'+esc(kullanilan)+'</b>'+(kg?(' <span style="color:var(--muted)">· '+kg+'</span>'):'')})
+    ));
+    if(childProd){
+      wrap.append(el('div',{style:'font-size:10px;color:var(--muted);margin:4px 0 2px'},'↳ bu malzeme şirketimizde üretildi:'));
+      wrap.append(dossierProduction(childProd,bp,true));
+    } else if(giris){
+      const info=['lot '+(giris.lot_no||giris.irsaliye||'—'), giris.tedarikci?('🚚 '+(giris.tedarikci||'').slice(0,30)):'', giris.tarih?fmtDate(giris.tarih):''].filter(Boolean).join(' · ');
+      const grow=el('div',{style:'display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:4px'});
+      grow.append(el('span',{style:'font-size:10.5px;color:var(--muted)'},'📥 Alış: '+info));
+      grow.append(el('span',{class:'pill gray',style:'cursor:pointer;font-size:9px;padding:1px 6px',title:'Giriş kalite kayıtları',onclick:e=>{e.stopPropagation();gotoGirisKalite(giris);}},'giriş kalite'));
+      grow.append(el('span',{class:'pill gray',style:'cursor:pointer;font-size:9px;padding:1px 6px',title:'Mal kabul kaydı',onclick:e=>{e.stopPropagation();gotoMalKabul(giris);}},'mal kabul'));
+      wrap.append(grow);
+      const cd=colsDetail(giris,0); if(cd)wrap.append(cd);
+    } else if(T){
+      wrap.append(el('div',{style:'font-size:10px;color:#b45309;margin-top:3px'},'◇ giriş/üretim kaydı yok'));
+    }
+    const hd=colsDetail(m,0); if(hd)wrap.append(hd);
+    return wrap;
+  }
   async function loadTrace(key, irs, s){
     _izKeep={...(_izKeep||{}), key, irs, s};   // sekme değişince geri yüklensin
     out.innerHTML='<div class="card" style="color:var(--muted)">Yükleniyor…</div>';
@@ -3297,11 +3379,10 @@ async function renderIzleme(root){
         el('button',{class:'btn sm sec',style:'flex:0 0 auto;white-space:nowrap',onclick:()=>out.querySelectorAll('.iz-kids').forEach(k=>k.style.display='none')},'⊟ Kapat'),
         isAdmin?el('button',{class:'btn sm danger',style:'flex:0 0 auto;white-space:nowrap',onclick:async()=>{ if(!confirm('Bu iz SUPABASE’ten silinsin mi? (LeanSys’e dokunulmaz)'))return; const {error}=await sb.from('izleme_node').delete().eq('trace_key',key); if(error){toast(esc(error.message),'err');return;} _izKeep={...(_izKeep||{}),key:null}; out.innerHTML=''; toast('İz silindi (Supabase).','ok'); }},'🗑 Sil'):''
       )));
-    const tree=el('div',{style:'margin-top:10px;border:1px solid var(--line);border-radius:8px;overflow:auto;max-height:68vh'});
-    tree.append(izHeaderRow());
-    roots.forEach(r=>tree.append(izRow(r,byParent,0)));
-    card.append(tree); out.append(card);
-    out.append(el('div',{style:'color:var(--muted);font-size:11px;margin:8px 4px',html:'<b style="color:#b45309">◇</b> = LeanSys’te kayıt YOK (BOM’dan türetildi); işaretsiz satırlar <b>gerçek LeanSys verisi</b>. <b>Kg</b> sütununda <b>—</b> = ağırlık çevrimi yok (veri türetilmiş değil). Üretim altında <b>op kontrolleri</b> (makine + SB/PR/SON) ve <b>⚖️ kütle denkliği</b>. Giriş satırında <b>giriş kalite / mal kabul</b>, op rozetlerinde <b>proses/son</b> → tıkla, kayıtlara git.'}));
+    const dossier=el('div',{style:'margin-top:10px;display:flex;flex-direction:column;gap:10px;overflow:auto;max-height:72vh;padding:2px'});
+    roots.forEach(r=>{ if(r.tur==='sevk')dossier.append(dossierSevk(r,byParent)); else dossier.append(dossierProduction(r,byParent,false)); });
+    card.append(dossier); out.append(card);
+    out.append(el('div',{style:'color:var(--muted);font-size:11px;margin:8px 4px',html:'Sevkten geriye okunur: <b>ne sevk edildi → nasıl üretildi (kalite kapıları) → neyden yapıldı</b>. <b style="color:#15803d">🛡 Kalite kapıları</b> = bu sevkin üretiminin kontrol edilip onaylandığının kanıtı (tıkla → kayıtlar). <b>⚖️ Kütle denkliği</b> hesabı + her malzemenin <b>kullanılan miktarı</b> ve <b>ⓘ LeanSys sütunları</b> tıkla-aç. <b style="color:#b45309">◇</b> = LeanSys’te kayıt yok (türetilebilir).'}));
   }
   function izRow(n,byParent,depth){
     const wrap=el('div');
