@@ -2971,9 +2971,9 @@ async function renderIzleme(root){
     const codes=[...new Set(uret.map(n=>n.stok_kodu))];
     if(!codes.length)return;
     try{
-      // 1) bizim üretim kayıtları (id, stok, tarih, OP NO) — productions per-op'tur
-      const {data:prods}=await sb.from('productions').select('id,stock_code,prod_date,op_no').in('stock_code',codes).limit(9000);
-      const prodList=(prods||[]).map(p=>({id:p.id,stock:p.stock_code,d:(p.prod_date||'').slice(0,10),op:(p.op_no==null?0:Number(p.op_no))}));
+      // 1) bizim üretim kayıtları (id, stok, tarih, OP NO, İŞ EMRİ) — productions per-op'tur
+      const {data:prods}=await sb.from('productions').select('id,stock_code,prod_date,op_no,work_order').in('stock_code',codes).limit(9000);
+      const prodList=(prods||[]).map(p=>({id:p.id,stock:p.stock_code,d:(p.prod_date||'').slice(0,10),op:(p.op_no==null?0:Number(p.op_no)),wo:(p.work_order==null?'':String(p.work_order).trim())}));
       // 2) o üretimlere ait kontrol kayıtları (stage) — production_id üzerinden op'a bağlanır
       const recByPid={}; const pids=prodList.map(p=>p.id);
       for(let i=0;i<pids.length;i+=300){ const chunk=pids.slice(i,i+300); if(!chunk.length)break;
@@ -2987,7 +2987,9 @@ async function renderIzleme(root){
       // 4) her üretim düğümü için: op kırılımı (plan beklenen + gerçek kayıt)
       const dDiff=(a,b)=>{ if(!a||!b)return 9999; return Math.abs((new Date(a)-new Date(b))/86400000); };
       uret.forEach(n=>{
-        const matched=prodList.filter(p=>p.stock===n.stok_kodu && dDiff(p.d,n.tarih)<=2);
+        // ÖNCE iş emri (work_order) ile BİREBİR eşle (bu sevki yapan tek üretim); yoksa stok+tarih penceresine düş
+        const wo=(n.work_order==null?'':String(n.work_order).trim());
+        const matched = wo ? prodList.filter(p=>p.wo===wo) : prodList.filter(p=>p.stock===n.stok_kodu && dDiff(p.d,n.tarih)<=2);
         const realByOp={};
         matched.forEach(p=>{ const r=recByPid[p.id]; if(!r)return; const o=realByOp[p.op]||(realByOp[p.op]={seri_basi:0,proses:0,son:0}); o.seri_basi+=r.seri_basi; o.proses+=r.proses; o.son+=r.son; });
         const plan=planOps[n.stok_kodu]||{};
