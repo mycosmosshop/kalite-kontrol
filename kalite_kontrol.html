@@ -3122,7 +3122,9 @@ async function renderIzleme(root){
           const pool=onBefore.length?onBefore:arr;
           return pool.slice().sort((a,b)=>Math.abs(new Date(a.d).getTime()-ref)-Math.abs(new Date(b.d).getTime()-ref))[0]; };
         let foundAny=false;
-        Object.keys(byOp).forEach(opK=>{ const op=Number(opK); const p=pick(byOp[opK]); if(!p)return; foundAny=true; if(p.mac)opMachine[op]=p.mac; opProdId[op]=p.id; opProdIds[op]=[p.id]; opProdDate[op]=p.d; const r=recByPid[p.id]; if(r)realByOp[op]={seri_basi:r.seri_basi,proses:r.proses,son:r.son}; });
+        // SEVKE YETECEK KADAR: gate'te op başına temsilî sayı göster (1 seri başı / en çok 3 proses / 1 son). Gerçek kayıtlar SİLİNMEZ; yalnız gösterim kırpılır → aynı op her izde aynı görünür, fazla sayı çekilmez.
+        const capRec=r=>({seri_basi:Math.min(r&&r.seri_basi||0,1), proses:Math.min(r&&r.proses||0,3), son:Math.min(r&&r.son||0,1)});
+        Object.keys(byOp).forEach(opK=>{ const op=Number(opK); const p=pick(byOp[opK]); if(!p)return; foundAny=true; if(p.mac)opMachine[op]=p.mac; opProdId[op]=p.id; opProdIds[op]=[p.id]; opProdDate[op]=p.d; const r=recByPid[p.id]; if(r)realByOp[op]=capRec(r); });
         // Sıralı tarih zorla: Op1≤Op2≤Op3≤Op4, hiçbiri sevk tarihini geçemez
         { const opNums=Object.keys(opProdDate).map(Number).sort((a,b)=>a-b); let prevMs=null;
           opNums.forEach(op=>{ let d=opProdDate[op]; let dMs=d?new Date(d).getTime():null;
@@ -3144,7 +3146,7 @@ async function renderIzleme(root){
           const rep=pick(Object.values(byOp).flat());
           if(rep){ if(!opProdDate[0])opProdDate[0]=rep.d; if(rep.mac&&!opMachine[0])opMachine[0]=rep.mac; }
           const allIds=Object.values(opProdId); opProdIds[0]=allIds.length?allIds:(rep?[rep.id]:[]);
-          ops=[{op_no:0, proc:gp.proc, fin:gp.fin, real:agg}];
+          ops=[{op_no:0, proc:gp.proc, fin:gp.fin, real:capRec(agg)}];   // tek gate de sevke yetecek kadar (1/3/1) — fazla kayıt sayısı gösterilmez
         }
         _qcMap[n.node_no]={ ops, opened:(foundAny||matched.length>0), opMachine, opProdId, opProdIds, opProdDate, prodIds:matched.map(p=>p.id) };
       });
