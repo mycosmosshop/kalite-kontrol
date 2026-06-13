@@ -3147,7 +3147,7 @@ async function renderIzleme(root){
     const caret=el('span',{style:'color:var(--accent);cursor:pointer'},'▸ hesabı göster');
     const head=el('div',{style:'font-size:10.5px;color:var(--muted);cursor:pointer',html:'⚖️ <b>Kütle denkliği:</b> giren <b>'+commaFmt(rnd2(giren))+' kg</b> → ürün <b>'+commaFmt(rnd2(cikan))+' kg</b> (reçete) · <b style="color:'+col+'">'+verdict+'</b>'+dzBadge+' &nbsp;'});
     head.append(caret);
-    if(PROFILE&&PROFILE.is_admin&&IZ_ADMIN){ const dz=el('span',{style:'margin-left:8px;color:#7c3aed;cursor:pointer;font-size:10px',title:'Kütle denkliğini düzelt: elle kg/reçete düzenle veya Oto dengele (fark=fire)'},'✏️ Düzelt'); let editing=null; dz.onclick=e=>{ e.stopPropagation(); if(editing){ editing.remove(); editing=null; dz.textContent='✏️ Düzelt'; return; } det.style.display='none'; caret.textContent='▸ hesabı göster'; editing=editMass(n,mb,()=>loadTrace((_izKeep&&_izKeep.key),(_izKeep&&_izKeep.irs),(_izKeep&&_izKeep.s))); dz.textContent='✕ Düzeltmeyi kapat'; wrap.append(editing); }; head.append(dz); }
+    if(PROFILE&&PROFILE.is_admin&&IZ_ADMIN){ const dz=el('span',{style:'margin-left:8px;color:#7c3aed;cursor:pointer;font-size:10px',title:'Kütle denkliğini düzelt: elle kg/reçete düzenle veya Oto dengele (fark=fire)'},'✏️ Düzelt'); let editing=null; dz.onclick=e=>{ e.stopPropagation(); if(editing){ editing.remove(); editing=null; dz.textContent='✏️ Düzelt'; return; } det.style.display='none'; caret.textContent='▸ hesabı göster'; editing=editMass(n,mb,()=>loadTrace((_izKeep&&_izKeep.key),(_izKeep&&_izKeep.irs),(_izKeep&&_izKeep.s),true)); dz.textContent='✕ Düzeltmeyi kapat'; wrap.append(editing); }; head.append(dz); }
     // === açılır AYRINTILI HESAP (denetim için) ===
     const det=el('div',{style:'display:none;margin:4px 0 4px 6px;border:1px solid var(--line);border-radius:6px;overflow:auto;background:var(--panel2)'});
     const num=v=>v==null?'<span style="color:var(--muted)">—</span>':commaFmt(rnd2(v));
@@ -3478,9 +3478,10 @@ async function renderIzleme(root){
     let open=false; link.onclick=e=>{ e.stopPropagation(); open=!open; box.style.display=open?'':'none'; link.textContent=open?'ⓘ detayı gizle':'ⓘ adım adım detay (LeanSys sütunları)'; };
     wrap.append(link,box); return wrap;
   }
-  async function loadTrace(key, irs, s){
+  async function loadTrace(key, irs, s, keepScroll){
+    const _prevScroll = keepScroll ? (((out.querySelector('.iz-dossier'))||{}).scrollTop||0) : null;   // Kaydet sonrası: aynı yerde/kapalı kal
     _izKeep={...(_izKeep||{}), key, irs, s};   // sekme değişince geri yüklensin
-    out.innerHTML='<div class="card" style="color:var(--muted)">Yükleniyor…</div>';
+    if(!keepScroll) out.innerHTML='<div class="card" style="color:var(--muted)">Yükleniyor…</div>';
     const {data,error}=await sb.from('izleme_node').select('*').eq('trace_key',key).order('node_no');
     if(error){ out.innerHTML=''; out.append(el('div',{class:'msg err',style:'margin:8px'},esc(error.message))); return; }
     const nodes=data||[]; out.innerHTML='';
@@ -3503,9 +3504,10 @@ async function renderIzleme(root){
         el('button',{class:'btn sm sec',style:'flex:0 0 auto;white-space:nowrap',onclick:()=>out.querySelectorAll('.iz-kids').forEach(k=>k.style.display='none')},'⊟ Kapat'),
         isAdmin?el('button',{class:'btn sm danger',style:'flex:0 0 auto;white-space:nowrap',onclick:async()=>{ if(!confirm('Bu iz SUPABASE’ten silinsin mi? (LeanSys’e dokunulmaz)'))return; const {error}=await sb.from('izleme_node').delete().eq('trace_key',key); if(error){toast(esc(error.message),'err');return;} _izKeep={...(_izKeep||{}),key:null}; out.innerHTML=''; toast('İz silindi (Supabase).','ok'); }},'🗑 Sil'):''
       )));
-    const dossier=el('div',{style:'margin-top:10px;display:flex;flex-direction:column;gap:10px;overflow:auto;max-height:72vh;padding:2px'});
+    const dossier=el('div',{class:'iz-dossier',style:'margin-top:10px;display:flex;flex-direction:column;gap:10px;overflow:auto;max-height:72vh;padding:2px'});
     roots.forEach(r=>{ if(r.tur==='sevk')dossier.append(dossierSevk(r,byParent)); else dossier.append(dossierProduction(r,byParent,false)); });
     card.append(dossier); out.append(card);
+    if(_prevScroll!=null){ try{ dossier.scrollTop=_prevScroll; }catch(e){} }   // Kaydet sonrası aynı konumda kal
     out.append(el('div',{style:'color:var(--muted);font-size:11px;margin:8px 4px',html:'Sevkten geriye okunur: <b>ne sevk edildi → nasıl üretildi (kalite kapıları) → neyden yapıldı</b>. <b style="color:#15803d">🛡 Kalite kapıları</b> = bu sevkin üretiminin kontrol edilip onaylandığının kanıtı (tıkla → kayıtlar). <b>⚖️ Kütle denkliği</b> hesabı + her malzemenin <b>kullanılan miktarı</b> ve <b>ⓘ LeanSys sütunları</b> tıkla-aç. <b style="color:#b45309">◇</b> = LeanSys’te kayıt yok (türetilebilir).'}));
   }
   function izRow(n,byParent,depth){
