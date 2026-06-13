@@ -3080,37 +3080,113 @@ async function renderIzleme(root){
     const ops=(q.ops||[]).filter(op=>(op.proc+op.fin)>0); if(!ops.length)return null;
     const box=el('div',{style:'font-size:11px;padding:1px 0 3px '+(depth*15+22)+'px;display:flex;flex-direction:column;gap:2px'});
     if(!q.opened) box.append(el('span',{style:'color:#92400e;font-size:10px'},'⚠ bu üretim QC sistemde açılmamış'));
-    ops.forEach(op=>{ const r=op.real; const mac=(q.opMachine&&q.opMachine[op.op_no])||'';
+    ops.forEach(op=>{ const r=op.real;
+      // op 0 = plan 'genel' (op'a bölünmemiş) → üretimin GERÇEK op/makinesine bağla (anlamsız 'Genel' yerine)
+      const opNo = op.op_no || (n.op_no||0);
+      const mac=(q.opMachine&&q.opMachine[op.op_no])|| (op.op_no===0?(n.makine||''):'');
       const opRow=el('div',{style:'display:flex;align-items:center;gap:6px;flex-wrap:wrap'});
-      opRow.append(el('b',{style:'color:var(--accent);min-width:34px'}, op.op_no?('Op'+op.op_no):'Genel'));
+      opRow.append(el('b',{style:'color:var(--accent);min-width:34px'}, opNo?('Op'+opNo):'Kontrol'));
       if(mac)opRow.append(el('span',{style:'color:var(--muted)',title:mac}, mac.slice(0,34)));
+      else if(op.op_no===0)opRow.append(el('span',{style:'color:var(--muted);font-size:9px'},'(plan: tüm operasyonlar)'));
       const mk=(stage,lab,cls,exp)=>{ if(exp<=0)return; const c=r[stage]||0; const has=c>0;
         opRow.append(el('span',{class:'pill '+cls,style:'cursor:pointer;font-size:9.5px;padding:1px 7px'+(has?'':';opacity:.55;outline:1px dashed #b45309;outline-offset:-1px'),
           title:has?(STAGES[stage]+' (yalnız bu üretim): '+c+' kayıt — tıkla'):(STAGES[stage]+' kaydı yok — tıkla'),
-          onclick:e=>{e.stopPropagation(); const pid=q.opProdId&&q.opProdId[op.op_no]; if(pid){ gotoRecords(pid,stage); } else { KAYIT_PROD=null;KAYIT_IRS=null;KAYIT_STAGE=stage;KAYIT_FILT={start:'',end:'',stock:n.stok_kodu};switchTab('kayitlar'); } }}, has?(lab+' '+c):(lab+' ◇'))); };
+          onclick:e=>{e.stopPropagation(); const pid=(q.opProdId&&(q.opProdId[op.op_no]||q.opProdId[n.op_no]))||(q.prodIds&&q.prodIds[0]); if(pid){ gotoRecords(pid,stage); } else { const d=(n.tarih||'').slice(0,10); const w=(s,n2)=>{const dt=new Date(s);dt.setDate(dt.getDate()+n2);return dt.toISOString().slice(0,10);}; KAYIT_PROD=null;KAYIT_IRS=null;KAYIT_STAGE=stage;KAYIT_FILT={start:d?w(d,-4):'',end:d?w(d,4):'',stock:n.stok_kodu};switchTab('kayitlar'); } }}, has?(lab+' '+c):(lab+' ◇'))); };
       mk('seri_basi','SB','seri',op.proc); mk('proses','PR','proses',op.proc); mk('son','SON','son',op.fin);
       box.append(opRow);
     });
     return box;
   }
+  const rnd2=x=>(x==null?null:Math.round(Number(x)*100)/100);
   function massLine(n,byParent,depth){
-    const kids=(byParent[n.node_no]||[]).filter(k=>k.tur==='hammadde');
-    if(!kids.length) return null;
-    let known=0, eksik=0;
-    kids.forEach(k=>{ if(k.agirlik_kg!=null){ known+=Number(k.agirlik_kg); } else eksik++; });
-    const cikan = n.agirlik_kg!=null? Number(n.agirlik_kg): null;
-    const rnd=x=>Math.round(x*100)/100;
-    const sty='font-size:10.5px;color:var(--muted);padding:1px 0 3px '+(depth*15+22)+'px';
-    if(cikan==null){ return el('div',{style:sty,html:'⚖️ <b>Montaj / ambalaj</b> (Adet ürün — kütle denkliği bu adımda uygulanmaz) · ağırlıklı malzeme girişi <b>'+commaFmt(rnd(known))+' kg</b>'+(eksik?(' · '+eksik+' kalemde kg yok'):'')}); }
-    let giren=known, turetildi=0;
-    if(eksik>0){ const res=cikan-known; if(res>0){ turetildi=res; giren=cikan; } }   // eksik kg'ı dengeye göre türet
-    const fark = cikan!==0 ? Math.round((giren-cikan)/cikan*1000)/10 : 0;
-    const ok = Math.abs(fark)<=2;
-    const col = ok?'#15803d':'#b45309';
-    const girenTxt='giren <b>'+commaFmt(rnd(giren))+' kg</b>'+(turetildi>0?(' (<span style="color:#b45309">'+commaFmt(rnd(turetildi))+' kg ağırlık tahmini eklendi</span>)'):(eksik?(' · '+eksik+' kalemde kg yok'):''));
-    return el('div',{style:sty,html:'⚖️ Kütle: '+girenTxt+' ↔ çıkan <b>'+commaFmt(rnd(cikan))+' kg</b> · <b style="color:'+col+'">'+(ok?'✓ dengeli':('fark '+(fark>0?'+':'')+fark+'%'))+'</b>'});
+    const mb = n.ek && n.ek.mb;
+    const pad = depth*15+22;
+    const sty='font-size:10.5px;color:var(--muted);padding:1px 0 3px '+pad+'px';
+    if(!mb){   // eski iz (ek yok) — hammadde kg toplamını göster
+      const kids=(byParent[n.node_no]||[]).filter(k=>k.tur==='hammadde'); if(!kids.length)return null;
+      let known=0,eksik=0; kids.forEach(k=>{ if(k.agirlik_kg!=null)known+=Number(k.agirlik_kg); else eksik++; });
+      return el('div',{style:sty,html:'⚖️ ağırlıklı malzeme girişi <b>'+commaFmt(rnd2(known))+' kg</b>'+(eksik?(' · '+eksik+' kalemde kg yok'):'')+' <span style="color:var(--accent)">(yeniden İzle → tam kütle denkliği)</span>'});
+    }
+    const kalem=mb.kalemler||[];
+    const adet=(mb.cikti_birim==='Adet')||!kalem.some(k=>k.kg!=null);
+    if(adet){
+      const known=kalem.reduce((s,k)=>s+(k.kg!=null?Number(k.kg):0),0);
+      const eksik=kalem.filter(k=>k.kg==null).length;
+      return el('div',{style:sty,html:'⚖️ <b>Montaj / ambalaj</b> (Adet ürün — kütle denkliği uygulanmaz) · ağırlıklı malzeme girişi <b>'+commaFmt(rnd2(known))+' kg</b>'+(eksik?(' · '+eksik+' kalemde kg yok'):'')});
+    }
+    const giren=mb.giren_kg!=null?Number(mb.giren_kg):null, cikan=mb.cikti_kg!=null?Number(mb.cikti_kg):null, denge=mb.denge_yuzde!=null?Number(mb.denge_yuzde):null;
+    const ok=denge!=null&&Math.abs(denge)<=2; const col=ok?'#15803d':'#b45309';
+    const wrap=el('div',{style:'padding:1px 0 3px '+pad+'px'});
+    const caret=el('span',{style:'color:var(--accent);cursor:pointer'},'▸ hesabı göster');
+    const head=el('div',{style:'font-size:10.5px;color:var(--muted);cursor:pointer',html:'⚖️ <b>Kütle denkliği:</b> giren <b>'+commaFmt(rnd2(giren))+' kg</b> → ürün <b>'+commaFmt(rnd2(cikan))+' kg</b> (reçete) · <b style="color:'+col+'">'+(ok?'✓ dengeli (±%2)':('fark '+(denge>0?'+':'')+denge+'% (proses firesi/sapma)'))+'</b> &nbsp;'});
+    head.append(caret);
+    // === açılır AYRINTILI HESAP (denetim için) ===
+    const det=el('div',{style:'display:none;margin:4px 0 4px 6px;border:1px solid var(--line);border-radius:6px;overflow:auto;background:var(--panel2)'});
+    const num=v=>v==null?'<span style="color:var(--muted)">—</span>':commaFmt(rnd2(v));
+    const C='padding:3px 7px;border-bottom:1px solid var(--line);font-size:10.5px;white-space:nowrap';
+    const cikMik=mb.cikti_miktar!=null?Number(mb.cikti_miktar):null;
+    let h='<table style="border-collapse:collapse;width:100%;min-width:760px;font-size:10.5px">';
+    h+='<thead><tr style="background:var(--panel);font-weight:700;color:var(--muted)">'+
+       ['Malzeme','Tüketilen','kg/birim (formül)','= Tüketilen kg','Reçete oranı','Beklenen','Beklenen kg','Fark %'].map(x=>'<th style="'+C+';text-align:left">'+x+'</th>').join('')+'</tr></thead><tbody>';
+    kalem.forEach(k=>{
+      const sap=k.sapma; const sc=(sap==null)?'var(--muted)':(Math.abs(Number(sap))<=2?'#15803d':'#b45309');
+      h+='<tr>'+
+        '<td style="'+C+'"><b>'+esc(k.kod||'')+'</b> <span style="color:var(--muted)">'+esc((k.ad||'').slice(0,30))+'</span></td>'+
+        '<td style="'+C+';text-align:right">'+num(k.tuketilen)+' <span style="color:var(--muted)">'+esc(k.birim||'')+'</span></td>'+
+        '<td style="'+C+';color:var(--muted)">'+esc(k.formul||(k.kgbirim!=null?(commaFmt(rnd2(k.kgbirim))+' kg/'+(k.birim||'br')):'—'))+'</td>'+
+        '<td style="'+C+';text-align:right"><b>'+num(k.kg)+'</b></td>'+
+        '<td style="'+C+';text-align:right">'+(k.oran!=null?(commaFmt(k.oran)+' '+esc(k.birim||'')+'/'+esc(mb.cikti_birim||'br')):'<span style="color:var(--muted)">eşleşmedi</span>')+(k.fire?(' <span style="color:#b45309">+%'+k.fire+' fire</span>'):'')+'</td>'+
+        '<td style="'+C+';text-align:right">'+num(k.beklenen)+'</td>'+
+        '<td style="'+C+';text-align:right">'+num(k.beklenen_kg)+'</td>'+
+        '<td style="'+C+';text-align:right;color:'+sc+'">'+(sap==null?'—':((sap>0?'+':'')+sap+'%'))+'</td>'+
+        '</tr>';
+    });
+    h+='<tr style="background:var(--panel);font-weight:700">'+
+       '<td style="'+C+'">Σ GİREN (tüketilen)</td><td style="'+C+'"></td><td style="'+C+'"></td>'+
+       '<td style="'+C+';text-align:right;color:'+col+'">'+num(giren)+' kg</td>'+
+       '<td style="'+C+'"></td><td style="'+C+'"></td><td style="'+C+';text-align:right">'+num(cikan)+' kg</td><td style="'+C+'"></td></tr>';
+    h+='</tbody></table>';
+    h+='<div style="padding:5px 8px;font-size:10.5px;color:var(--muted);border-top:1px solid var(--line)">'+
+       '🧮 <b>Çıktı (ürün):</b> '+num(cikMik)+' '+esc(mb.cikti_birim||'')+' × reçete '+(cikMik?commaFmt(rnd2(cikan/cikMik*1000)/1000):'?')+' kg/'+esc(mb.cikti_birim||'br')+' = <b>'+num(cikan)+' kg</b>'+
+       (mb.isemri_miktar!=null&&cikMik!=null&&Math.abs(Number(mb.isemri_miktar)-cikMik)>0.01?(' &nbsp;·&nbsp; <span title="iş emri toplam siparişi — bu sevk partisi çıktıdır">iş emri miktarı '+commaFmt(mb.isemri_miktar)+' (toplam)</span>'):'')+
+       ' &nbsp;·&nbsp; <b>Denge:</b> (giren '+num(giren)+' − ürün '+num(cikan)+') / ürün = <b style="color:'+col+'">'+(denge>0?'+':'')+denge+'%</b> '+(ok?'≤ %2 ✓':'> %2 (fazla tüketim = fire/trim)')+
+       '</div>';
+    det.innerHTML=h;
+    let open=false; head.onclick=e=>{ e.stopPropagation(); open=!open; det.style.display=open?'':'none'; caret.textContent=open?'▾ hesabı gizle':'▸ hesabı göster'; };
+    wrap.append(head,det);
+    return wrap;
   }
 
+  // LeanSys izlenebilirlik sütunları — açılır detay (sevk/giriş/hammadde)
+  function colsDetail(n,depth){
+    const c=(n.ek&&n.ek.cols)||null; const pairs=[];
+    const add=(k,v)=>{ if(v!=null&&v!=='')pairs.push([k,v]); };
+    const q=(x,u)=>x!=null?(commaFmt(x)+(u?(' '+u):'')):null;
+    if(n.tur==='sevk'&&c){
+      add('İrsaliye Seri',c.irs_seri); add('İrsaliye Sıra',c.irs_sira);
+      add('Sipariş Seri',c.sip_seri); add('Sipariş Sıra',c.sip_sira);
+      add('Müşteri Sip.No',c.musteri_sip); add('Açıklama',c.aciklama);
+      add('Miktar',q(c.miktar,c.birim)); add('Ağırlık',c.kg!=null?(commaFmt(c.kg)+' kg'+(c.kg_formul?(' · '+c.kg_formul):'')):null);
+      add('Stok Hrk.Detay Rec',c.shd);
+    } else if(n.tur==='giris'&&c){
+      add('İrsaliye Seri',c.irs_seri); add('İrsaliye Sıra',c.irs_sira);
+      add('İrsaliye/Giriş Miktar',q(c.giris_miktar,c.birim)); add('FIFO Toplam',q(c.fifo_toplam));
+      add('Tedarikçi',c.tedarikci); add('Ağırlık',c.kg!=null?(commaFmt(c.kg)+' kg'+(c.kg_formul?(' · '+c.kg_formul):'')):null);
+    } else if(n.tur==='hammadde'&&n.ek){
+      add('Kullanılan Miktar',q(n.ek.kullanilan,n.birim));
+      add('kg/birim',n.ek.kg_birim!=null?(commaFmt(rnd2(n.ek.kg_birim))+(n.ek.kg_formul?(' · '+n.ek.kg_formul):'')):null);
+      add('Reçete beklenen',n.bom_beklenen!=null?q(n.bom_beklenen,n.birim):null);
+      add('Beklenen kg',n.ek.beklenen_kg!=null?(commaFmt(n.ek.beklenen_kg)+' kg'):null);
+      add('Sapma',n.sapma_yuzde!=null?((n.sapma_yuzde>0?'+':'')+n.sapma_yuzde+'%'):null);
+    }
+    if(!pairs.length)return null;
+    const wrap=el('div',{style:'padding:0 0 2px '+(depth*15+22)+'px'});
+    const link=el('span',{style:'font-size:9px;color:var(--accent);cursor:pointer'},'ⓘ LeanSys sütunları');
+    const box=el('div',{style:'display:none;margin:2px 0;flex-wrap:wrap;gap:2px 8px'});
+    pairs.forEach(([k,v])=>box.append(el('span',{style:'font-size:9.5px;color:var(--muted);background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:1px 6px'},k+': ',el('b',{style:'color:var(--fg)'},String(v)))));
+    let open=false; link.onclick=e=>{ e.stopPropagation(); open=!open; box.style.display=open?'flex':'none'; };
+    wrap.append(link,box); return wrap;
+  }
   async function loadSevkler(){
     const u=(fUrun.value||'').trim(); if(!u){ toast('Önce ürün/stok kodu gir.','err'); return; }
     getBtn.disabled=true; const _t=getBtn.textContent; getBtn.textContent='⏳ Getiriliyor…'; out.innerHTML='';
@@ -3272,6 +3348,7 @@ async function renderIzleme(root){
       else if(n.stok_kalan!=null){ const neg=Number(n.stok_kalan)<0; txt='📦 LeanSys stok bakiyesi: <b>'+commaFmt(n.stok_kalan)+'</b>'+(neg?' ⚠ (üretim girişi transfer işlenmiş — güvenilmez)':''); }
       if(txt) wrap.append(el('div',{style:'font-size:10.5px;color:var(--muted);padding:1px 0 3px '+(depth*15+22)+'px',html:txt}));
     }
+    const cd=colsDetail(n,depth); if(cd)wrap.append(cd);
     if(hasKids){
       const kidBox=el('div',{class:'iz-kids'}); kids.forEach(k=>kidBox.append(izRow(k,byParent,depth+1))); wrap.append(kidBox);
       const toggle=()=>{ const open=kidBox.style.display!=='none'; kidBox.style.display=open?'none':''; caret.textContent=open?'▸':'▾'; };
