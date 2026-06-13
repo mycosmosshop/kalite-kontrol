@@ -3069,7 +3069,11 @@ async function renderIzleme(root){
     if(!codes.length)return;
     try{
       // 1) bizim üretim kayıtları (id, stok, tarih, OP NO, İŞ EMRİ) — productions per-op'tur
-      const {data:prods}=await sb.from('productions').select('id,stock_code,prod_date,op_no,work_order,machine_name').in('stock_code',codes).limit(9000);
+      //    KRİTİK: stok kodu YETMEZ — laminasyon (ör 700.20.055) üretimleri FARKLI kod altında olabilir; trace İŞ EMRİ ile de eşleştir
+      const wos=[...new Set(uret.map(n=>(n.work_order==null?'':String(n.work_order).trim())).filter(Boolean))];
+      let pq=sb.from('productions').select('id,stock_code,prod_date,op_no,work_order,machine_name');
+      pq = wos.length ? pq.or('stock_code.in.('+codes.join(',')+'),work_order.in.('+wos.join(',')+')') : pq.in('stock_code',codes);
+      const {data:prods}=await pq.limit(9000);
       const prodList=(prods||[]).map(p=>({id:p.id,stock:p.stock_code,d:(p.prod_date||'').slice(0,10),op:(p.op_no==null?0:Number(p.op_no)),wo:(p.work_order==null?'':String(p.work_order).trim()),mac:(p.machine_name||'')}));
       // 2) o üretimlere ait kontrol kayıtları (stage) — production_id üzerinden op'a bağlanır
       const recByPid={}; const pids=prodList.map(p=>p.id);
@@ -3093,16 +3097,16 @@ async function renderIzleme(root){
       // SEVKE KAPSA: makine başına TEK üretim (sevke en yakın tarihli) — partinin tüm koşumlarını TOPLAMA (sayılar şişmesin; kullanıcı: "sevke yetecek kadar")
       const machProds={}; traceIds.forEach(id=>{ const p=pById[id]; if(p&&p.mac)(machProds[p.mac]=machProds[p.mac]||[]).push(p); });
       const machBy={};   // makine -> {seri_basi,proses,son, ids:[tek id]}
-      Object.keys(machProds).forEach(mac=>{ const p=machProds[mac].slice().sort((a,b)=>dDiff(a.d,sevkDate)-dDiff(b.d,sevkDate))[0]; const r=recByPid[p.id]||{seri_basi:0,proses:0,son:0}; machBy[mac]={seri_basi:r.seri_basi,proses:r.proses,son:r.son,ids:[p.id]}; });
+      Object.keys(machProds).forEach(mac=>{ const p=machProds[mac].slice().sort((a,b)=>dDiff(a.d,sevkDate)-dDiff(b.d,sevkDate))[0]; const r=recByPid[p.id]||{seri_basi:0,proses:0,son:0}; machBy[mac]={seri_basi:r.seri_basi,proses:r.proses,son:r.son,ids:[p.id],d:p.d}; });
       const machHas=m=>{ const s=m&&machBy[m]; return !!(s&&(s.seri_basi+s.proses+s.son)>0); };
       // PASS 2: gate'leri kur, makine paylaşımını uygula
       uret.forEach(n=>{
         const matched=nodeMatched[n.node_no];
-        const realByOp={}, opMachine={}, opProdId={}, opProdIds={};
+        const realByOp={}, opMachine={}, opProdId={}, opProdIds={}, opProdDate={};
         // SEVKE KAPSA: op başına TEK üretim (trace tarihine en yakın) — partinin tüm koşumlarını toplama (SB8/PR23 yerine sevke giden koşum)
         const byOpArr={}; matched.forEach(p=>{ if(p.op!=null)(byOpArr[p.op]=byOpArr[p.op]||[]).push(p); });
-        Object.keys(byOpArr).forEach(opK=>{ const op=Number(opK); const p=byOpArr[opK].slice().sort((a,b)=>dDiff(a.d,n.tarih)-dDiff(b.d,n.tarih))[0]; if(p.mac)opMachine[op]=p.mac; opProdId[op]=p.id; opProdIds[op]=[p.id]; const r=recByPid[p.id]; if(r)realByOp[op]={seri_basi:r.seri_basi,proses:r.proses,son:r.son}; });
-        const realFor=(op,mac)=>{ if(machHas(mac)){ opProdIds[op]=machBy[mac].ids.slice(); const s=machBy[mac]; return {seri_basi:s.seri_basi,proses:s.proses,son:s.son}; } return realByOp[op]||{seri_basi:0,proses:0,son:0}; };
+        Object.keys(byOpArr).forEach(opK=>{ const op=Number(opK); const p=byOpArr[opK].slice().sort((a,b)=>dDiff(a.d,n.tarih)-dDiff(b.d,n.tarih))[0]; if(p.mac)opMachine[op]=p.mac; opProdId[op]=p.id; opProdIds[op]=[p.id]; opProdDate[op]=p.d; const r=recByPid[p.id]; if(r)realByOp[op]={seri_basi:r.seri_basi,proses:r.proses,son:r.son}; });
+        const realFor=(op,mac)=>{ if(machHas(mac)){ opProdIds[op]=machBy[mac].ids.slice(); if(!opProdDate[op])opProdDate[op]=machBy[mac].d; const s=machBy[mac]; return {seri_basi:s.seri_basi,proses:s.proses,son:s.son}; } return realByOp[op]||{seri_basi:0,proses:0,son:0}; };
         const plan=planOps[n.stok_kodu]||{};
         const planKeys=Object.keys(plan).map(Number);
         const planHasRealOps=planKeys.some(o=>o>0);
@@ -3116,7 +3120,7 @@ async function renderIzleme(root){
           const gp=plan[0]||{proc:0,fin:0};
           ops=[{op_no:0, proc:gp.proc, fin:gp.fin, real:realFor(0,mac)}];
         }
-        _qcMap[n.node_no]={ ops, opened:(matched.length>0 || machHas(n.makine)), opMachine, opProdId, opProdIds, prodIds:matched.map(p=>p.id) };
+        _qcMap[n.node_no]={ ops, opened:(matched.length>0 || machHas(n.makine)), opMachine, opProdId, opProdIds, opProdDate, prodIds:matched.map(p=>p.id) };
       });
     }catch(e){}
   }
@@ -3153,6 +3157,7 @@ async function renderIzleme(root){
       opRow.append(el('b',{style:'color:var(--accent);min-width:34px'}, opNo?('Op'+opNo):'Kontrol'));
       if(mac)opRow.append(el('span',{style:'color:var(--muted)',title:mac}, mac.slice(0,34)));
       else if(op.op_no===0)opRow.append(el('span',{style:'color:var(--muted);font-size:9px'},'(plan: tüm operasyonlar)'));
+      const pd=(q.opProdDate&&q.opProdDate[op.op_no]); if(pd)opRow.append(el('span',{style:'color:#0369a1;font-size:9px;border:1px solid #0369a1;border-radius:3px;padding:0 4px',title:'bu operasyonun LeanSys üretim kaydı — '+fmtDate(pd)},'🏭 '+fmtDate(pd)));
       const mk=(stage,lab,cls,exp)=>{ if(exp<=0)return; const c=r[stage]||0; const has=c>0;
         opRow.append(el('span',{class:'pill '+cls,style:'cursor:pointer;font-size:9.5px;padding:1px 7px'+(has?'':';opacity:.55;outline:1px dashed #b45309;outline-offset:-1px'),
           title:has?(STAGES[stage]+' — bu operasyonun '+c+' kaydını aç'):(STAGES[stage]+' kaydı yok — 🔧 Türet ile plana göre oluşturulur'),
