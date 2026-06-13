@@ -1115,11 +1115,11 @@ async function renderUretimler(){
   const _f=URETIM_FILT, _active=!!(_f.start||_f.end||_f.stock);
   let data=[], error=null;
   if(!_active){
-    const r=await sb.from('productions').select('*').order('start_time',{ascending:false}).limit(500);
+    const r=await sb.from('productions').select('*').neq('sentetik',true).order('start_time',{ascending:false}).limit(500);
     data=r.data||[]; error=r.error;
   } else {
     for(let from=0; from<40000; from+=1000){
-      let q=sb.from('productions').select('*').order('start_time',{ascending:false}).range(from,from+999);
+      let q=sb.from('productions').select('*').neq('sentetik',true).order('start_time',{ascending:false}).range(from,from+999);
       if(_f.stock) q=q.eq('stock_code',_f.stock);
       if(_f.start) q=q.gte('prod_date',_f.start);
       if(_f.end)   q=q.lte('prod_date',_f.end);
@@ -3374,7 +3374,7 @@ async function renderIzleme(root){
   async function turetTrace(nodes,key,irs,s){
     if(!(PROFILE&&PROFILE.is_admin)){ toast('Yetki yok (admin).','err'); return; }
     if(!confirm('Eksik kontroller — kontrol planı OLAN ürünlerde seri başı/proses/son + hammadde giriş kalite — kontrol planına göre TÜRETİLİP yalnız bizim QC sistemimize (Supabase control_records) yazılacak.\n\n⛔ LeanSys’e HİÇBİR ŞEY yazılmaz. Mal kabul/hammadde/müşteri türetilmez (gerçek veri). Türetilenler sonradan silinebilir.\n\nDevam?')) return;
-    let total=0, atlanan=0, plansiz=0, giris=0, cekilen=0;
+    let total=0, atlanan=0, plansiz=0, giris=0, cekilen=0, sentetikOp=0;
     for(const n of nodes.filter(x=>x.tur==='uretim')){
       const q=_qcMap[n.node_no];
       // bu üretimin iş emri kayıtlarını (op_no ile) çek — bizde yoksa LeanSys'ten /pullprod
@@ -3392,6 +3392,16 @@ async function renderIzleme(root){
       try{ await sb.from('control_records').delete().in('production_id',allIds).eq('note','izleme-türet'); }catch(e){}   // eski çoğaltılmışları temizle
       await ensurePlan(n.stok_kodu);   // kontrol planı yoksa LeanSys'ten çek+içe-aktar
       for(const op in byOp){ try{ const r=await turetEksikQC({prodId:byOp[op].id, baseDate:n.tarih}); total+=(r.made||0); }catch(e){} }   // baseDate=trace tarihi → kontroller doğru (Haziran) tarihli
+      // EKSİK OP: planda var ama bu iş emrinde ÜRETİM YOK → SENTETİK üretim oluştur + türet (kullanıcı: "op eksikse sanal türet")
+      const {data:pli}=await sb.from('control_plan_items').select('op_no,process_control,final_control,production_equipment').eq('stock_code',n.stok_kodu).eq('active',true);
+      const planOpM={}; (pli||[]).forEach(it=>{ const op=(it.op_no==null?0:Number(it.op_no)); if(op<=0)return; const o=planOpM[op]||(planOpM[op]={proc:false,fin:false,eq:''}); if(it.process_control)o.proc=true; if(it.final_control)o.fin=true; if(it.production_equipment&&!o.eq)o.eq=it.production_equipment; });
+      const realOps=new Set(prods.map(p=>p.op_no==null?-1:Number(p.op_no)));
+      for(const op in planOpM){ const opN=Number(op); if(realOps.has(opN))continue; const pe=planOpM[op]; if(!pe.proc&&!pe.fin)continue;
+        const bd=n.tarih?new Date(n.tarih):new Date(); const st=new Date(bd.getFullYear(),bd.getMonth(),bd.getDate(),8,0,0).toISOString(); const en=new Date(new Date(st).getTime()+6*3600000).toISOString();
+        const fp='SENTETIK|'+(n.work_order||'')+'|'+n.stok_kodu+'|'+opN;
+        const {data:sp}=await sb.from('productions').upsert({work_order:String(n.work_order||''), stock_code:n.stok_kodu, stock_name:n.stok_adi, op_no:opN, machine_name:(pe.eq||('Op'+opN)), start_time:st, end_time:en, prod_date:((n.tarih||'').slice(0,10)||null), quantity:n.miktar, fingerprint:fp, sentetik:true},{onConflict:'fingerprint'}).select();
+        if(sp&&sp[0]){ await sb.from('control_records').delete().eq('production_id',sp[0].id).eq('note','izleme-türet'); try{ const r=await turetEksikQC({prodId:sp[0].id, baseDate:n.tarih}); total+=(r.made||0); if(r.made)sentetikOp++; }catch(e){} }
+      }
     }
     // GİRİŞ KALİTE: iz giriş düğümünün GERÇEK LeanSys verisinden (mal kabul tablosu şart değil); yalnız giriş kalite PLANI olan hammadde
     for(const n of nodes.filter(x=>x.tur==='giris'&&x.stok_kodu)){
@@ -3402,7 +3412,7 @@ async function renderIzleme(root){
       await ensurePlan(n.stok_kodu);   // hammadde kontrol planı yoksa LeanSys'ten çek
       try{ const r=await turetEksikQC({mk}); if(r.made){ total+=r.made; giris+=r.made; } else if(r.reason==='giriş kalite planı yok'){ plansiz++; } }catch(e){}
     }
-    toast(total+' kontrol türetildi ('+giris+' giriş kalite) (Supabase)'+(cekilen?(' · '+cekilen+' üretim LeanSys’ten çekildi'):'')+(atlanan?(' · '+atlanan+' üretim çekilemedi'):'')+(plansiz?(' · '+plansiz+' giriş kalite planı yok'):''), total?'ok':'err');
+    toast(total+' kontrol türetildi ('+giris+' giriş kalite) (Supabase)'+(cekilen?(' · '+cekilen+' üretim LeanSys’ten çekildi'):'')+(sentetikOp?(' · '+sentetikOp+' eksik op sanal türetildi'):'')+(atlanan?(' · '+atlanan+' üretim çekilemedi'):'')+(plansiz?(' · '+plansiz+' giriş kalite planı yok'):''), total?'ok':'err');
     loadTrace(key,irs,s);
   }
   // ===== SEVK DOSYASI (dossier) — temiz, hikâye anlatan görünüm =====
