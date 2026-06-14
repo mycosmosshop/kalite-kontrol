@@ -3543,6 +3543,13 @@ async function renderIzleme(root){
       const {data:pli}=await sb.from('control_plan_items').select('op_no,process_control,final_control,production_equipment').eq('stock_code',n.stok_kodu).eq('active',true);
       const planOpM={}; (pli||[]).forEach(it=>{ const op=(it.op_no==null?0:Number(it.op_no)); if(op<=0)return; const o=planOpM[op]||(planOpM[op]={proc:false,fin:false,eq:''}); if(it.process_control)o.proc=true; if(it.final_control)o.fin=true; if(it.production_equipment&&!o.eq)o.eq=it.production_equipment; });
       const realOps=new Set(picks.map(x=>x.op));
+      // PLAN MAKİNESİNİ GERÇEĞE EŞİTLE: op'un GERÇEK üretim makinesi plandaki ekipmandan (rota kartı, ör. KP4) farklıysa → planı (Supabase control_plan_items) GERÇEK makineye (ör. VARGEL 2) GÜNCELLE.
+      //   (kullanıcı: "op2 planı KP4 yerine VARGEL 2 olarak değişecek" — rota kartı planlı makineyi yazar ama üretim başka makinede yapılmış olabilir.) LeanSys'e DOKUNULMAZ — yalnız bizim planımız.
+      try{
+        const {data:pmac}=await sb.from('productions').select('op_no,machine_name').in('id',picks.map(x=>x.id));
+        const realMacByOp={}; (pmac||[]).forEach(p=>{ if(p.op_no!=null&&p.machine_name&&!realMacByOp[p.op_no])realMacByOp[p.op_no]=p.machine_name; });
+        for(const opS in planOpM){ const opN=Number(opS); const rm=realMacByOp[opN]; if(rm && planOpM[opS].eq && planOpM[opS].eq!==rm){ try{ await sb.from('control_plan_items').update({production_equipment:rm}).eq('stock_code',n.stok_kodu).eq('op_no',opN); planOpM[opS].eq=rm; }catch(e){} } }
+      }catch(e){}
       for(const op in planOpM){ const opN=Number(op); if(realOps.has(opN))continue; const pe=planOpM[op]; if(!pe.proc&&!pe.fin)continue;
         // SENTETİK op makinesi: operasyon kartı ekipmanı (pe.eq, ör. KP4) DEĞİL → bu stok+op'ta GERÇEKTEN kullanılmış makineyi al (ör. VARGEL 2).
         //   (kullanıcı: "op2'yi KP4 yerine VARGEL 2 al" — rota kartı planlı makineyi yazar ama üretim başka makinede yapılmış olabilir)
@@ -3779,7 +3786,7 @@ async function renderIzleme(root){
     const urun=(_izKeep&&_izKeep.urun)||(key.split(':')[1]||'');
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'},
-      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b5</span>`})),
+      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b6</span>`})),
       el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;align-items:center'},
         el('button',{class:'btn sm sec',style:'flex:0;white-space:nowrap',title:'Görünüm: kart (hikâye) ↔ tablo (düz veri). Tercih kaydedilir.',onclick:()=>{ IZ_VIEW=(IZ_VIEW==='tablo')?'kart':'tablo'; localStorage.setItem('iz_view',IZ_VIEW); loadTrace(key,irs,s); }}, IZ_VIEW==='tablo'?'🗂 Kart görünümü':'🧾 Tablo görünümü'),
         el('div',{class:'autozone'},
