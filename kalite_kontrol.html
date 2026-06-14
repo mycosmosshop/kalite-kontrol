@@ -2982,6 +2982,7 @@ async function renderStokDokumanlari(root){
 // 🔎 İzlenebilirlik (Traceability) — sevkten geriye FIFO/iş-emri zinciri: sevk→üretim→hammadde→giriş + kütle denkliği(BOM) + QC
 const IZ_ICON={sevk:'🚚',uretim:'🏭',hammadde:'🧪',giris:'📦',not:'⚠️'};
 let _izKeep=null;   // son iz durumu (sekme değişince kaybolmasın): {urun,sevkler,key,irs,s}
+let IZ_VIEW=(localStorage.getItem('iz_view')==='tablo')?'tablo':'kart';   // iz dosyası görünümü: 'kart' (hikâye) | 'tablo' (düz veri tablosu)
 let IZ_ADMIN=false; // DENETİM görünümü varsayılan: iç işlemler (Türet/Düzelt/düzeltildi/türet notları) GİZLİ; admin açar
 // kontrol planı bizde yoksa LeanSys'ten ÇEK + içe aktar (control_plan_items) — türet için (LeanSys salt-okuma)
 async function ensurePlan(stok){
@@ -3659,6 +3660,45 @@ async function renderIzleme(root){
     let open=false; link.onclick=e=>{ e.stopPropagation(); open=!open; box.style.display=open?'':'none'; link.textContent=open?'ⓘ detayı gizle':'ⓘ adım adım detay (LeanSys sütunları)'; };
     wrap.append(link,box); return wrap;
   }
+  // ===== DÜZ TABLO GÖRÜNÜMÜ (denetim/veri) — ağacı sade, sütunlu tek tabloya indirger =====
+  function dossierTable(roots,bp){
+    const wrap=el('div',{class:'tbl-wrap',style:'max-height:72vh'});
+    const tb=el('table',{style:'border-collapse:collapse;width:100%;font-size:12px'});
+    const TH='text-align:left;padding:6px 9px;font-size:10px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);font-weight:700;border-bottom:1.5px solid var(--line);background:var(--panel2);position:sticky;top:0;z-index:1';
+    tb.append(el('thead',{},el('tr',{},...['Adım','Kod','Ad','Miktar','Tarih','Kaynak / Yer','Kalite kapıları','Kütle denkliği'].map(h=>el('th',{style:TH},h)))));
+    const body=el('tbody');
+    const TD='padding:5px 9px;border-bottom:1px solid var(--line);vertical-align:top';
+    const walk=(n,depth)=>{
+      const tr=el('tr',{style:(depth?(depth%2?'background:rgba(125,125,125,.03)':''):'background:rgba(37,99,235,.05)')});
+      const ic=IZ_ICON[n.tur]||'•'; const T=!!n.tahmini;
+      tr.append(el('td',{style:TD+';white-space:nowrap'}, el('span',{style:'padding-left:'+(depth*16)+'px;color:var(--muted);font-size:10px;font-weight:700'}, ic+' '+(IZ_TUR[n.tur]||n.tur)), T?el('span',{style:'margin-left:4px;color:#b45309;border:1px dashed #b45309;border-radius:3px;padding:0 3px;font-size:9px',title:'LeanSys’te kayıt yok — BOM’dan türetildi'},'◇'):''));
+      tr.append(el('td',{style:TD+';font-weight:600;white-space:nowrap'}, n.stok_kodu||''));
+      tr.append(el('td',{style:TD+';color:var(--muted)',title:n.stok_adi||''}, (n.stok_adi||'').slice(0,44)));
+      tr.append(el('td',{style:TD+';white-space:nowrap;text-align:right'}, (n.miktar!=null?commaFmt(n.miktar):'')+(n.birim?(' '+esc(n.birim)):'')));
+      tr.append(el('td',{style:TD+';white-space:nowrap'}, n.tarih?fmtDate(n.tarih):''));
+      let kaynak='';
+      if(n.tur==='sevk')kaynak=(n.musteri?('🏭 '+(n.musteri||'').slice(0,28)):'')+(n.irsaliye?(' · irs '+n.irsaliye):'');
+      else if(n.tur==='uretim')kaynak=[(n.makine||''),(n.work_order?('İş emri '+n.work_order):(n.isemri?('İş emri '+n.isemri):''))].filter(Boolean).join(' · ');
+      else if(n.tur==='giris')kaynak=(n.tedarikci?('🚚 '+(n.tedarikci||'').slice(0,26)):'')+((n.irsaliye&&n.irsaliye!=='/')?(' · '+n.irsaliye):'');
+      tr.append(el('td',{style:TD+';font-size:11px;color:var(--muted)'}, kaynak));
+      const qc=el('td',{style:TD});
+      if(n.tur==='uretim'){ const ol=opLine(n,0); qc.append(ol||el('span',{style:'color:var(--muted);font-size:10px'},'—')); }
+      else if(n.tur==='giris'){ const gk=_izGiris[n.stok_kodu];
+        if(gk&&gk.giris) qc.append(el('span',{class:'pill gray',style:'cursor:pointer;font-size:9px;padding:1px 6px',title:'Giriş kalite kayıtlarına git',onclick:e=>{e.stopPropagation();gotoGirisKalite(n);}},'📥 giriş kalite'));
+        else qc.append(el('span',{style:'color:var(--muted);font-size:10px'},(gk&&gk.plan)?'giriş kalitesi yok':'—'));
+      } else qc.append(el('span',{style:'color:var(--muted);font-size:10px'},'—'));
+      tr.append(qc);
+      const mb=el('td',{style:TD+';min-width:150px'});
+      if(n.tur==='uretim'){ const ml=massLine(n,bp,0); mb.append(ml||el('span',{style:'color:var(--muted);font-size:10px'},'—')); }
+      else if(n.tur==='hammadde'){ mb.append(el('span',{style:'font-size:11px;color:var(--muted)'}, n.agirlik_kg!=null?('⚖️ '+commaFmt(n.agirlik_kg)+' kg'):'—')); }
+      else mb.append(el('span',{style:'color:var(--muted);font-size:10px'},'—'));
+      tr.append(mb);
+      body.append(tr);
+      (bp[n.node_no]||[]).forEach(c=>walk(c,depth+1));
+    };
+    roots.forEach(r=>walk(r,0));
+    tb.append(body); wrap.append(tb); return wrap;
+  }
   async function loadTrace(key, irs, s, keepScroll){
     const _prevScroll = keepScroll ? (((out.querySelector('.iz-dossier'))||{}).scrollTop||0) : null;   // Kaydet sonrası: aynı yerde/kapalı kal
     _izKeep={...(_izKeep||{}), key, irs, s};   // sekme değişince geri yüklensin
@@ -3677,6 +3717,7 @@ async function renderIzleme(root){
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'},
       el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''}`})),
       el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;align-items:center'},
+        el('button',{class:'btn sm sec',style:'flex:0;white-space:nowrap',title:'Görünüm: kart (hikâye) ↔ tablo (düz veri). Tercih kaydedilir.',onclick:()=>{ IZ_VIEW=(IZ_VIEW==='tablo')?'kart':'tablo'; localStorage.setItem('iz_view',IZ_VIEW); loadTrace(key,irs,s); }}, IZ_VIEW==='tablo'?'🗂 Kart görünümü':'🧾 Tablo görünümü'),
         el('div',{class:'autozone'},
           el('button',{class:'autozone-handle',title:'Kilit · iç işlemler (admin)',onclick:e=>{e.stopPropagation();toggleAutozone(e.currentTarget);}},'⚙'),
           el('div',{class:'auto-menu'},
@@ -3689,7 +3730,8 @@ async function renderIzleme(root){
           ))
       )));
     const dossier=el('div',{class:'iz-dossier',style:'margin-top:10px;display:flex;flex-direction:column;gap:10px;overflow:auto;max-height:72vh;padding:2px'});
-    roots.forEach(r=>{ if(r.tur==='sevk')dossier.append(dossierSevk(r,byParent)); else dossier.append(dossierProduction(r,byParent,false)); });
+    if(IZ_VIEW==='tablo'){ dossier.append(dossierTable(roots,byParent)); }
+    else { roots.forEach(r=>{ if(r.tur==='sevk')dossier.append(dossierSevk(r,byParent)); else dossier.append(dossierProduction(r,byParent,false)); }); }
     card.append(dossier); out.append(card);
     if(_prevScroll!=null){ try{ dossier.scrollTop=_prevScroll; }catch(e){} }   // Kaydet sonrası aynı konumda kal
     out.append(el('div',{style:'color:var(--muted);font-size:11px;margin:8px 4px',html:'Sevkten geriye okunur: <b>ne sevk edildi → nasıl üretildi (kalite kapıları) → neyden yapıldı</b>. <b style="color:#15803d">🛡 Kalite kapıları</b> = bu sevkin üretiminin kontrol edilip onaylandığının kanıtı (tıkla → kayıtlar). <b>⚖️ Kütle denkliği</b> hesabı + her malzemenin <b>kullanılan miktarı</b> ve <b>ⓘ LeanSys sütunları</b> tıkla-aç. <b style="color:#b45309">◇</b> = LeanSys’te kayıt yok (türetilebilir).'}));
