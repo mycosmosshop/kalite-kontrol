@@ -3512,6 +3512,14 @@ async function renderIzleme(root){
   }
   function dossierProduction(n,bp,nested){
     const card=el('div',{style:DCARD+(nested?';border-left:3px solid var(--accent)':'')});
+    // İzdeki operasyonları (op üretimleri) Üretim sekmesinde kendi liste/satır görünümünde aç → bu ürünün stok kodu + op tarih penceresine filtrele
+    const goProdList=()=>{ const qd=_qcMap[n.node_no];
+      const ds=(qd&&qd.opProdDate)?Object.values(qd.opProdDate).filter(Boolean).map(d=>String(d).slice(0,10)).sort():[];
+      let start='',end='';
+      if(ds.length){ start=ds[0]; end=ds[ds.length-1]; }
+      else if(n.tarih){ const w=(s,k)=>{const dt=new Date(s);dt.setDate(dt.getDate()+k);return dt.toISOString().slice(0,10);}; const d=String(n.tarih).slice(0,10); start=w(d,-3); end=w(d,3); }
+      URETIM_FILT={start, end, stock:(n.stok_kodu||''), group:'', machine:''}; switchTab('uretimler');
+    };
     card.append(el('div',{style:'display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px'},
       el('div',{style:'min-width:0'},
         el('div',{style:DLAB}, nested?'ÜRETİM — kendi imalatımız':'2 · ÜRETİM PARTİSİ — nasıl üretildi'),
@@ -3519,7 +3527,8 @@ async function renderIzleme(root){
         el('div',{style:'font-size:11px;color:var(--muted);margin-top:1px'}, [n.work_order?('İş emri '+n.work_order):(n.isemri?('İş emri '+n.isemri):''), (n.siparis&&n.siparis!=='/')?('Sipariş '+n.siparis):'', n.musteri_sip?('Müş.Sip '+n.musteri_sip):'', n.makine||'', n.tarih?fmtDate(n.tarih):''].filter(Boolean).join(' · '))
       ),
       el('div',{style:'text-align:right;flex:0 0 auto'},
-        el('div',{style:'font-size:14px;font-weight:600',html:'çıktı '+(n.miktar!=null?commaFmt(n.miktar):'')+' <span style="font-size:10px;color:var(--muted)">'+esc(n.birim||'')+'</span>'})
+        el('div',{style:'font-size:14px;font-weight:600',html:'çıktı '+(n.miktar!=null?commaFmt(n.miktar):'')+' <span style="font-size:10px;color:var(--muted)">'+esc(n.birim||'')+'</span>'}),
+        el('button',{class:'btn sm sec',style:'margin-top:5px;font-size:10px;padding:2px 8px;white-space:nowrap',title:'Bu ürünün operasyonlarını (op üretimleri) Üretim sekmesinde liste/satır görünümünde aç — stok kodu + op tarihlerine filtreli',onclick:e=>{e.stopPropagation();goProdList();}},'📋 Üretim listesinde gör')
       )
     ));
     const gates=opLine(n,0); const qd=_qcMap[n.node_no];
