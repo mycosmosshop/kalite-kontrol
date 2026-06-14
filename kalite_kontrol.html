@@ -3246,6 +3246,13 @@ async function renderIzleme(root){
         (gp||[]).forEach(it=>{ if(it.active===false)return; const cur=_izGiris[it.stock_code]||{plan:false,giris:false}; cur.plan=true; if(it.giris_kalite===true)cur.giris=true; _izGiris[it.stock_code]=cur; });
       }
       matCodes.forEach(c=>{ if(!_izGiris[c])_izGiris[c]={plan:false,giris:false}; });
+      // GİRİŞ KALİTE PLANI OLMAYAN malzemeler (keçe hammaddeleri vb.) için LeanSys'ten plan çek → "giriş kalite" pili diğer hammaddeler gibi gelsin. Bir kez dene (_izPlanTried).
+      if(can('plan')||IZ_ADMIN){
+        const eksikMat=matCodes.filter(c=>!(_izGiris[c]&&_izGiris[c].plan) && !_izPlanTried.has(c)).slice(0,60);
+        for(const c of eksikMat){ _izPlanTried.add(c); try{ await ensurePlan(c); }catch(e){} }
+        if(eksikMat.length){ for(let i=0;i<eksikMat.length;i+=400){ const chunk=eksikMat.slice(i,i+400); const {data:gp2}=await sb.from('control_plan_items').select('stock_code,giris_kalite,active').in('stock_code',chunk);
+          (gp2||[]).forEach(it=>{ if(it.active===false)return; const cur=_izGiris[it.stock_code]||{plan:false,giris:false}; cur.plan=true; if(it.giris_kalite===true)cur.giris=true; _izGiris[it.stock_code]=cur; }); } }
+      }
     }catch(e){}
   }
   // === TABLO render yardımcıları ===
@@ -3807,7 +3814,7 @@ async function renderIzleme(root){
     const urun=(_izKeep&&_izKeep.urun)||(key.split(':')[1]||'');
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'},
-      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b17</span>`})),
+      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b18</span>`})),
       el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;align-items:center'},
         el('button',{class:'btn sm sec',style:'flex:0;white-space:nowrap',title:'Görünüm: kart (hikâye) ↔ tablo (düz veri). Tercih kaydedilir.',onclick:()=>{ IZ_VIEW=(IZ_VIEW==='tablo')?'kart':'tablo'; localStorage.setItem('iz_view',IZ_VIEW); loadTrace(key,irs,s); }}, IZ_VIEW==='tablo'?'🗂 Kart görünümü':'🧾 Tablo görünümü'),
         el('div',{class:'autozone'},
