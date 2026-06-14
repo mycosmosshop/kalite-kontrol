@@ -3171,11 +3171,33 @@ async function renderIzleme(root){
         let foundAny=false;
         // SEVKE YETECEK KADAR: gate'te op başına temsilî sayı göster (1 seri başı / en çok 3 proses / 1 son). Gerçek kayıtlar SİLİNMEZ; yalnız gösterim kırpılır → aynı op her izde aynı görünür, fazla sayı çekilmez.
         const capRec=r=>({seri_basi:Math.min(r&&r.seri_basi||0,1), proses:Math.min(r&&r.proses||0,3), son:Math.min(r&&r.son||0,1)});
-        Object.keys(byOp).forEach(opK=>{ const op=Number(opK); const p=pick(byOp[opK]); if(!p)return; foundAny=true; if(p.mac)opMachine[op]=p.mac; opProdId[op]=p.id; opProdIds[op]=[p.id]; opProdDate[op]= p.syn ? (nodeDate||p.d) : p.d; const r=recByPid[p.id]; if(r)realByOp[op]=capRec(r); });
-        // Tarihler GERÇEK kalsın (üretim listesiyle BİREBİR uysun) — yalnız sevk tarihini AŞAN bir op varsa sevke çek.
-        //   (Eski "Op1≤Op2≤…≤Op4 sıralı zorla" KALDIRILDI: gerçek üretim tarihlerini bozup listeyle uyumsuzluk yaratıyordu.)
-        { Object.keys(opProdDate).forEach(op=>{ const d=opProdDate[op]; const dMs=d?new Date(d).getTime():null;
-            if(ref&&dMs&&dMs>ref){ opProdDate[op]=new Date(ref).toISOString().slice(0,10); } }); }
+        // === SEVKTEN GERİYE ZİNCİR: op'lar hem SIRALI hem GERÇEK tarihli seçilsin ===
+        //   Son op (ambalaj) = sevke en yakın (≤sevk) gerçek üretim. Her ÖNCEKİ op = bir SONRAKİ op tarihinden
+        //   SONRA OLMAYAN EN GEÇ (sevke en yakın) gerçek üretim. Böylece tarihler üretim listesiyle uyar ve doğal sıralı olur;
+        //   "sevke yakın üretim" varsa o seçilir. ÇAPA iş emri ve gerçek kayıt tercih edilir.
+        const _pickUpto=(arr,upMs)=>{ if(!arr||!arr.length)return null; let base=arr.filter(p=>!p.syn); if(!base.length)base=arr;
+          const within=base.filter(p=>{const t=_ms(p.d); return t!=null && (upMs==null||t<=upMs);});
+          const pool=within.length?within:base;            // üst sınırı sağlayan yoksa yine de gerçek üretimi al (boş bırakma)
+          const tgt=(upMs!=null?upMs:ref);
+          const near=set=>{ if(!set.length)return null; if(tgt==null)return set[0]; return set.slice().sort((a,b)=>Math.abs(_ms(a.d)-tgt)-Math.abs(_ms(b.d)-tgt))[0]; };
+          const inA=pool.filter(p=>anchorWo&&p.wo===anchorWo);   // ÇAPA iş emri önce
+          return near(inA.length?inA:pool); };
+        const _opKeys=Object.keys(byOp).map(Number).sort((a,b)=>a-b);
+        let _upMs=ref;   // üst sınır: başta sevk tarihi; her seçimde bir önceki op'a daralır
+        for(let _i=_opKeys.length-1;_i>=0;_i--){ const op=_opKeys[_i];
+          const p=_pickUpto(byOp[op],_upMs); if(!p)continue; foundAny=true;
+          if(p.mac)opMachine[op]=p.mac; opProdId[op]=p.id; opProdIds[op]=[p.id];
+          opProdDate[op]= p.syn ? (nodeDate||p.d) : p.d;
+          const r=recByPid[p.id]; if(r)realByOp[op]=capRec(r);
+          const dMs=opProdDate[op]?new Date(opProdDate[op]).getTime():null; if(dMs!=null)_upMs=dMs;
+        }
+        // SIRALAMA GÜVENCESİ — KULLANICI KURALI: sonraki op tarihi öncekinden ÖNCE OLAMAZ (Op1≤Op2≤…≤Op4), hiçbiri sevki geçemez.
+        //   Zincir gerçek veriyle sağlayamadıysa (kayıtların kendisi çelişkiliyse) son çare burada düzeltilir. BU KURAL ASLA İPTAL EDİLMEZ.
+        { const opNums=Object.keys(opProdDate).map(Number).sort((a,b)=>a-b); let prevMs=null;
+          opNums.forEach(op=>{ let d=opProdDate[op]; let dMs=d?new Date(d).getTime():null;
+            if(ref&&dMs&&dMs>ref){dMs=ref;d=new Date(ref).toISOString().slice(0,10);}
+            if(prevMs&&dMs&&dMs<prevMs){dMs=prevMs;d=new Date(prevMs).toISOString().slice(0,10);}
+            opProdDate[op]=d; if(dMs)prevMs=dMs; }); }
         const plan=planOps[n.stok_kodu]||{};
         const planKeys=Object.keys(plan).map(Number);
         const planHasRealOps=planKeys.some(o=>o>0);
