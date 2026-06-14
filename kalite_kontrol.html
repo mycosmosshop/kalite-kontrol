@@ -3519,6 +3519,7 @@ async function renderIzleme(root){
     if(!res.ok){ out.innerHTML=''; toast('İzleme hatası: '+esc(res.error||'?'),'err'); return; }
     // İLK türetmede otomatik KİLİTLE (yeniden çekildikçe değişmesin); kilidi açık yeniden çekmede kilitsiz kalır
     if(!varMi){ try{ await sb.from('izleme_node').update({kilitli:true}).eq('trace_key',key); }catch(e){} }
+    _izAutoTuret.delete(key);   // yeniden izlendi → otomatik türet TEKRAR çalışsın (yeni düğümler, ör. keçe artık ÜRETİM, op'ları türetilsin)
     loadTrace(key, irs, s);
   }
   // EKSİK KONTROLLERİ TÜRET: kontrol planına göre seri/proses/son + hammadde giriş kalite (yalnız Supabase'e)
@@ -3802,7 +3803,7 @@ async function renderIzleme(root){
     const urun=(_izKeep&&_izKeep.urun)||(key.split(':')[1]||'');
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'},
-      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b14</span>`})),
+      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b15</span>`})),
       el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;align-items:center'},
         el('button',{class:'btn sm sec',style:'flex:0;white-space:nowrap',title:'Görünüm: kart (hikâye) ↔ tablo (düz veri). Tercih kaydedilir.',onclick:()=>{ IZ_VIEW=(IZ_VIEW==='tablo')?'kart':'tablo'; localStorage.setItem('iz_view',IZ_VIEW); loadTrace(key,irs,s); }}, IZ_VIEW==='tablo'?'🗂 Kart görünümü':'🧾 Tablo görünümü'),
         el('div',{class:'autozone'},
