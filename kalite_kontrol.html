@@ -3566,16 +3566,9 @@ async function renderIzleme(root){
         if(sp&&sp[0]){ await sb.from('control_records').delete().eq('production_id',sp[0].id).eq('note','izleme-türet'); try{ const r=await turetEksikQC({prodId:sp[0].id, baseDate:(sevkD||n.tarih)}); total+=(r.made||0); if(r.made)sentetikOp++; }catch(e){} }
       }
     }
-    // GİRİŞ KALİTE: iz giriş düğümünün GERÇEK LeanSys verisinden (mal kabul tablosu şart değil); yalnız giriş kalite PLANI olan hammadde
-    for(const n of nodes.filter(x=>x.tur==='giris'&&x.stok_kodu)){
-      const parts=(n.irsaliye||'').split('/'); const seri=(parts[0]||'').trim(); const sira=(parts[1]||'').trim();
-      let mkRec=null;
-      if(seri){ let mq=sb.from('mal_kabul').select('rec_id').eq('stok_kodu',n.stok_kodu).eq('seri',seri); if(sira){ const sn=Number(sira); mq=mq.eq('sira',isNaN(sn)?sira:sn); } const {data:mks}=await mq.limit(1); if(mks&&mks.length)mkRec=mks[0].rec_id; }
-      const mk={ rec_id:mkRec, stok_kodu:n.stok_kodu, stok_adi:n.stok_adi, cari_adi:n.tedarikci, seri, sira, miktar:n.miktar, birim:n.birim, tarih:(n.tarih||'').slice(0,10) };
-      await ensurePlan(n.stok_kodu);   // hammadde kontrol planı yoksa LeanSys'ten çek
-      try{ const r=await turetEksikQC({mk}); if(r.made){ total+=r.made; giris+=r.made; } else if(r.reason==='giriş kalite planı yok'){ plansiz++; } }catch(e){}
-    }
-    const _msg=total+' kontrol türetildi ('+giris+' giriş kalite) (Supabase)'+(cekilen?(' · '+cekilen+' üretim LeanSys’ten çekildi'):'')+(sentetikOp?(' · '+sentetikOp+' eksik op sanal türetildi'):'')+(atlanan?(' · '+atlanan+' üretim çekilemedi'):'')+(plansiz?(' · '+plansiz+' giriş kalite planı yok'):'');
+    // ⛔ HAMMADDE GİRİŞ KONTROL / MAL KABUL / SEVK = YALNIZ GERÇEK VERİ — TÜRETİLMEZ (kullanıcı kuralı).
+    //    Burada SADECE üretim op'ları (SB/proses/son) ve eksik op'lar türetilir. Giriş kalitesi gerçek kayıt yoksa ◇ kalır (otomatik doldurulmaz).
+    const _msg=total+' üretim kontrolü türetildi (Supabase)'+(cekilen?(' · '+cekilen+' üretim LeanSys’ten çekildi'):'')+(sentetikOp?(' · '+sentetikOp+' eksik op sanal türetildi'):'')+(planFixed?(' · '+planFixed+' plan makinesi düzeltildi'):'')+(atlanan?(' · '+atlanan+' üretim çekilemedi'):'');
     if(!auto) toast(_msg, total?'ok':'err');
     else if(total||sentetikOp||cekilen||planFixed) toast('🔄 İz otomatik tamamlandı'+(total?(' · '+total+' kontrol'):'')+(sentetikOp?(' · '+sentetikOp+' op türetildi'):'')+(planFixed?(' · '+planFixed+' plan makinesi düzeltildi'):''),'ok');
     // auto: yalnız bir şey yazıldıysa yeniden yükle (gereksiz render etme); manuel: her zaman
@@ -3600,6 +3593,7 @@ async function renderIzleme(root){
       )
     ));
     if(n.aciklama)head.append(el('div',{style:'font-size:11px;color:var(--muted);margin-top:3px'},'Açıklama: '+esc((n.aciklama||'').slice(0,80))));
+    { const _adr=(n.ek&&n.ek.musteri_adres)||''; if(_adr)head.append(el('div',{style:'font-size:11px;color:var(--muted);margin-top:4px'},'📍 Sevk adresi: '+esc(_adr))); }
     { const lh=_shippedLotsHtml(n,bp); if(lh)head.append(el('div',{style:'font-size:11px;color:#15803d;margin-top:6px;line-height:1.55;border-top:1px dashed var(--line);padding-top:6px',html:lh})); }
     head.append(DSRC('LeanSys RAP005_SEVKIYAT_VW'));
     wrap.append(head);
@@ -3795,7 +3789,7 @@ async function renderIzleme(root){
     const urun=(_izKeep&&_izKeep.urun)||(key.split(':')[1]||'');
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'},
-      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b10</span>`})),
+      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b11</span>`})),
       el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;align-items:center'},
         el('button',{class:'btn sm sec',style:'flex:0;white-space:nowrap',title:'Görünüm: kart (hikâye) ↔ tablo (düz veri). Tercih kaydedilir.',onclick:()=>{ IZ_VIEW=(IZ_VIEW==='tablo')?'kart':'tablo'; localStorage.setItem('iz_view',IZ_VIEW); loadTrace(key,irs,s); }}, IZ_VIEW==='tablo'?'🗂 Kart görünümü':'🧾 Tablo görünümü'),
         el('div',{class:'autozone'},
@@ -3898,6 +3892,7 @@ async function renderIzleme(root){
       if(uret!=null&&sevkM!=null){ txt='📦 üretilen parti <b>'+commaFmt(uret)+'</b> − bu sevk <b>'+commaFmt(sevkM)+'</b> = <b>kalan '+commaFmt(uret-sevkM)+'</b>'; }
       else if(n.stok_kalan!=null){ const neg=Number(n.stok_kalan)<0; txt='📦 LeanSys stok bakiyesi: <b>'+commaFmt(n.stok_kalan)+'</b>'+(neg?' ⚠ (üretim girişi transfer işlenmiş — güvenilmez)':''); }
       if(txt) wrap.append(el('div',{style:'font-size:10.5px;color:var(--muted);padding:1px 0 3px '+(depth*15+22)+'px',html:txt}));
+      { const _adr=(n.ek&&n.ek.musteri_adres)||''; if(_adr) wrap.append(el('div',{style:'font-size:10.5px;color:var(--muted);padding:0 0 1px '+(depth*15+22)+'px'},'📍 Sevk adresi: '+esc(_adr))); }
       const lotsH=_shippedLotsHtml(n,byParent); if(lotsH) wrap.append(el('div',{style:'font-size:10.5px;color:#15803d;padding:1px 0 3px '+(depth*15+22)+'px',html:lotsH}));
     }
     const cd=colsDetail(n,depth); if(cd)wrap.append(cd);
