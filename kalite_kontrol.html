@@ -3582,9 +3582,17 @@ async function renderIzleme(root){
         if(sp&&sp[0]){ await sb.from('control_records').delete().eq('production_id',sp[0].id).eq('note','izleme-türet'); try{ const r=await turetEksikQC({prodId:sp[0].id, baseDate:(sevkD||n.tarih)}); total+=(r.made||0); if(r.made)sentetikOp++; }catch(e){} }
       }
     }
-    // ⛔ HAMMADDE GİRİŞ KONTROL / MAL KABUL / SEVK = YALNIZ GERÇEK VERİ — TÜRETİLMEZ (kullanıcı kuralı).
-    //    Burada SADECE üretim op'ları (SB/proses/son) ve eksik op'lar türetilir. Giriş kalitesi gerçek kayıt yoksa ◇ kalır (otomatik doldurulmaz).
-    const _msg=total+' üretim kontrolü türetildi (Supabase)'+(cekilen?(' · '+cekilen+' üretim LeanSys’ten çekildi'):'')+(sentetikOp?(' · '+sentetikOp+' eksik op sanal türetildi'):'')+(planFixed?(' · '+planFixed+' plan makinesi düzeltildi'):'')+(atlanan?(' · '+atlanan+' üretim çekilemedi'):'');
+    // GİRİŞ KALİTE: kontrol planı OLAN hammaddelerde giriş kontrol kaydı yoksa plana göre TÜRET (kullanıcı: "kontrol planı varsa türetsene").
+    //    YALNIZ Supabase control_records'a (note='izleme-türet'); LeanSys'e ASLA yazılmaz. Planı olmayan malzeme türetilmez (◇ yok, "kontrol planı yok").
+    for(const n of nodes.filter(x=>x.tur==='giris'&&x.stok_kodu)){
+      const parts=(n.irsaliye||'').split('/'); const seri=(parts[0]||'').trim(); const sira=(parts[1]||'').trim();
+      let mkRec=null;
+      if(seri){ let mq=sb.from('mal_kabul').select('rec_id').eq('stok_kodu',n.stok_kodu).eq('seri',seri); if(sira){ const sn=Number(sira); mq=mq.eq('sira',isNaN(sn)?sira:sn); } const {data:mks}=await mq.limit(1); if(mks&&mks.length)mkRec=mks[0].rec_id; }
+      const mk={ rec_id:mkRec, stok_kodu:n.stok_kodu, stok_adi:n.stok_adi, cari_adi:n.tedarikci, seri, sira, miktar:n.miktar, birim:n.birim, tarih:(n.tarih||'').slice(0,10) };
+      await ensurePlan(n.stok_kodu);   // hammadde kontrol planı yoksa LeanSys'ten çek
+      try{ const r=await turetEksikQC({mk}); if(r.made){ total+=r.made; giris+=r.made; } else if(r.reason==='giriş kalite planı yok'){ plansiz++; } }catch(e){}
+    }
+    const _msg=total+' kontrol türetildi'+(giris?(' ('+giris+' giriş kalite)'):'')+' (Supabase)'+(cekilen?(' · '+cekilen+' üretim LeanSys’ten çekildi'):'')+(sentetikOp?(' · '+sentetikOp+' eksik op sanal türetildi'):'')+(planFixed?(' · '+planFixed+' plan makinesi düzeltildi'):'')+(atlanan?(' · '+atlanan+' üretim çekilemedi'):'')+(plansiz?(' · '+plansiz+' giriş kalite planı yok'):'');
     if(!auto) toast(_msg, total?'ok':'err');
     else if(total||sentetikOp||cekilen||planFixed) toast('🔄 İz otomatik tamamlandı'+(total?(' · '+total+' kontrol'):'')+(sentetikOp?(' · '+sentetikOp+' op türetildi'):'')+(planFixed?(' · '+planFixed+' plan makinesi düzeltildi'):''),'ok');
     // auto: yalnız bir şey yazıldıysa yeniden yükle (gereksiz render etme); manuel: her zaman
@@ -3822,7 +3830,7 @@ async function renderIzleme(root){
     const urun=(_izKeep&&_izKeep.urun)||(key.split(':')[1]||'');
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'},
-      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b21</span>`})),
+      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b22</span>`})),
       el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;align-items:center'},
         el('button',{class:'btn sm sec',style:'flex:0;white-space:nowrap',title:'Görünüm: kart (hikâye) ↔ tablo (düz veri). Tercih kaydedilir.',onclick:()=>{ IZ_VIEW=(IZ_VIEW==='tablo')?'kart':'tablo'; localStorage.setItem('iz_view',IZ_VIEW); loadTrace(key,irs,s); }}, IZ_VIEW==='tablo'?'🗂 Kart görünümü':'🧾 Tablo görünümü'),
         el('div',{class:'autozone'},
@@ -4501,7 +4509,7 @@ async function renderKayitlar(){
         const rows=recs.map(r=>`<tr style="border-bottom:1px solid var(--line)"><td style="padding:4px 8px;white-space:nowrap">${esc(r.tarih||'')}</td><td style="padding:4px 8px;white-space:nowrap">${esc(r.irsaliye||'')}</td><td style="padding:4px 8px;text-align:right;white-space:nowrap">${(r.miktar!=null&&r.miktar!=='')?commaFmt(r.miktar):''} ${esc(r.birim||'')}</td><td style="padding:4px 8px">${r.durum?('<b style="color:#15803d">'+esc(r.durum)+'</b>'):'<span style="color:var(--muted)">—</span>'}</td></tr>`).join('');
         pbody.innerHTML='<div style="font-size:11px;color:var(--muted);margin-bottom:4px">LeanSys gerçek giriş kalite / mal kabul kayıtları ('+recs.length+')</div><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--panel2);text-align:left"><th style="padding:4px 8px">Tarih</th><th style="padding:4px 8px">İrsaliye</th><th style="padding:4px 8px;text-align:right">Miktar</th><th style="padding:4px 8px">Sonuç/Durum</th></tr></thead><tbody>'+rows+'</tbody></table>';
       } else {
-        pbody.innerHTML = planHas ? '<span style="color:var(--muted)">Kontrol planı var, ama bu malzeme için LeanSys giriş kontrol kaydı yok.</span>' : '<span style="color:#b45309">Bu malzemenin <b>kontrol planı yok</b> — giriş kontrolüne tabi değil.</span>';
+        pbody.innerHTML = planHas ? '<span style="color:var(--muted)">LeanSys’te gerçek giriş kontrol kaydı yok — <b>kontrol planı var</b>, giriş kontrolü plana göre <b style="color:#b45309">türetildi (◇)</b>. Aşağıdaki listede görünür. (İz açıkken otomatik türetilir.)</span>' : '<span style="color:#b45309">Bu malzemenin <b>kontrol planı yok</b> — giriş kontrolüne tabi değil.</span>';
       }
     })();
   }
