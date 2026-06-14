@@ -3742,12 +3742,16 @@ async function renderIzleme(root){
     const body=el('tbody');
     const TD='padding:5px 9px;border-bottom:1px solid var(--line);vertical-align:top';
     const walk=(n,depth)=>{
+      // KARIŞIKLIK GİDER: içeride üretilen malzeme HAMMADDE X → altında ÜRETİM X (aynı kod) ise → TEK satır göster (ÜRETİM).
+      //   HAMMADDE tekrarını atla, tüketilen miktarı ÜRETİM'e taşı → her kod BİR KEZ, malzemeleri DOĞRUDAN altında (ürün ağacı gibi).
+      if(n.tur==='hammadde'){ const ch=bp[n.node_no]||[]; const su=ch.find(k=>k.tur==='uretim'&&String(k.stok_kodu)===String(n.stok_kodu));
+        if(su){ if(su._consumed==null){ su._consumed=n.miktar; su._consumedBirim=n.birim; } walk(su,depth); return; } }
       const tr=el('tr',{style:(depth?(depth%2?'background:rgba(125,125,125,.03)':''):'background:rgba(37,99,235,.05)')});
       const ic=IZ_ICON[n.tur]||'•'; const T=!!n.tahmini;
       tr.append(el('td',{style:TD+';white-space:nowrap'}, el('span',{style:'padding-left:'+(depth*16)+'px;color:var(--muted);font-size:10px;font-weight:700'}, ic+' '+(IZ_TUR[n.tur]||n.tur)), T?el('span',{style:'margin-left:4px;color:#b45309;border:1px dashed #b45309;border-radius:3px;padding:0 3px;font-size:9px',title:'LeanSys’te kayıt yok — BOM’dan türetildi'},'◇'):''));
       tr.append(el('td',{style:TD+';font-weight:600;white-space:nowrap'}, n.stok_kodu||''));
       tr.append(el('td',{style:TD+';color:var(--muted)',title:n.stok_adi||''}, (n.stok_adi||'').slice(0,44)));
-      tr.append(el('td',{style:TD+';white-space:nowrap;text-align:right'}, (n.miktar!=null?commaFmt(n.miktar):'')+(n.birim?(' '+esc(n.birim)):'')));
+      tr.append(el('td',{style:TD+';white-space:nowrap;text-align:right'}, n._consumed!=null ? ('kullanılan '+commaFmt(n._consumed)+(n._consumedBirim?(' '+esc(n._consumedBirim)):'')) : ((n.miktar!=null?commaFmt(n.miktar):'')+(n.birim?(' '+esc(n.birim)):''))));
       tr.append(el('td',{style:TD+';white-space:nowrap'}, n.tarih?fmtDate(n.tarih):''));
       let kaynak='';
       if(n.tur==='sevk')kaynak=(n.musteri?('🏭 '+(n.musteri||'').slice(0,28)):'')+(n.irsaliye?(' · irs '+n.irsaliye):'');
@@ -3803,7 +3807,7 @@ async function renderIzleme(root){
     const urun=(_izKeep&&_izKeep.urun)||(key.split(':')[1]||'');
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'},
-      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b16</span>`})),
+      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b17</span>`})),
       el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;align-items:center'},
         el('button',{class:'btn sm sec',style:'flex:0;white-space:nowrap',title:'Görünüm: kart (hikâye) ↔ tablo (düz veri). Tercih kaydedilir.',onclick:()=>{ IZ_VIEW=(IZ_VIEW==='tablo')?'kart':'tablo'; localStorage.setItem('iz_view',IZ_VIEW); loadTrace(key,irs,s); }}, IZ_VIEW==='tablo'?'🗂 Kart görünümü':'🧾 Tablo görünümü'),
         el('div',{class:'autozone'},
