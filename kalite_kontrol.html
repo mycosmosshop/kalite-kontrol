@@ -3544,9 +3544,13 @@ async function renderIzleme(root){
       const planOpM={}; (pli||[]).forEach(it=>{ const op=(it.op_no==null?0:Number(it.op_no)); if(op<=0)return; const o=planOpM[op]||(planOpM[op]={proc:false,fin:false,eq:''}); if(it.process_control)o.proc=true; if(it.final_control)o.fin=true; if(it.production_equipment&&!o.eq)o.eq=it.production_equipment; });
       const realOps=new Set(picks.map(x=>x.op));
       for(const op in planOpM){ const opN=Number(op); if(realOps.has(opN))continue; const pe=planOpM[op]; if(!pe.proc&&!pe.fin)continue;
+        // SENTETİK op makinesi: operasyon kartı ekipmanı (pe.eq, ör. KP4) DEĞİL → bu stok+op'ta GERÇEKTEN kullanılmış makineyi al (ör. VARGEL 2).
+        //   (kullanıcı: "op2'yi KP4 yerine VARGEL 2 al" — rota kartı planlı makineyi yazar ama üretim başka makinede yapılmış olabilir)
+        let opMac=pe.eq;
+        try{ const {data:rmp}=await sb.from('productions').select('machine_name').eq('stock_code',n.stok_kodu).eq('op_no',opN).neq('sentetik',true).not('machine_name','is',null).order('prod_date',{ascending:false}).limit(1); if(rmp&&rmp[0]&&rmp[0].machine_name)opMac=rmp[0].machine_name; }catch(e){}
         const bd=(sevkD||n.tarih)?new Date(sevkD||n.tarih):new Date(); const st=new Date(bd.getFullYear(),bd.getMonth(),bd.getDate(),8,0,0).toISOString(); const en=new Date(new Date(st).getTime()+6*3600000).toISOString();
         const fp='SENTETIK|'+(n.work_order||'')+'|'+n.stok_kodu+'|'+opN;
-        const {data:sp}=await sb.from('productions').upsert({work_order:String(n.work_order||''), stock_code:n.stok_kodu, stock_name:n.stok_adi, op_no:opN, machine_name:(pe.eq||('Op'+opN)), start_time:st, end_time:en, prod_date:((sevkD||n.tarih||'').slice(0,10)||null), quantity:n.miktar, fingerprint:fp, sentetik:true},{onConflict:'fingerprint'}).select();
+        const {data:sp}=await sb.from('productions').upsert({work_order:String(n.work_order||''), stock_code:n.stok_kodu, stock_name:n.stok_adi, op_no:opN, machine_name:(opMac||('Op'+opN)), start_time:st, end_time:en, prod_date:((sevkD||n.tarih||'').slice(0,10)||null), quantity:n.miktar, fingerprint:fp, sentetik:true},{onConflict:'fingerprint'}).select();
         if(sp&&sp[0]){ await sb.from('control_records').delete().eq('production_id',sp[0].id).eq('note','izleme-türet'); try{ const r=await turetEksikQC({prodId:sp[0].id, baseDate:(sevkD||n.tarih)}); total+=(r.made||0); if(r.made)sentetikOp++; }catch(e){} }
       }
     }
@@ -3775,7 +3779,7 @@ async function renderIzleme(root){
     const urun=(_izKeep&&_izKeep.urun)||(key.split(':')[1]||'');
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'},
-      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b4</span>`})),
+      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b5</span>`})),
       el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;align-items:center'},
         el('button',{class:'btn sm sec',style:'flex:0;white-space:nowrap',title:'Görünüm: kart (hikâye) ↔ tablo (düz veri). Tercih kaydedilir.',onclick:()=>{ IZ_VIEW=(IZ_VIEW==='tablo')?'kart':'tablo'; localStorage.setItem('iz_view',IZ_VIEW); loadTrace(key,irs,s); }}, IZ_VIEW==='tablo'?'🗂 Kart görünümü':'🧾 Tablo görünümü'),
         el('div',{class:'autozone'},
