@@ -3183,7 +3183,7 @@ async function renderIzleme(root){
         const planHasRealOps=planKeys.some(o=>o>0);
         let ops;
         if(planHasRealOps){
-          const opNos=[...new Set([...planKeys,...Object.keys(realByOp).map(Number)])].sort((a,b)=>a-b);
+          const opNos=[...new Set([...planKeys,...Object.keys(realByOp).map(Number),...Object.keys(opProdId).map(Number)])].sort((a,b)=>a-b);
           ops=opNos.map(op=>({op_no:op, proc:(plan[op]&&plan[op].proc)||0, fin:(plan[op]&&plan[op].fin)||0, real:realByOp[op]||{seri_basi:0,proses:0,son:0}}));
         } else {
           // plan GENEL (op'a bölünmemiş) → tek gate; bulunan op kayıtlarını TOPLA; tarih/makine = sevke en yakın koşum
