@@ -582,7 +582,7 @@ document.querySelectorAll('nav.tabs button').forEach(b=>b.onclick=async()=>{
 
 // ====================== ÜRETİMLER ======================
 let PRODS=[];
-let URETIM_FILT={start:'',end:'',stock:'',group:'',machine:''};
+let URETIM_FILT={start:'',end:'',stock:'',group:'',machine:'',ids:[]};
 // LeanSys MAKİNE GRUBU (şube) eşlemesi: makine kodu -> grup adı (URETIMRAPORU_VW.MAKINEGRUP_ADI, 155 makine 1:1).
 // productions zaten machine_code içerdiği için grup satır bazında BURADAN türetilir (Supabase kolonu gerekmez).
 // Yeni makine eklenirse buraya bir satır eklenir; bilinmeyen kod -> '' (Tümü dışında "(grupsuz)" olarak görünür).
@@ -617,6 +617,8 @@ const MACHINE_GROUP_MAP = {
 function machineGroupOf(code){ return MACHINE_GROUP_MAP[String(code||'').trim()] || ''; }
 function ufDate(p){ return p.prod_date || (p.start_time?String(p.start_time).slice(0,10):''); }
 function matchesUF(p){
+  const ids=URETIM_FILT.ids||[];
+  if(ids.length) return ids.some(x=>String(x)===String(p.id));   // izlenebilirlikten "Üretim listesinde gör" → YALNIZ bu op üretimleri
   const d=ufDate(p);
   if(URETIM_FILT.stock && p.stock_code!==URETIM_FILT.stock) return false;
   if(URETIM_FILT.group && machineGroupOf(p.machine_code)!==URETIM_FILT.group) return false;
@@ -713,7 +715,7 @@ async function deleteAllProds(){
   const {error:e2}=await sb.from('productions').delete().neq('id',0);
   if(e2){ toast('Üretimler silinemedi: '+esc(e2.message),'err'); return; }
   toast('Tüm üretimler ve kontrol kayıtları silindi.','ok');
-  URETIM_FILT={start:'',end:'',stock:'',group:'',machine:''}; renderUretimler();
+  URETIM_FILT={start:'',end:'',stock:'',group:'',machine:'',ids:[]}; renderUretimler();
 }
 async function deleteSelectedRecs(){
   const ids=[...document.querySelectorAll('#prodBody .prodChk:checked')].map(c=>Number(c.dataset.id));
@@ -1120,9 +1122,13 @@ async function renderUretimler(){
   const root=$('#tab-uretimler');
   root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
   // Filtre yoksa: en son 500 (hız). Filtre (tarih/stok) varsa: veritabanından eşleşen TÜM kayıtları sayfa sayfa çek.
-  const _f=URETIM_FILT, _active=!!(_f.start||_f.end||_f.stock);
+  const _f=URETIM_FILT, _ids=_f.ids||[], _active=!!(_ids.length||_f.start||_f.end||_f.stock);
   let data=[], error=null;
-  if(!_active){
+  if(_ids.length){
+    // izlenebilirlikten "Üretim listesinde gör" → YALNIZ bu op üretim ID'leri (sentetik dahil — gate'te ne gösterildiyse o)
+    for(let i=0;i<_ids.length;i+=200){ const chunk=_ids.slice(i,i+200); if(!chunk.length)break;
+      const r=await sb.from('productions').select('*').in('id',chunk); if(r.error){error=r.error;break;} data=data.concat(r.data||[]); }
+  } else if(!_active){
     const r=await sb.from('productions').select('*').neq('sentetik',true).order('start_time',{ascending:false}).limit(500);
     data=r.data||[]; error=r.error;
   } else {
@@ -1155,8 +1161,9 @@ async function renderUretimler(){
   const groupSet=[...new Set(PRODS.map(p=>machineGroupOf(p.machine_code)).filter(Boolean))].sort();
   const machineSet=[...new Map(PRODS.filter(p=>p.machine_code).map(p=>[p.machine_code,p.machine_name||''])).entries()].sort((a,b)=>String(a[1]||a[0]).localeCompare(String(b[1]||b[0]),'tr'));
   const filtered=PRODS.filter(matchesUF);
-  const aktifFiltre=URETIM_FILT.start||URETIM_FILT.end||URETIM_FILT.stock||URETIM_FILT.group||URETIM_FILT.machine;
+  const aktifFiltre=(URETIM_FILT.ids&&URETIM_FILT.ids.length)||URETIM_FILT.start||URETIM_FILT.end||URETIM_FILT.stock||URETIM_FILT.group||URETIM_FILT.machine;
   const filt=el('div',{class:'card'},
+    (URETIM_FILT.ids&&URETIM_FILT.ids.length)?el('div',{style:'font-size:11.5px;color:#0369a1;background:rgba(3,105,161,.07);border:1px solid #0369a1;border-radius:6px;padding:5px 9px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap'},el('span',{html:'🔗 <b>İzlenebilirlikten:</b> yalnız bu üretimin '+filtered.length+' operasyonu gösteriliyor'}),el('button',{class:'btn sm sec',style:'flex:0;font-size:10px;padding:1px 8px',onclick:()=>{URETIM_FILT={start:'',end:'',stock:'',group:'',machine:'',ids:[]};renderUretimler();}},'✕ tümünü göster')):'',
     el('div',{class:'toolbar'},
       el('div',{class:'stat'},el('b',{id:'uretimCount'},String(filtered.length)+(filtered.length!==PRODS.length?'/'+PRODS.length:'')),el('span',{},'Üretim')),
       el('div',{class:'stat'},el('b',{id:'urunCount'},String(stockSet.length)),el('span',{},'Farklı ürün')),
@@ -1173,7 +1180,7 @@ async function renderUretimler(){
       el('div',{class:'field',style:'flex:0;min-width:200px'},el('label',{class:'lab'},'Makine'),
         (()=>{ const s=el('select',{class:'inp',id:'uretimMakSel',onchange:e=>{URETIM_FILT.machine=e.target.value;renderUretimler();}});
           s.append(el('option',{value:''},'Tümü')); machineSet.forEach(([code,name])=>{const o=el('option',{value:code},(name?name+' ':'')+'('+code+')'); if(code===URETIM_FILT.machine)o.selected=true; s.append(o);}); return s; })()),
-      aktifFiltre?el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{URETIM_FILT={start:'',end:'',stock:'',group:'',machine:''};renderUretimler();}},'Temizle'):'',
+      aktifFiltre?el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{URETIM_FILT={start:'',end:'',stock:'',group:'',machine:'',ids:[]};renderUretimler();}},'Temizle'):'',
       el('div',{class:'grow'}),
       (can('auto')||can('import')||PROFILE.is_admin)?el('div',{class:'autozone'},
         el('button',{class:'autozone-handle',title:'Üretim araçları',onclick:e=>{e.stopPropagation();toggleAutozone(e.currentTarget);}},'▾'),
@@ -3512,13 +3519,20 @@ async function renderIzleme(root){
   }
   function dossierProduction(n,bp,nested){
     const card=el('div',{style:DCARD+(nested?';border-left:3px solid var(--accent)':'')});
-    // İzdeki operasyonları (op üretimleri) Üretim sekmesinde kendi liste/satır görünümünde aç → bu ürünün stok kodu + op tarih penceresine filtrele
+    // İzdeki operasyonları Üretim sekmesinde kendi liste/satır görünümünde aç → YALNIZ bu üretimin op ID'leri (gate'te gösterilenler)
     const goProdList=()=>{ const qd=_qcMap[n.node_no];
-      const ds=(qd&&qd.opProdDate)?Object.values(qd.opProdDate).filter(Boolean).map(d=>String(d).slice(0,10)).sort():[];
-      let start='',end='';
-      if(ds.length){ start=ds[0]; end=ds[ds.length-1]; }
-      else if(n.tarih){ const w=(s,k)=>{const dt=new Date(s);dt.setDate(dt.getDate()+k);return dt.toISOString().slice(0,10);}; const d=String(n.tarih).slice(0,10); start=w(d,-3); end=w(d,3); }
-      URETIM_FILT={start, end, stock:(n.stok_kodu||''), group:'', machine:''}; switchTab('uretimler');
+      let ids=[];
+      if(qd){ if(qd.opProdIds) ids=Object.values(qd.opProdIds).flat(); if(!ids.length && qd.prodIds) ids=qd.prodIds.slice(); }
+      ids=[...new Set(ids.filter(x=>x!=null))];
+      if(ids.length){ URETIM_FILT={start:'',end:'',stock:'',group:'',machine:'',ids}; }
+      else {   // op ID yoksa: stok + op tarih penceresine düş (en azından ilgili üretimler)
+        const ds=(qd&&qd.opProdDate)?Object.values(qd.opProdDate).filter(Boolean).map(d=>String(d).slice(0,10)).sort():[];
+        let start='',end='';
+        if(ds.length){ start=ds[0]; end=ds[ds.length-1]; }
+        else if(n.tarih){ const w=(s,k)=>{const dt=new Date(s);dt.setDate(dt.getDate()+k);return dt.toISOString().slice(0,10);}; const d=String(n.tarih).slice(0,10); start=w(d,-3); end=w(d,3); }
+        URETIM_FILT={start, end, stock:(n.stok_kodu||''), group:'', machine:'', ids:[]};
+      }
+      switchTab('uretimler');
     };
     card.append(el('div',{style:'display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px'},
       el('div',{style:'min-width:0'},
