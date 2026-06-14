@@ -3418,7 +3418,7 @@ async function renderIzleme(root){
           el('td',{},el('button',{class:'btn sm',style:'flex:0;white-space:nowrap',onclick:()=>doTrace(urun,s)},'🔎 İzle'))
         ));
       });
-      tb.append(body); listDiv.innerHTML=''; listDiv.append(el('div',{class:'tbl-wrap'},tb));
+      tb.append(body); listDiv.innerHTML=''; listDiv.append(tb);   // .tbl-wrap KOYMA (kendi overflow'u var → çift kaydırma); listDiv zaten kaydırır
     };
     search.oninput=draw; draw();
     card.append(search,listDiv); sevkBox.append(card);
