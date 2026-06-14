@@ -3063,6 +3063,7 @@ async function renderIzleme(root){
   const out=el('div'); root.append(out);
   let _qcMap={};   // node_no -> {ops:[{op_no,proc,fin,real:{seri_basi,proses,son}}], opened:bool}
   let _izGiris={};   // stok_kodu -> {plan:bool(kontrol planı var mı), giris:bool(planında giriş kalite var mı)} — malzeme giriş kalite gösterimi koşulu
+  const _izPlanTried=new Set();   // bu oturumda otomatik plan çekmeyi denediğimiz stoklar (ara kodlarda plan yok → tekrar deneme); sayfa yenilenince sıfırlanır
   // 📁 KAYITLI İZLER — 💾 Kaydet ile dondurulan (kilitli) izler; tıkla → aç
   async function loadSaved(){
     savedBox.innerHTML='';
@@ -3107,7 +3108,16 @@ async function renderIzleme(root){
         const {data:recs}=await sb.from('control_records').select('production_id,stage').in('production_id',chunk);
         (recs||[]).forEach(r=>{ const o=recByPid[r.production_id]||(recByPid[r.production_id]={seri_basi:0,proses:0,son:0}); if(o[r.stage]!=null)o[r.stage]++; });
       }
-      // 3) kontrol planı maddeleri OP_NO bazlı → her op'un proses/son madde sayısı
+      // 3) OTOMATİK PLAN ÇEK: uygulamada (control_plan_items) planı OLMAYAN üretim stoklarını LeanSys'ten getir → op kapıları kendiliğinden gelsin (kullanıcı elle çekmesin)
+      //    Not: 143.10.088 gibi ARA kodlarda plan olmaz (plan ana kodda) → LeanSys de dönmez, _izPlanTried ile bir daha denenmez (boş gate normal).
+      if(can('plan')||IZ_ADMIN){
+        try{ const {data:havePl}=await sb.from('control_plan_items').select('stock_code').in('stock_code',codes);
+          const haveSet=new Set((havePl||[]).map(x=>x.stock_code));
+          const eksik=codes.filter(c=>!haveSet.has(c) && !_izPlanTried.has(c));
+          for(const c of eksik){ _izPlanTried.add(c); try{ await ensurePlan(c); }catch(e){} }
+        }catch(e){}
+      }
+      // kontrol planı maddeleri OP_NO bazlı → her op'un proses/son madde sayısı
       const {data:items}=await sb.from('control_plan_items').select('stock_code,op_no,process_control,final_control,active').in('stock_code',codes).limit(12000);
       const planOps={};   // stok -> {op_no -> {proc,fin}}
       (items||[]).forEach(it=>{ if(it.active===false)return; const op=(it.op_no==null?0:Number(it.op_no)); const s=planOps[it.stock_code]||(planOps[it.stock_code]={}); const o=s[op]||(s[op]={proc:0,fin:0}); if(it.process_control!==false)o.proc++; if(it.final_control!==false)o.fin++; });
@@ -3552,17 +3562,15 @@ async function renderIzleme(root){
       const miss=qd&&qd.ops&&qd.ops.some(op=>(op.proc>0&&(op.real.seri_basi===0||op.real.proses===0))||(op.fin>0&&op.real.son===0));
       if(miss&&IZ_ADMIN)gh.append(el('div',{style:'font-size:9.5px;color:#b45309;margin-top:3px'},'◇ = bu kontrolün kaydı HENÜZ yok; üst sağdaki 🔧 Türet kontrol planına göre oluşturur (yalnız Supabase, LeanSys’e yazılmaz).'));
     } else {
-      // gate yok = bu ürünün kontrol planı uygulamaya (control_plan_items) çekilmemiş. LeanSys'te olabilir → tek tıkla çek + op'ları getir.
-      const note=el('div',{style:'font-size:10.5px;color:#b45309;margin-top:3px;display:flex;align-items:center;gap:8px;flex-wrap:wrap'});
-      note.append(el('span',{},'⚠ Kontrol planı uygulamaya çekilmemiş — op kapıları boş.'));
+      // gate yok: plan loadQc'de OTOMATİK çekilmeye çalışıldı. Hâlâ yoksa → ya bu ARA kodda plan yok (plan ana kodda olur, normal) ya da LeanSys ajanı kapalıydı.
+      const note=el('div',{style:'font-size:9.5px;color:var(--muted);margin-top:3px;display:flex;align-items:center;gap:8px;flex-wrap:wrap'});
+      note.append(el('span',{},'ℹ️ Bu kodda kontrol planı yok — plan genelde ana kodda olur (ara kodlarda normal).'));
       if(can('plan')||IZ_ADMIN){
-        const b=el('button',{class:'btn sm',style:'flex:0;font-size:10px;padding:2px 9px;background:#7c3aed;border-color:#7c3aed'},'📥 Planı çek + op’ları getir');
-        b.onclick=async()=>{ b.disabled=true; b.textContent='⏳ Çekiliyor…';
-          const ok=await ensurePlan(n.stok_kodu);
-          if(ok){ toast('Kontrol planı LeanSys’ten çekildi — op kapıları getiriliyor…','ok'); loadTrace((_izKeep&&_izKeep.key),(_izKeep&&_izKeep.irs),(_izKeep&&_izKeep.s),true); }
-          else { b.disabled=false; b.textContent='📥 Planı çek + op’ları getir'; toast('Çekilemedi: LeanSys ajanı kapalı (127.0.0.1:17777) olabilir ya da bu ürünün planı LeanSys’te yok. Kontrol Planı sekmesi → 🔄 LeanSys’ten Güncelle + Çek deneyin.','err'); } };
+        const b=el('span',{style:'cursor:pointer;color:var(--accent)',title:'LeanSys ajanı kapalıydıysa tekrar dene'},'🔄 tekrar dene');
+        b.onclick=async()=>{ b.textContent='⏳…'; _izPlanTried.delete(n.stok_kodu); const ok=await ensurePlan(n.stok_kodu);
+          if(ok){ toast('Plan çekildi — op kapıları geliyor…','ok'); loadTrace((_izKeep&&_izKeep.key),(_izKeep&&_izKeep.irs),(_izKeep&&_izKeep.s),true); }
+          else { b.textContent='🔄 tekrar dene'; toast('Bu kodun planı LeanSys’te yok (plan ana kodda) ya da LeanSys ajanı kapalı.','ok'); } };
         note.append(b);
-        note.append(el('span',{style:'font-size:9px;color:var(--muted)'},'(çekince op kapıları ◇ gelir; SB/PR/SON için 🔧 Türet)'));
       }
       gh.append(note);
     }
