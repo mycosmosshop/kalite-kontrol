@@ -868,11 +868,11 @@ async function renderMalKabul(){
     const chkAll=el('input',{type:'checkbox',title:'Görünenleri seç/bırak'}); chkAll.onclick=e=>{document.querySelectorAll('#mkBody .mkChk').forEach(c=>c.checked=e.target.checked);};
     tb.append(el('thead',{},el('tr',{}, ...(isAdmin?[el('th',{},chkAll)]:[]), ...['İrsaliye Tarih','Kayıt Tarihi','Stok Kodu','Stok Adı','Tedarikçi','Miktar','İrsaliye','Depo','Tür','Giriş Planı'].map(h=>el('th',{},h)))));
     const body=el('tbody',{id:'mkBody'});
-    rows.forEach(r=>{ body.append(el('tr',{style:(r._iz?'background:rgba(21,128,61,.06)':'')},
-      ...(isAdmin?[el('td',{}, r._iz?el('span',{title:'İzlenebilirlikten gelen alış (FIFO_HAREKET) — aktarılmış kayıt değil, silinemez',style:'color:#15803d'},'⛓'):el('input',{type:'checkbox',class:'mkChk','data-id':String(r.rec_id)}))]:[]),
+    rows.forEach(r=>{ body.append(el('tr',{},
+      ...(isAdmin?[el('td',{}, r._iz?el('span',{title:'İzlenebilirlikten gelen alış (FIFO_HAREKET) — aktarılmış kayıt değil, silinemez',style:'color:var(--muted)'},'·'):el('input',{type:'checkbox',class:'mkChk','data-id':String(r.rec_id)}))]:[]),
       el('td',{style:'white-space:nowrap'},fmtDate(r.tarih)),
       el('td',{style:'white-space:nowrap;font-size:11px;color:var(--muted)'},r.kayit_tarih||''),
-      el('td',{style:'font-weight:600'}, r.stok_kodu||'', r._iz?el('span',{class:'pill ok',style:'margin-left:5px;font-size:8.5px;padding:0 5px',title:'LeanSys FIFO_HAREKET alış irsaliyesi · gerçek veri (Mal Kabul tablosuna aktarılmamış)'},'iz · LeanSys'):''),
+      el('td',{style:'font-weight:600'}, r.stok_kodu||''),
       el('td',{style:'font-size:12px',title:r.stok_adi||''},(r.stok_adi||'').slice(0,42)),
       el('td',{style:'font-size:12px',title:r.cari_adi||''},(r.cari_adi||'').slice(0,28)),
       el('td',{style:'white-space:nowrap'},(r.miktar??'')+' '+(r.birim||'')),
@@ -3040,7 +3040,7 @@ async function renderIzleme(root){
   const isAdmin=(PROFILE&&PROFILE.is_admin)||can('import');
   root.append(el('div',{class:'card'},
     el('h3',{style:'margin-top:0'},'🔎 İzlenebilirlik (sevkten geriye)'),
-    el('p',{style:'color:var(--muted);margin:-4px 0 0;font-size:13px',html:'<b>Ürün kodu</b> gir → o ürünün <b>gerçek sevkleri</b> listelenir → bir sevke <b>🔎 İzle</b> de: <b>sevk → üretim → tüketilen hammaddeler → giriş</b> ağacı, gerçek <b>FIFO lot</b> + <b>irsaliye</b> ile. LeanSys’te kaydı olmayan adımları modül <b>BOM’dan türetir</b> ve <b>◇</b> ile işaretler (gerçek = ●). LeanSys salt-okuma.'})));
+    el('p',{style:'color:var(--muted);margin:-4px 0 0;font-size:12.5px;line-height:1.5',html:'Sevkten hammadde lotuna <b>geriye dönük izlenebilirlik</b>. Ürün kodu girilir → ürünün <b>gerçek sevk kayıtları</b> (LeanSys sevkiyat raporu, irsaliye bazında) gelir → bir sevke <b>🔎 İzle</b> ile zincir açılır: <b>sevk → üretim partisi (iş emri) → kullanılan hammaddeler → tedarikçi girişi/mal kabul</b>. Her bağ <b>gerçek FIFO hareketi + irsaliye no</b> ile kanıtlanır. Kanıt durumu: <b>● gerçek LeanSys kaydı</b> · <b>◇ LeanSys’te kaydı bulunmayan, ürün ağacından (BOM) yeniden kurulan adım</b> (eksik zinciri tamamlamak için, açıkça işaretli). Her üretimde <b>kalite kapıları</b> (seri başı·proses·son) ve <b>kütle denkliği</b> denetime sunulur. Kaynak <b>LeanSys — SALT-OKUNUR</b>; hiçbir veri değiştirilmez/silinmez.'})));
   const fUrun=el('input',{class:'inp',placeholder:'ürün/stok kodu (ör. 700.0.454)',style:'min-width:180px'});
   fUrun.onkeydown=e=>{ if(e.key==='Enter')loadSevkler(); };
   const fFrom=el('input',{type:'date',class:'inp'});
