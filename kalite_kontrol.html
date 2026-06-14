@@ -3145,15 +3145,28 @@ async function renderIzleme(root){
         // ADAY HAVUZ: bu STOĞUN o op üretimleri (HER iş emri) + node'un kendi wo'sundan gelenler (farklı kod altındaysa)
         const byOp={}; prodList.forEach(p=>{ if(p.stock===n.stok_kodu && p.op!=null)(byOp[p.op]=byOp[p.op]||[]).push(p); });
         matched.forEach(p=>{ if(p.op!=null){ const a=byOp[p.op]=byOp[p.op]||[]; if(!a.some(x=>x.id===p.id))a.push(p); } });
-        // ANCHOR = SEVK tarihi → op'lar sevke EN YAKIN GERÇEK üretimden seçilir (06 Haziran'a en yakın, öncesi). Sevk yoksa düğüm tarihine düş.
+        // ANCHOR = SEVK tarihi → op'lar sevke EN YAKIN GERÇEK üretimden seçilir. Sevk yoksa düğüm tarihine düş.
         const nodeMs = n.tarih?new Date(n.tarih).getTime():null; const ref = anchorMs!=null?anchorMs:nodeMs;
         const nodeDate = n.tarih?String(n.tarih).slice(0,10):null;
-        // GERÇEK üretimi tercih et; sentetik (trace fill-in, 06.06 + boş metadata) yalnız hiç gerçek yoksa — ve o zaman tarihi düğümün GERÇEK tarihine yazılır (yanlış sevk gününe değil)
-        const pick=arr=>{ if(!arr||!arr.length)return null; const real=arr.filter(p=>!p.syn); const base=real.length?real:arr;
-          if(ref==null)return base[0];
-          const onBefore=base.filter(p=>p.d && new Date(p.d).getTime()<=ref);   // sevk tarihine kadar (dahil) — sonrasına izin yok
-          const pool=onBefore.length?onBefore:base;
-          return pool.slice().sort((a,b)=>Math.abs(new Date(a.d).getTime()-ref)-Math.abs(new Date(b.d).getTime()-ref))[0]; };
+        // ── KOHERENT KOŞUM (kullanıcı kuralı: "birbiriyle bağdaşmayan üretim/proses koyma; en yakın tarihli üretimi bağla, çok uzaksa türet") ──
+        //    op'ları TEK iş emrine (ÇAPA) sabitle → tarihler ve op sayısı birbiriyle bağdaşır.
+        //    çapa = node'un trace ile bağlı iş emri; yoksa op'ları sevke EN YAKIN biten (≤sevk) iş emri.
+        //    çapa koşumun tarih aralığı [min..max]; BAŞKA iş emrinden op yalnız bu aralığın ~60 gün yakınındaysa bağlanır,
+        //    çok uzaksa GERÇEK kayıt bağlanmaz → gate boş kalır ve ◇ (türet) otomatik gösterilir.
+        const _ms=d=>{ const t=d?new Date(d).getTime():null; return (t!=null&&!isNaN(t))?t:null; };
+        let anchorWo=(n.work_order==null?'':String(n.work_order).trim());
+        if(!anchorWo){ const woMax={}; Object.values(byOp).flat().forEach(p=>{ if(!p.wo)return; const t=_ms(p.d); if(t==null)return; if(woMax[p.wo]==null||t>woMax[p.wo])woMax[p.wo]=t; });
+          let best='',bs=Infinity; Object.keys(woMax).forEach(w=>{ const t=woMax[w]; if(ref!=null&&t>ref)return; const sc=ref!=null?Math.abs(ref-t):-t; if(sc<bs){bs=sc;best=w;} }); anchorWo=best; }
+        let anchorMin=null,anchorMax=null; Object.values(byOp).flat().forEach(p=>{ if(!anchorWo||p.wo!==anchorWo)return; const t=_ms(p.d); if(t==null)return; if(anchorMin==null||t<anchorMin)anchorMin=t; if(anchorMax==null||t>anchorMax)anchorMax=t; });
+        const COH_WIN=60*86400000;   // koherans penceresi (gün cinsinden) — gerekirse ayarlanır
+        const _coherent=p=>{ if(anchorWo&&p.wo===anchorWo)return true; if(anchorMin==null)return true; const t=_ms(p.d); if(t==null)return false; return t>=anchorMin-COH_WIN && (ref==null||t<=ref); };
+        // GERÇEK üretimi tercih et; ÇAPA iş emrini önceliklendir; çapa dışı yalnız koherans penceresinde, uzaksa null (◇ türet)
+        const pick=arr=>{ if(!arr||!arr.length)return null; let base=arr.filter(p=>!p.syn); if(!base.length)base=arr;
+          const sortRef=pool=>{ if(ref==null)return pool[0]; const ob=pool.filter(p=>{const t=_ms(p.d);return t!=null&&t<=ref;}); const pp=ob.length?ob:pool; return pp.slice().sort((a,b)=>Math.abs(_ms(a.d)-ref)-Math.abs(_ms(b.d)-ref))[0]; };
+          const inA=base.filter(p=>anchorWo&&p.wo===anchorWo);
+          if(inA.length)return sortRef(inA);
+          const coh=base.filter(_coherent); if(!coh.length)return null;   // çok uzak/ilişkisiz → bağlama (◇ türet)
+          return sortRef(coh); };
         let foundAny=false;
         // SEVKE YETECEK KADAR: gate'te op başına temsilî sayı göster (1 seri başı / en çok 3 proses / 1 son). Gerçek kayıtlar SİLİNMEZ; yalnız gösterim kırpılır → aynı op her izde aynı görünür, fazla sayı çekilmez.
         const capRec=r=>({seri_basi:Math.min(r&&r.seri_basi||0,1), proses:Math.min(r&&r.proses||0,3), son:Math.min(r&&r.son||0,1)});
