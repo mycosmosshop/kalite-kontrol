@@ -3540,14 +3540,14 @@ async function renderIzleme(root){
         (pp||[]).forEach(p=>{ if(p.op_no==null)return; const op=String(p.op_no); const pm=p.prod_date?new Date(p.prod_date).getTime():(p.start_time?new Date(p.start_time).getTime():null); const cur=byOp[op]; if(!cur||(ref!=null&&pm!=null&&cur.m!=null&&Math.abs(pm-ref)<Math.abs(cur.m-ref)))byOp[op]={id:p.id,m:pm,op:Number(p.op_no)}; });
         picks = Object.values(byOp).map(x=>({op:x.op,id:x.id}));
       }
-      if(!picks.length){ atlanan++; continue; }
-      const allIds=picks.map(x=>x.id);
-      try{ await sb.from('control_records').delete().in('production_id',allIds).eq('note','izleme-türet'); }catch(e){}   // eski türetilmişleri temizle (gerçeği koru)
+      // picks BOŞ olsa bile DEVAM: kontrol planı varsa op'lar SENTETİK türetilir (keçe gibi eşleşen üretim kaydı olmayan içeride-üretilen ürünler).
+      if(picks.length){ const allIds=picks.map(x=>x.id); try{ await sb.from('control_records').delete().in('production_id',allIds).eq('note','izleme-türet'); }catch(e){} }   // eski türetilmişleri temizle (gerçeği koru)
       await ensurePlan(n.stok_kodu);   // kontrol planı yoksa LeanSys'ten çek+içe-aktar
       for(const x of picks){ try{ const r=await turetEksikQC({prodId:x.id}); total+=(r.made||0); }catch(e){} }   // baseDate YOK → üretimin GERÇEK (sevke yakın) tarihini kullanır
       // EKSİK OP: planda var ama bu üretimde YOK → SENTETİK üretim (sevke yakın) oluştur + türet (kullanıcı: "op eksikse sanal türet")
       const {data:pli}=await sb.from('control_plan_items').select('op_no,process_control,final_control,production_equipment').eq('stock_code',n.stok_kodu).eq('active',true);
       const planOpM={}; (pli||[]).forEach(it=>{ const op=(it.op_no==null?0:Number(it.op_no)); if(op<=0)return; const o=planOpM[op]||(planOpM[op]={proc:false,fin:false,eq:''}); if(it.process_control)o.proc=true; if(it.final_control)o.fin=true; if(it.production_equipment&&!o.eq)o.eq=it.production_equipment; });
+      if(!picks.length && !Object.keys(planOpM).length){ atlanan++; continue; }   // ne eşleşen üretim ne kontrol planı → gerçekten atla
       const realOps=new Set(picks.map(x=>x.op));
       // PLAN MAKİNESİNİ GERÇEĞE EŞİTLE: op'un GERÇEK üretim makinesi plandaki ekipmandan (rota kartı, ör. KP4) farklıysa → planı (Supabase control_plan_items) GERÇEK makineye (ör. VARGEL 2) GÜNCELLE.
       //   (kullanıcı: "op2 planı KP4 yerine VARGEL 2 olarak değişecek" — rota kartı planlı makineyi yazar ama üretim başka makinede yapılmış olabilir.) LeanSys'e DOKUNULMAZ — yalnız bizim planımız.
@@ -3803,7 +3803,7 @@ async function renderIzleme(root){
     const urun=(_izKeep&&_izKeep.urun)||(key.split(':')[1]||'');
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'},
-      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b15</span>`})),
+      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b16</span>`})),
       el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;align-items:center'},
         el('button',{class:'btn sm sec',style:'flex:0;white-space:nowrap',title:'Görünüm: kart (hikâye) ↔ tablo (düz veri). Tercih kaydedilir.',onclick:()=>{ IZ_VIEW=(IZ_VIEW==='tablo')?'kart':'tablo'; localStorage.setItem('iz_view',IZ_VIEW); loadTrace(key,irs,s); }}, IZ_VIEW==='tablo'?'🗂 Kart görünümü':'🧾 Tablo görünümü'),
         el('div',{class:'autozone'},
