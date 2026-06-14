@@ -3662,6 +3662,13 @@ async function renderIzleme(root){
   }
   // ===== DÜZ TABLO GÖRÜNÜMÜ (denetim/veri) — ağacı sade, sütunlu tek tabloya indirger =====
   function dossierTable(roots,bp){
+    // üretim op'larını Üretim sekmesinde aç (kart görünümündeki "Üretim listesinde gör" ile aynı)
+    const goList=(n)=>{ const qd=_qcMap[n.node_no]; let ids=[];
+      if(qd){ if(qd.opProdIds) ids=Object.values(qd.opProdIds).flat(); if(!ids.length&&qd.prodIds) ids=qd.prodIds.slice(); }
+      ids=[...new Set(ids.filter(x=>x!=null))];
+      URETIM_FILT = ids.length ? {start:'',end:'',stock:'',group:'',machine:'',ids} : {start:'',end:'',stock:(n.stok_kodu||''),group:'',machine:'',ids:[]};
+      switchTab('uretimler');
+    };
     const wrap=el('div',{class:'tbl-wrap',style:'max-height:72vh'});
     const tb=el('table',{style:'border-collapse:collapse;width:100%;font-size:12px'});
     const TH='text-align:left;padding:6px 9px;font-size:10px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);font-weight:700;border-bottom:1.5px solid var(--line);background:var(--panel2);position:sticky;top:0;z-index:1';
@@ -3680,12 +3687,16 @@ async function renderIzleme(root){
       if(n.tur==='sevk')kaynak=(n.musteri?('🏭 '+(n.musteri||'').slice(0,28)):'')+(n.irsaliye?(' · irs '+n.irsaliye):'');
       else if(n.tur==='uretim')kaynak=[(n.makine||''),(n.work_order?('İş emri '+n.work_order):(n.isemri?('İş emri '+n.isemri):''))].filter(Boolean).join(' · ');
       else if(n.tur==='giris')kaynak=(n.tedarikci?('🚚 '+(n.tedarikci||'').slice(0,26)):'')+((n.irsaliye&&n.irsaliye!=='/')?(' · '+n.irsaliye):'');
-      tr.append(el('td',{style:TD+';font-size:11px;color:var(--muted)'}, kaynak));
+      const kc=el('td',{style:TD+';font-size:11px;color:var(--muted)'}, kaynak);
+      if(n.tur==='uretim') kc.append(el('div',{style:'margin-top:3px'}, el('span',{style:'cursor:pointer;color:var(--accent);font-size:10px',title:'Bu üretimin operasyonlarını Üretim sekmesinde liste görünümünde aç',onclick:e=>{e.stopPropagation();goList(n);}},'📋 Üretim listesinde gör')));
+      tr.append(kc);
       const qc=el('td',{style:TD});
       if(n.tur==='uretim'){ const ol=opLine(n,0); qc.append(ol||el('span',{style:'color:var(--muted);font-size:10px'},'—')); }
-      else if(n.tur==='giris'){ const gk=_izGiris[n.stok_kodu];
-        if(gk&&gk.giris) qc.append(el('span',{class:'pill gray',style:'cursor:pointer;font-size:9px;padding:1px 6px',title:'Giriş kalite kayıtlarına git',onclick:e=>{e.stopPropagation();gotoGirisKalite(n);}},'📥 giriş kalite'));
-        else qc.append(el('span',{style:'color:var(--muted);font-size:10px'},(gk&&gk.plan)?'giriş kalitesi yok':'—'));
+      else if(n.tur==='giris'){ const gk=_izGiris[n.stok_kodu]; const row=el('div',{style:'display:flex;gap:4px;flex-wrap:wrap'});
+        if(gk&&gk.giris) row.append(el('span',{class:'pill gray',style:'cursor:pointer;font-size:9px;padding:1px 6px',title:'Giriş kalite kayıtlarına git',onclick:e=>{e.stopPropagation();gotoGirisKalite(n);}},'📥 giriş kalite'));
+        else row.append(el('span',{style:'color:var(--muted);font-size:10px'},(gk&&gk.plan)?'giriş kalitesi yok':'—'));
+        row.append(el('span',{class:'pill gray',style:'cursor:pointer;font-size:9px;padding:1px 6px',title:'Mal Kabul sekmesine git — alış (FIFO_HAREKET) bilgisi üstte',onclick:e=>{e.stopPropagation();gotoMalKabul(n);}},'🚚 mal kabul'));
+        qc.append(row);
       } else qc.append(el('span',{style:'color:var(--muted);font-size:10px'},'—'));
       tr.append(qc);
       const mb=el('td',{style:TD+';min-width:150px'});
