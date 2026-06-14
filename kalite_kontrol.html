@@ -3114,10 +3114,11 @@ async function renderIzleme(root){
       const {data:prods}=await pq.limit(9000);
       const prodList=(prods||[]).map(p=>({id:p.id,stock:p.stock_code,d:(p.prod_date||'').slice(0,10),op:(p.op_no==null?0:Number(p.op_no)),wo:(p.work_order==null?'':String(p.work_order).trim()),mac:(p.machine_name||''),syn:p.sentetik===true}));
       // 2) o üretimlere ait kontrol kayıtları (stage) — production_id üzerinden op'a bağlanır
-      const recByPid={}; const pids=prodList.map(p=>p.id);
+      const recByPid={}; const tByPid={}; const pids=prodList.map(p=>p.id);   // tByPid = TÜRETİLMİŞ (note='izleme-türet') kayıt sayısı → gerçek/türet ayrımı
       for(let i=0;i<pids.length;i+=300){ const chunk=pids.slice(i,i+300); if(!chunk.length)break;
-        const {data:recs}=await sb.from('control_records').select('production_id,stage').in('production_id',chunk);
-        (recs||[]).forEach(r=>{ const o=recByPid[r.production_id]||(recByPid[r.production_id]={seri_basi:0,proses:0,son:0}); if(o[r.stage]!=null)o[r.stage]++; });
+        const {data:recs}=await sb.from('control_records').select('production_id,stage,note').in('production_id',chunk);
+        (recs||[]).forEach(r=>{ const o=recByPid[r.production_id]||(recByPid[r.production_id]={seri_basi:0,proses:0,son:0}); if(o[r.stage]!=null)o[r.stage]++;
+          if(r.note==='izleme-türet'){ const t=tByPid[r.production_id]||(tByPid[r.production_id]={seri_basi:0,proses:0,son:0}); if(t[r.stage]!=null)t[r.stage]++; } });
       }
       // 3) OTOMATİK PLAN ÇEK: uygulamada (control_plan_items) planı OLMAYAN üretim stoklarını LeanSys'ten getir → op kapıları kendiliğinden gelsin (kullanıcı elle çekmesin)
       //    Not: 143.10.088 gibi ARA kodlarda plan olmaz (plan ana kodda) → LeanSys de dönmez, _izPlanTried ile bir daha denenmez (boş gate normal).
@@ -3143,7 +3144,7 @@ async function renderIzleme(root){
       // PASS 2: her op için SEVK tarihine EN YAKIN (tercihen sevk günü/öncesi) üretimi seç — iş emrine kilitleme (gerçek koşum başka iş emri altında olabilir)
       uret.forEach(n=>{
         const matched=nodeMatched[n.node_no];
-        const realByOp={}, opMachine={}, opProdId={}, opProdIds={}, opProdDate={};
+        const realByOp={}, opMachine={}, opProdId={}, opProdIds={}, opProdDate={}, turByOp={};   // turByOp[op][stage]=true → o kapı GERÇEK değil, TÜRETİLMİŞ kayıt
         // ADAY HAVUZ: bu STOĞUN o op üretimleri (HER iş emri) + node'un kendi wo'sundan gelenler (farklı kod altındaysa)
         const byOp={}; prodList.forEach(p=>{ if(p.stock===n.stok_kodu && p.op!=null)(byOp[p.op]=byOp[p.op]||[]).push(p); });
         matched.forEach(p=>{ if(p.op!=null){ const a=byOp[p.op]=byOp[p.op]||[]; if(!a.some(x=>x.id===p.id))a.push(p); } });
@@ -3205,6 +3206,8 @@ async function renderIzleme(root){
           if(p.mac)opMachine[op]=p.mac; opProdId[op]=p.id; opProdIds[op]=[p.id];
           opProdDate[op]= p.syn ? (nodeDate||p.d) : p.d;
           const r=recByPid[p.id]; if(r)realByOp[op]=capRec(r);
+          // GERÇEK/TÜRET ayrımı: bir stage'in TÜM kayıtları 'izleme-türet' ise (ya da üretim sentetikse) o kapı TÜRETİLMİŞ sayılır
+          const tr=tByPid[p.id]; if(r){ const tg=s2=>((r[s2]||0)>0 && ( p.syn || (tr&&(tr[s2]||0)>=(r[s2]||0)) )); turByOp[op]={seri_basi:tg('seri_basi'),proses:tg('proses'),son:tg('son')}; }
           const dMs=opProdDate[op]?new Date(opProdDate[op]).getTime():null; if(dMs!=null)_upMs=dMs;
         }
         // SIRALAMA GÜVENCESİ — KULLANICI KURALI: sonraki op tarihi öncekinden ÖNCE OLAMAZ (Op1≤Op2≤…≤Op4), hiçbiri sevki geçemez.
@@ -3220,7 +3223,7 @@ async function renderIzleme(root){
         let ops;
         if(planHasRealOps){
           const opNos=[...new Set([...planKeys,...Object.keys(realByOp).map(Number),...Object.keys(opProdId).map(Number)])].sort((a,b)=>a-b);
-          ops=opNos.map(op=>({op_no:op, proc:(plan[op]&&plan[op].proc)||0, fin:(plan[op]&&plan[op].fin)||0, real:realByOp[op]||{seri_basi:0,proses:0,son:0}}));
+          ops=opNos.map(op=>({op_no:op, proc:(plan[op]&&plan[op].proc)||0, fin:(plan[op]&&plan[op].fin)||0, real:realByOp[op]||{seri_basi:0,proses:0,son:0}, tur:turByOp[op]||{}}));
         } else {
           // plan GENEL (op'a bölünmemiş) → tek gate; bulunan op kayıtlarını TOPLA; tarih/makine = sevke en yakın koşum
           if(!opMachine[0] && n.makine)opMachine[0]=n.makine;
@@ -3229,7 +3232,8 @@ async function renderIzleme(root){
           const rep=pick(Object.values(byOp).flat());
           if(rep){ if(!opProdDate[0])opProdDate[0]=rep.d; if(rep.mac&&!opMachine[0])opMachine[0]=rep.mac; }
           const allIds=Object.values(opProdId); opProdIds[0]=allIds.length?allIds:(rep?[rep.id]:[]);
-          ops=[{op_no:0, proc:gp.proc, fin:gp.fin, real:capRec(agg)}];   // tek gate de sevke yetecek kadar (1/3/1) — fazla kayıt sayısı gösterilmez
+          const aggTur={seri_basi:agg.seri_basi>0,proses:agg.proses>0,son:agg.son>0}; Object.keys(realByOp).forEach(op=>{ ['seri_basi','proses','son'].forEach(st=>{ if((realByOp[op][st]||0)>0 && !(turByOp[op]&&turByOp[op][st]))aggTur[st]=false; }); });
+          ops=[{op_no:0, proc:gp.proc, fin:gp.fin, real:capRec(agg), tur:aggTur}];   // tek gate de sevke yetecek kadar (1/3/1) — fazla kayıt sayısı gösterilmez
         }
         _qcMap[n.node_no]={ ops, opened:(foundAny||matched.length>0), opMachine, opProdId, opProdIds, opProdDate, prodIds:matched.map(p=>p.id) };
       });
@@ -3282,10 +3286,10 @@ async function renderIzleme(root){
       if(mac)opRow.append(el('span',{style:'color:var(--muted)',title:mac}, mac.slice(0,34)));
       else if(op.op_no===0)opRow.append(el('span',{style:'color:var(--muted);font-size:9px'},'(plan: tüm operasyonlar)'));
       const pd=(q.opProdDate&&q.opProdDate[op.op_no]); if(pd)opRow.append(el('span',{style:'color:#0369a1;font-size:9px;border:1px solid #0369a1;border-radius:3px;padding:0 4px',title:'bu operasyonun LeanSys üretim kaydı — '+fmtDate(pd)},'🏭 '+fmtDate(pd)));
-      const mk=(stage,lab,cls,exp)=>{ if(exp<=0)return; const c=r[stage]||0; const has=c>0;
-        opRow.append(el('span',{class:'pill '+cls,style:'cursor:pointer;font-size:9.5px;padding:1px 7px'+(has?'':';opacity:.55;outline:1px dashed #b45309;outline-offset:-1px'),
-          title:has?(STAGES[stage]+' — bu operasyonun '+c+' kaydını aç'):(STAGES[stage]+' kaydı yok — 🔧 Türet ile plana göre oluşturulur'),
-          onclick:e=>{e.stopPropagation(); const pids=(q.opProdIds&&(q.opProdIds[op.op_no]||(op.op_no===0?q.opProdIds[n.op_no]:null)))||q.prodIds||[]; if(pids.length){ KAYIT_PROD=null;KAYIT_PRODS=pids.slice();KAYIT_IRS=null;KAYIT_STAGE=stage;KAYIT_FILT={start:'',end:'',stock:''};switchTab('kayitlar'); } else { const d=(n.tarih||'').slice(0,10); const w=(s,n2)=>{const dt=new Date(s);dt.setDate(dt.getDate()+n2);return dt.toISOString().slice(0,10);}; KAYIT_PROD=null;KAYIT_PRODS=null;KAYIT_IRS=null;KAYIT_STAGE=stage;KAYIT_FILT={start:d?w(d,-4):'',end:d?w(d,4):'',stock:n.stok_kodu};switchTab('kayitlar'); } }}, has?(lab+' '+c):(lab+' ◇'))); };
+      const mk=(stage,lab,cls,exp)=>{ if(exp<=0)return; const c=r[stage]||0; const has=c>0; const isTur=!!(op.tur&&op.tur[stage]);   // has + isTur → kayıt VAR ama TÜRETİLMİŞ (gerçek değil)
+        opRow.append(el('span',{class:'pill '+cls,style:'cursor:pointer;font-size:9.5px;padding:1px 7px'+(has?(isTur?';opacity:.85;outline:1px dashed #b45309;outline-offset:-1px':''):';opacity:.55;outline:1px dashed #b45309;outline-offset:-1px'),
+          title:has?(isTur?(STAGES[stage]+' — '+c+' kayıt ama TÜRETİLMİŞ (gerçek/operatör kaydı değil, plana göre otomatik üretildi). Tıkla → kayıtlar.'):(STAGES[stage]+' — bu operasyonun '+c+' GERÇEK kaydını aç')):(STAGES[stage]+' kaydı yok — 🔧 Türet ile plana göre oluşturulur'),
+          onclick:e=>{e.stopPropagation(); const pids=(q.opProdIds&&(q.opProdIds[op.op_no]||(op.op_no===0?q.opProdIds[n.op_no]:null)))||q.prodIds||[]; if(pids.length){ KAYIT_PROD=null;KAYIT_PRODS=pids.slice();KAYIT_IRS=null;KAYIT_STAGE=stage;KAYIT_FILT={start:'',end:'',stock:''};switchTab('kayitlar'); } else { const d=(n.tarih||'').slice(0,10); const w=(s,n2)=>{const dt=new Date(s);dt.setDate(dt.getDate()+n2);return dt.toISOString().slice(0,10);}; KAYIT_PROD=null;KAYIT_PRODS=null;KAYIT_IRS=null;KAYIT_STAGE=stage;KAYIT_FILT={start:d?w(d,-4):'',end:d?w(d,4):'',stock:n.stok_kodu};switchTab('kayitlar'); } }}, has?(lab+' '+c+(isTur?' ◇':'')):(lab+' ◇'))); };
       mk('seri_basi','SB','seri',op.proc); mk('proses','PR','proses',op.proc); mk('son','SON','son',op.fin);
       box.append(opRow);
     });
@@ -3790,7 +3794,7 @@ async function renderIzleme(root){
     const urun=(_izKeep&&_izKeep.urun)||(key.split(':')[1]||'');
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'},
-      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b7</span>`})),
+      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b8</span>`})),
       el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;align-items:center'},
         el('button',{class:'btn sm sec',style:'flex:0;white-space:nowrap',title:'Görünüm: kart (hikâye) ↔ tablo (düz veri). Tercih kaydedilir.',onclick:()=>{ IZ_VIEW=(IZ_VIEW==='tablo')?'kart':'tablo'; localStorage.setItem('iz_view',IZ_VIEW); loadTrace(key,irs,s); }}, IZ_VIEW==='tablo'?'🗂 Kart görünümü':'🧾 Tablo görünümü'),
         el('div',{class:'autozone'},
