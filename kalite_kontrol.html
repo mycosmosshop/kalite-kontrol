@@ -3252,8 +3252,8 @@ async function renderIzleme(root){
        ['Malzeme',(mb.duzeltildi?'Tüketilen':'Tüketilen (plan)'),'kg/birim (formül)','= Tüketilen kg','Reçete oranı','BOM Fire %','Beklenen kg','Fark %'].map(x=>'<th style="'+C+';text-align:left">'+x+'</th>').join('')+'</tr></thead><tbody>';
     kalem.forEach(k=>{
       const fr=Number(k.fire||0);
-      const netBeklKg=(k.beklenen_kg!=null)?(Number(k.beklenen_kg)/(1+fr/100)):null;   // fire'sız (net ürün içeriği) kg
-      const gerc=(netBeklKg&&k.kg!=null&&netBeklKg!==0)?Math.round(((Number(k.kg)-netBeklKg)/netBeklKg)*1000)/10:null;   // GERÇEKLEŞEN fire (net reçeteye göre)
+      const bk=(k.beklenen_kg!=null)?Number(k.beklenen_kg):null;   // 'Beklenen kg' kolonuyla AYNI değer (fire dahil) → Fark gösterilen iki kolondan gözle doğrulanır + düzelt paneliyle birebir aynı
+      const gerc=(bk&&k.kg!=null&&bk!==0)?Math.round(((Number(k.kg)-bk)/bk)*1000)/10:null;   // Fark = (tüketilen − beklenen) / beklenen
       const gc=(gerc==null)?'var(--muted)':(Math.abs(gerc)<=2?'#15803d':'#b45309');
       h+='<tr>'+
         '<td style="'+C+'"><b>'+esc(k.kod||'')+'</b> <span style="color:var(--muted)">'+esc((k.ad||'').slice(0,30))+'</span></td>'+
@@ -3263,7 +3263,7 @@ async function renderIzleme(root){
         '<td style="'+C+';text-align:right">'+(k.oran!=null?(commaFmt(k.oran)+' '+esc(k.birim||'')+'/'+esc(mb.cikti_birim||'br')):'<span style="color:var(--muted)">eşleşmedi</span>')+'</td>'+
         '<td style="'+C+';text-align:right" title="ürün ağacı (LeanSys) fire oranı">'+(k.oran!=null?('%'+commaFmt(fr)):'—')+'</td>'+
         '<td style="'+C+';text-align:right">'+num(k.beklenen_kg)+'</td>'+
-        '<td style="'+C+';text-align:right;color:'+gc+'" title="(tüketilen − net reçete) / net reçete · düzeltilmemişse tüketilen=LeanSys KullanilacakMiktar (PLANLANAN, ölçülen değil)">'+(gerc==null?'—':((gerc>0?'+':'')+commaFmt(gerc)+'%'))+'</td>'+
+        '<td style="'+C+';text-align:right;color:'+gc+'" title="(tüketilen − beklenen) / beklenen · düzeltilmemişse tüketilen=LeanSys KullanilacakMiktar (PLANLANAN, ölçülen değil)">'+(gerc==null?'—':((gerc>0?'+':'')+commaFmt(gerc)+'%'))+'</td>'+
         '</tr>';
     });
     h+='<tr style="background:var(--panel);font-weight:700">'+
