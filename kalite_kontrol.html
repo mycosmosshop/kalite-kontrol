@@ -3227,7 +3227,7 @@ async function renderIzleme(root){
       // op 0 = plan 'genel' (op'a bölünmemiş) → üretimin GERÇEK op/makinesine bağla (anlamsız 'Genel' yerine)
       const opNo = op.op_no || (n.op_no||0);
       const mac=(q.opMachine&&q.opMachine[op.op_no])|| (op.op_no===0?(n.makine||''):'');
-      const opRow=el('div',{style:'display:flex;align-items:center;gap:6px;flex-wrap:wrap'});
+      const opRow=el('div',{style:'display:flex;align-items:center;gap:6px;flex-wrap:nowrap;white-space:nowrap'});
       opRow.append(el('b',{style:'color:var(--accent);min-width:34px'}, opNo?('Op'+opNo):'Kontrol'));
       if(mac)opRow.append(el('span',{style:'color:var(--muted)',title:mac}, mac.slice(0,34)));
       else if(op.op_no===0)opRow.append(el('span',{style:'color:var(--muted);font-size:9px'},'(plan: tüm operasyonlar)'));
