@@ -3795,7 +3795,7 @@ async function renderIzleme(root){
     const urun=(_izKeep&&_izKeep.urun)||(key.split(':')[1]||'');
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'},
-      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b9</span>`})),
+      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b10</span>`})),
       el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;align-items:center'},
         el('button',{class:'btn sm sec',style:'flex:0;white-space:nowrap',title:'Görünüm: kart (hikâye) ↔ tablo (düz veri). Tercih kaydedilir.',onclick:()=>{ IZ_VIEW=(IZ_VIEW==='tablo')?'kart':'tablo'; localStorage.setItem('iz_view',IZ_VIEW); loadTrace(key,irs,s); }}, IZ_VIEW==='tablo'?'🗂 Kart görünümü':'🧾 Tablo görünümü'),
         el('div',{class:'autozone'},
@@ -3823,16 +3823,36 @@ async function renderIzleme(root){
   //   Birkaç lot gidebilir → izlenebilirlik için hangilerinin gittiği (son op tarihi + miktar + lot/iş emri) listelenir.
   function _shippedLots(sevkNode, byParent){
     return (byParent[sevkNode.node_no]||[]).filter(c=>c.tur==='uretim').map(u=>{
-      const q=_qcMap[u.node_no]; let lastDate=null,lastOp=null;
-      if(q&&q.opProdDate){ const ops=Object.keys(q.opProdDate).map(Number).sort((a,b)=>b-a); for(const op of ops){ if(q.opProdDate[op]){ lastDate=q.opProdDate[op]; lastOp=op; break; } } }
+      const q=_qcMap[u.node_no]; let lastDate=null,lastOp=null,firstDate=null;
+      if(q&&q.opProdDate){ const ops=Object.keys(q.opProdDate).map(Number).filter(op=>q.opProdDate[op]).sort((a,b)=>a-b);
+        if(ops.length){ firstDate=q.opProdDate[ops[0]]; lastOp=ops[ops.length-1]; lastDate=q.opProdDate[lastOp]; } }
       if(!lastDate)lastDate=u.uretim_tarihi||u.tarih||null;
-      return { date:lastDate, op:lastOp, lot:u.lot_no, miktar:u.miktar, birim:u.birim, wo:u.work_order };
-    }).filter(x=>x.date||x.lot||x.miktar!=null);
+      if(!firstDate)firstDate=u.tarih||lastDate;
+      return { firstDate, lastDate, op:lastOp, lot:u.lot_no, barkod:u.barkod, miktar:u.miktar, birim:u.birim,
+        wo:u.work_order, siparis:(u.siparis&&u.siparis!=='/')?u.siparis:null, musteriSip:u.musteri_sip,
+        makine:((q&&q.opMachine&&lastOp!=null)?q.opMachine[lastOp]:null)||u.makine };
+    }).filter(x=>x.lastDate||x.lot||x.miktar!=null);
   }
   function _shippedLotsHtml(sevkNode, byParent){
     const lots=_shippedLots(sevkNode, byParent); if(!lots.length)return '';
-    const parts=lots.map(l=>{ const d=l.date?fmtDate(l.date):'—'; const opTxt=l.op?(' <span style="color:var(--muted)">(Op'+l.op+' son op)</span>'):''; const q=(l.miktar!=null?(' · '+commaFmt(l.miktar)+(l.birim?(' '+esc(l.birim)):'')):''); const lot=l.lot?(' · lot '+esc(l.lot)):''; const wo=l.wo?(' · iş emri '+esc(l.wo)):''; return '<b>'+d+'</b>'+opTxt+q+lot+wo; });
-    return '🏭 Sevke giden üretim '+(lots.length>1?(lots.length+' lotu'):'lotu')+' (son op tarihinden): '+parts.join('&nbsp; | &nbsp;');
+    // sevk üst bilgisi (irsaliye/sipariş/müşteri sip) — tek yerde takip için
+    const sm=[]; if(sevkNode.irsaliye&&sevkNode.irsaliye!=='/')sm.push('irsaliye <b>'+esc(sevkNode.irsaliye)+'</b>'); if(sevkNode.siparis&&sevkNode.siparis!=='/')sm.push('sipariş <b>'+esc(sevkNode.siparis)+'</b>'); if(sevkNode.musteri_sip)sm.push('müş.sip <b>'+esc(sevkNode.musteri_sip)+'</b>');
+    const head='🏭 Sevke giden üretim '+(lots.length>1?(lots.length+' lotu'):'lotu')+' <span style="color:var(--muted);font-weight:400">(son operasyon tarihinden sevk edildi)</span>'+(sm.length?(' <span style="color:var(--muted);font-weight:400">— '+sm.join(' · ')+'</span>'):'')+':';
+    const rows=lots.map((l,i)=>{
+      const f=l.firstDate?fmtDate(l.firstDate):null, d=l.lastDate?fmtDate(l.lastDate):'—';
+      const seg=[];
+      seg.push('🏁 son op <b>'+d+'</b>'+(l.op?(' <span style="color:var(--muted)">(Op'+l.op+')</span>'):''));
+      if(f && f!==d) seg.push('üretim '+f+' → '+d); else if(f) seg.push('üretim '+f);
+      if(l.miktar!=null) seg.push('miktar <b>'+commaFmt(l.miktar)+'</b>'+(l.birim?(' '+esc(l.birim)):''));
+      if(l.lot) seg.push('lot '+esc(String(l.lot)));
+      if(l.barkod) seg.push('barkod '+esc(String(l.barkod)));
+      if(l.wo) seg.push('iş emri '+esc(String(l.wo)));
+      if(l.siparis) seg.push('sipariş '+esc(String(l.siparis)));
+      if(l.musteriSip) seg.push('müş.sip '+esc(String(l.musteriSip)));
+      if(l.makine) seg.push('makine '+esc((''+l.makine).slice(0,24)));
+      return '<div style="padding:1px 0 1px 2px">'+(lots.length>1?('<b>#'+(i+1)+'</b> '):'')+seg.join(' · ')+'</div>';
+    }).join('');
+    return head+rows;
   }
   function izRow(n,byParent,depth){
     const wrap=el('div');
