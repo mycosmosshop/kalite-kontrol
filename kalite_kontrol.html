@@ -1125,9 +1125,9 @@ async function renderUretimler(){
   const _f=URETIM_FILT, _ids=_f.ids||[], _active=!!(_ids.length||_f.start||_f.end||_f.stock);
   let data=[], error=null;
   if(_ids.length){
-    // izlenebilirlikten "Üretim listesinde gör" → YALNIZ bu op üretim ID'leri (sentetik dahil — gate'te ne gösterildiyse o)
+    // izlenebilirlikten "Üretim listesinde gör" → YALNIZ bu op üretim ID'leri; sentetik (trace fill-in, boş satır) GÖSTERME
     for(let i=0;i<_ids.length;i+=200){ const chunk=_ids.slice(i,i+200); if(!chunk.length)break;
-      const r=await sb.from('productions').select('*').in('id',chunk); if(r.error){error=r.error;break;} data=data.concat(r.data||[]); }
+      const r=await sb.from('productions').select('*').in('id',chunk).neq('sentetik',true); if(r.error){error=r.error;break;} data=data.concat(r.data||[]); }
   } else if(!_active){
     const r=await sb.from('productions').select('*').neq('sentetik',true).order('start_time',{ascending:false}).limit(500);
     data=r.data||[]; error=r.error;
@@ -3106,10 +3106,10 @@ async function renderIzleme(root){
       // 1) bizim üretim kayıtları (id, stok, tarih, OP NO, İŞ EMRİ) — productions per-op'tur
       //    KRİTİK: stok kodu YETMEZ — laminasyon (ör 700.20.055) üretimleri FARKLI kod altında olabilir; trace İŞ EMRİ ile de eşleştir
       const wos=[...new Set(uret.map(n=>(n.work_order==null?'':String(n.work_order).trim())).filter(Boolean))];
-      let pq=sb.from('productions').select('id,stock_code,prod_date,op_no,work_order,machine_name');
+      let pq=sb.from('productions').select('id,stock_code,prod_date,op_no,work_order,machine_name,sentetik');
       pq = wos.length ? pq.or('stock_code.in.('+codes.join(',')+'),work_order.in.('+wos.join(',')+')') : pq.in('stock_code',codes);
       const {data:prods}=await pq.limit(9000);
-      const prodList=(prods||[]).map(p=>({id:p.id,stock:p.stock_code,d:(p.prod_date||'').slice(0,10),op:(p.op_no==null?0:Number(p.op_no)),wo:(p.work_order==null?'':String(p.work_order).trim()),mac:(p.machine_name||'')}));
+      const prodList=(prods||[]).map(p=>({id:p.id,stock:p.stock_code,d:(p.prod_date||'').slice(0,10),op:(p.op_no==null?0:Number(p.op_no)),wo:(p.work_order==null?'':String(p.work_order).trim()),mac:(p.machine_name||''),syn:p.sentetik===true}));
       // 2) o üretimlere ait kontrol kayıtları (stage) — production_id üzerinden op'a bağlanır
       const recByPid={}; const pids=prodList.map(p=>p.id);
       for(let i=0;i<pids.length;i+=300){ const chunk=pids.slice(i,i+300); if(!chunk.length)break;
@@ -3144,17 +3144,20 @@ async function renderIzleme(root){
         // ADAY HAVUZ: bu STOĞUN o op üretimleri (HER iş emri) + node'un kendi wo'sundan gelenler (farklı kod altındaysa)
         const byOp={}; prodList.forEach(p=>{ if(p.stock===n.stok_kodu && p.op!=null)(byOp[p.op]=byOp[p.op]||[]).push(p); });
         matched.forEach(p=>{ if(p.op!=null){ const a=byOp[p.op]=byOp[p.op]||[]; if(!a.some(x=>x.id===p.id))a.push(p); } });
-        // ANCHOR = bu ÜRETİMİN KENDİ tarihi (derin/farklı şube üretimi sevk gününe değil kendi üretim tarihine yakın olsun; ör. Bursa'da yapılan alt kod ≠ Veliköy montaj günü). Düğüm tarihi yoksa sevke düş.
-        const nodeMs = n.tarih?new Date(n.tarih).getTime():null; const ref = nodeMs!=null?nodeMs:anchorMs;
-        const pick=arr=>{ if(!arr||!arr.length)return null; if(ref==null)return arr[0];
-          const onBefore=arr.filter(p=>p.d && new Date(p.d).getTime()<=ref);   // üretim tarihine kadar (dahil) — sonrasına izin yok
-          const pool=onBefore.length?onBefore:arr;
+        // ANCHOR = SEVK tarihi → op'lar sevke EN YAKIN GERÇEK üretimden seçilir (06 Haziran'a en yakın, öncesi). Sevk yoksa düğüm tarihine düş.
+        const nodeMs = n.tarih?new Date(n.tarih).getTime():null; const ref = anchorMs!=null?anchorMs:nodeMs;
+        const nodeDate = n.tarih?String(n.tarih).slice(0,10):null;
+        // GERÇEK üretimi tercih et; sentetik (trace fill-in, 06.06 + boş metadata) yalnız hiç gerçek yoksa — ve o zaman tarihi düğümün GERÇEK tarihine yazılır (yanlış sevk gününe değil)
+        const pick=arr=>{ if(!arr||!arr.length)return null; const real=arr.filter(p=>!p.syn); const base=real.length?real:arr;
+          if(ref==null)return base[0];
+          const onBefore=base.filter(p=>p.d && new Date(p.d).getTime()<=ref);   // sevk tarihine kadar (dahil) — sonrasına izin yok
+          const pool=onBefore.length?onBefore:base;
           return pool.slice().sort((a,b)=>Math.abs(new Date(a.d).getTime()-ref)-Math.abs(new Date(b.d).getTime()-ref))[0]; };
         let foundAny=false;
         // SEVKE YETECEK KADAR: gate'te op başına temsilî sayı göster (1 seri başı / en çok 3 proses / 1 son). Gerçek kayıtlar SİLİNMEZ; yalnız gösterim kırpılır → aynı op her izde aynı görünür, fazla sayı çekilmez.
         const capRec=r=>({seri_basi:Math.min(r&&r.seri_basi||0,1), proses:Math.min(r&&r.proses||0,3), son:Math.min(r&&r.son||0,1)});
-        Object.keys(byOp).forEach(opK=>{ const op=Number(opK); const p=pick(byOp[opK]); if(!p)return; foundAny=true; if(p.mac)opMachine[op]=p.mac; opProdId[op]=p.id; opProdIds[op]=[p.id]; opProdDate[op]=p.d; const r=recByPid[p.id]; if(r)realByOp[op]=capRec(r); });
-        // Sıralı tarih zorla: Op1≤Op2≤Op3≤Op4, hiçbiri bu üretimin kendi tarihini geçemez
+        Object.keys(byOp).forEach(opK=>{ const op=Number(opK); const p=pick(byOp[opK]); if(!p)return; foundAny=true; if(p.mac)opMachine[op]=p.mac; opProdId[op]=p.id; opProdIds[op]=[p.id]; opProdDate[op]= p.syn ? (nodeDate||p.d) : p.d; const r=recByPid[p.id]; if(r)realByOp[op]=capRec(r); });
+        // Sıralı tarih zorla: Op1≤Op2≤Op3≤Op4, hiçbiri sevk tarihini geçemez
         { const opNums=Object.keys(opProdDate).map(Number).sort((a,b)=>a-b); let prevMs=null;
           opNums.forEach(op=>{ let d=opProdDate[op]; let dMs=d?new Date(d).getTime():null;
             if(ref&&dMs&&dMs>ref){dMs=ref;d=new Date(ref).toISOString().slice(0,10);}
