@@ -3802,7 +3802,7 @@ async function renderIzleme(root){
     const urun=(_izKeep&&_izKeep.urun)||(key.split(':')[1]||'');
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'},
-      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b13</span>`})),
+      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b14</span>`})),
       el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;align-items:center'},
         el('button',{class:'btn sm sec',style:'flex:0;white-space:nowrap',title:'Görünüm: kart (hikâye) ↔ tablo (düz veri). Tercih kaydedilir.',onclick:()=>{ IZ_VIEW=(IZ_VIEW==='tablo')?'kart':'tablo'; localStorage.setItem('iz_view',IZ_VIEW); loadTrace(key,irs,s); }}, IZ_VIEW==='tablo'?'🗂 Kart görünümü':'🧾 Tablo görünümü'),
         el('div',{class:'autozone'},
@@ -3844,7 +3844,10 @@ async function renderIzleme(root){
     const lots=_shippedLots(sevkNode, byParent); if(!lots.length)return '';
     // sevk üst bilgisi (irsaliye/sipariş/müşteri sip) — tek yerde takip için
     const sm=[]; if(sevkNode.irsaliye&&sevkNode.irsaliye!=='/')sm.push('irsaliye <b>'+esc(sevkNode.irsaliye)+'</b>'); if(sevkNode.siparis&&sevkNode.siparis!=='/')sm.push('sipariş <b>'+esc(sevkNode.siparis)+'</b>'); if(sevkNode.musteri_sip)sm.push('müş.sip <b>'+esc(sevkNode.musteri_sip)+'</b>');
-    const head='🏭 Sevke giden üretim '+(lots.length>1?(lots.length+' lotu'):'lotu')+' <span style="color:var(--muted);font-weight:400">(son operasyon tarihinden sevk edildi)</span>'+(sm.length?(' <span style="color:var(--muted);font-weight:400">— '+sm.join(' · ')+'</span>'):'')+':';
+    // başlıkta düz yazı yerine GERÇEK son operasyon tarihi/tarihleri
+    const sonOpDates=[...new Set(lots.map(l=>l.lastDate?fmtDate(l.lastDate):null).filter(Boolean))];
+    const sonOpTxt=sonOpDates.length?(' <b style="color:#15803d">🏁 son op '+sonOpDates.join(' · ')+'</b>'):'';
+    const head='🏭 Sevke giden üretim '+(lots.length>1?(lots.length+' lotu'):'lotu')+sonOpTxt+(sm.length?(' <span style="color:var(--muted);font-weight:400">— '+sm.join(' · ')+'</span>'):'')+':';
     const rows=lots.map((l,i)=>{
       const f=l.firstDate?fmtDate(l.firstDate):null, d=l.lastDate?fmtDate(l.lastDate):'—';
       const seg=[];
