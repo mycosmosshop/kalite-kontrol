@@ -3154,12 +3154,22 @@ async function renderIzleme(root){
         //    çapa koşumun tarih aralığı [min..max]; BAŞKA iş emrinden op yalnız bu aralığın ~60 gün yakınındaysa bağlanır,
         //    çok uzaksa GERÇEK kayıt bağlanmaz → gate boş kalır ve ◇ (türet) otomatik gösterilir.
         const _ms=d=>{ const t=d?new Date(d).getTime():null; return (t!=null&&!isNaN(t))?t:null; };
+        // ÇAPA KOŞUM: önce node'un trace iş emri; o ÜRETİM TABLOSUNDA YOKSA → EN UYGUN koşum kümesi seçilir:
+        //   (a) en çok op kapsayan, (b) son op tarihi ≤ sevk ve sevke en yakın olan. Böylece alakasız ESKİ YIL / BAŞKA MÜŞTERİ koşumları çapa olamaz.
+        const _woStat={}; Object.values(byOp).flat().forEach(p=>{ if(!p.wo)return; const t=_ms(p.d); const s=_woStat[p.wo]||(_woStat[p.wo]={ops:new Set(),max:null}); s.ops.add(p.op); if(t!=null&&(s.max==null||t>s.max))s.max=t; });
         let anchorWo=(n.work_order==null?'':String(n.work_order).trim());
-        if(!anchorWo){ const woMax={}; Object.values(byOp).flat().forEach(p=>{ if(!p.wo)return; const t=_ms(p.d); if(t==null)return; if(woMax[p.wo]==null||t>woMax[p.wo])woMax[p.wo]=t; });
-          let best='',bs=Infinity; Object.keys(woMax).forEach(w=>{ const t=woMax[w]; if(ref!=null&&t>ref)return; const sc=ref!=null?Math.abs(ref-t):-t; if(sc<bs){bs=sc;best=w;} }); anchorWo=best; }
+        if(!anchorWo || !_woStat[anchorWo]){
+          let best='',bC=-1,bP=Infinity;
+          Object.keys(_woStat).forEach(w=>{ const s=_woStat[w]; if(ref!=null&&s.max!=null&&s.max>ref)return;   // sevki geçen koşum çapa olamaz
+            const cover=s.ops.size, prox=(ref!=null&&s.max!=null)?Math.abs(ref-s.max):Infinity;
+            if(cover>bC || (cover===bC && prox<bP)){ bC=cover; bP=prox; best=w; } });
+          if(best)anchorWo=best;
+        }
         let anchorMin=null,anchorMax=null; Object.values(byOp).flat().forEach(p=>{ if(!anchorWo||p.wo!==anchorWo)return; const t=_ms(p.d); if(t==null)return; if(anchorMin==null||t<anchorMin)anchorMin=t; if(anchorMax==null||t>anchorMax)anchorMax=t; });
-        const COH_WIN=60*86400000;   // koherans penceresi (gün cinsinden) — gerekirse ayarlanır
+        const COH_WIN=60*86400000;   // koherans penceresi (gün) — gerekirse ayarlanır
         const _coherent=p=>{ if(anchorWo&&p.wo===anchorWo)return true; if(anchorMin==null)return true; const t=_ms(p.d); if(t==null)return false; return t>=anchorMin-COH_WIN && (ref==null||t<=ref); };
+        // ADAY HAVUZUNU KOHERANS'A FİLTRELE: alakasız (uzak yıl / başka müşteri / başka iş emri) üretimler op listesinden tamamen çıkar → "saçma tarih" kalmaz
+        Object.keys(byOp).forEach(opK=>{ const f=byOp[opK].filter(_coherent); if(f.length)byOp[opK]=f; else delete byOp[opK]; });
         // GERÇEK üretimi tercih et; ÇAPA iş emrini önceliklendir; çapa dışı yalnız koherans penceresinde, uzaksa null (◇ türet)
         const pick=arr=>{ if(!arr||!arr.length)return null; let base=arr.filter(p=>!p.syn); if(!base.length)base=arr;
           const sortRef=pool=>{ if(ref==null)return pool[0]; const ob=pool.filter(p=>{const t=_ms(p.d);return t!=null&&t<=ref;}); const pp=ob.length?ob:pool; return pp.slice().sort((a,b)=>Math.abs(_ms(a.d)-ref)-Math.abs(_ms(b.d)-ref))[0]; };
