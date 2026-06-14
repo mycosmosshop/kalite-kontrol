@@ -3263,7 +3263,29 @@ async function renderIzleme(root){
       el('div',{},'Tür'),el('div',{},'Kod / Ad'),el('div',{style:'text-align:right'},'Miktar'),el('div',{style:'text-align:right'},'Kg'),
       el('div',{},'Lot / İrsaliye'),el('div',{},'Tedarikçi / Müşteri'),el('div',{},'Tarih'),el('div',{},'Kayıt / Kontrol'));
   }
-  function gotoGirisKalite(n){ const p=(n.irsaliye||'').split('/'); const irs=(p[0]||'').trim()+((p[1]&&p[1].trim())?(' / '+p[1].trim()):''); KAYIT_PROD=null; KAYIT_PRODS=null; KAYIT_IRS=irs||null; KAYIT_STAGE='giris'; KAYIT_FILT={start:'',end:'',stock:n.stok_kodu||''}; switchTab('kayitlar'); }
+  async function gotoGirisKalite(n){
+    const stok=n.stok_kodu||''; if(!stok)return;
+    // GERÇEK giriş kontrol = LeanSys (VW_KONTROLPLANI_HAMMADDEGIRIS) — ajandan çek, modalda göster
+    let recs=null;
+    try{ const r=await fetch('http://127.0.0.1:17777/giriskontrol?stok='+encodeURIComponent(stok),{mode:'cors'}); const j=await r.json(); if(Array.isArray(j))recs=j; }catch(e){}
+    if(recs){ _showGirisKontrolModal(stok,n.stok_adi||'',recs); return; }
+    // ajan kapalı → eski uygulama kayıtları sekmesine düş
+    const p=(n.irsaliye||'').split('/'); const irs=(p[0]||'').trim()+((p[1]&&p[1].trim())?(' / '+p[1].trim()):''); KAYIT_PROD=null; KAYIT_PRODS=null; KAYIT_IRS=irs||null; KAYIT_STAGE='giris'; KAYIT_FILT={start:'',end:'',stock:stok}; switchTab('kayitlar');
+  }
+  function _showGirisKontrolModal(stok,ad,recs){
+    let m=document.getElementById('girisKontrolModal'); if(m)m.remove();
+    m=el('div',{id:'girisKontrolModal',style:'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px'});
+    const rows=recs.length?recs.map(r=>`<tr style="border-bottom:1px solid var(--line)"><td style="padding:5px 8px;white-space:nowrap">${esc(r.tarih||'')}</td><td style="padding:5px 8px;white-space:nowrap">${esc(r.irsaliye||'')}</td><td style="padding:5px 8px;text-align:right;white-space:nowrap">${r.miktar!=null&&r.miktar!==''?commaFmt(r.miktar):''} ${esc(r.birim||'')}</td><td style="padding:5px 8px">${r.durum?('<b style="color:#15803d">'+esc(r.durum)+'</b>'):'<span style="color:var(--muted)">—</span>'}</td></tr>`).join(''):'<tr><td colspan="4" style="padding:14px;color:var(--muted);text-align:center">Bu malzeme için LeanSys giriş kontrol kaydı yok.</td></tr>';
+    m.innerHTML=`<div style="background:var(--panel);border:1px solid var(--line);border-radius:12px;max-width:760px;width:100%;max-height:82vh;overflow:auto;padding:16px" onclick="event.stopPropagation()">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div style="font-weight:700">📥 Giriş Kontrol — <b>${esc(stok)}</b> <span style="font-weight:400;color:var(--muted);font-size:.9em">${esc((ad||'').slice(0,44))}</span></div>
+        <button onclick="document.getElementById('girisKontrolModal').remove()" style="border:none;background:#ef4444;color:#fff;border-radius:8px;padding:4px 12px;cursor:pointer;font-weight:600">✕ Kapat</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px">LeanSys gerçek giriş kalite / mal kabul kayıtları (${recs.length} kayıt)</div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--panel2);text-align:left"><th style="padding:5px 8px">Tarih</th><th style="padding:5px 8px">İrsaliye</th><th style="padding:5px 8px;text-align:right">Miktar</th><th style="padding:5px 8px">Sonuç/Durum</th></tr></thead><tbody>${rows}</tbody></table>
+    </div>`;
+    m.onclick=()=>m.remove(); document.body.append(m);
+  }
   async function gotoMalKabul(n){
     const stok=n.stok_kodu||'';
     // alış (mal kabul = giriş) bilgisini izden Mal Kabul sekmesi ÜSTÜNE banner olarak taşı (gerçek LeanSys FIFO_HAREKET verisi)
@@ -3814,7 +3836,7 @@ async function renderIzleme(root){
     const urun=(_izKeep&&_izKeep.urun)||(key.split(':')[1]||'');
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'},
-      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b19</span>`})),
+      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b20</span>`})),
       el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;align-items:center'},
         el('button',{class:'btn sm sec',style:'flex:0;white-space:nowrap',title:'Görünüm: kart (hikâye) ↔ tablo (düz veri). Tercih kaydedilir.',onclick:()=>{ IZ_VIEW=(IZ_VIEW==='tablo')?'kart':'tablo'; localStorage.setItem('iz_view',IZ_VIEW); loadTrace(key,irs,s); }}, IZ_VIEW==='tablo'?'🗂 Kart görünümü':'🧾 Tablo görünümü'),
         el('div',{class:'autozone'},
