@@ -3814,7 +3814,7 @@ async function renderIzleme(root){
     const urun=(_izKeep&&_izKeep.urun)||(key.split(':')[1]||'');
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'},
-      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b18</span>`})),
+      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b19</span>`})),
       el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;align-items:center'},
         el('button',{class:'btn sm sec',style:'flex:0;white-space:nowrap',title:'Görünüm: kart (hikâye) ↔ tablo (düz veri). Tercih kaydedilir.',onclick:()=>{ IZ_VIEW=(IZ_VIEW==='tablo')?'kart':'tablo'; localStorage.setItem('iz_view',IZ_VIEW); loadTrace(key,irs,s); }}, IZ_VIEW==='tablo'?'🗂 Kart görünümü':'🧾 Tablo görünümü'),
         el('div',{class:'autozone'},
@@ -4429,7 +4429,14 @@ async function renderKayitlar(){
   if(KAYIT_FILT.start) q=q.gte('checked_at',KAYIT_FILT.start);
   if(KAYIT_FILT.end) q=q.lte('checked_at',KAYIT_FILT.end+'T23:59:59');
   const [{data:recsD},{data:prodsD}]=await Promise.all([q, sb.from('productions').select('id,customer,start_time,end_time,quantity,unit,machine_name,machine_code,shift,stock_code,stock_name,prod_date,work_order,op_no,operator')]);
-  const recs=recsD||[]; const pmap={}; (prodsD||[]).forEach(p=>pmap[p.id]=p);
+  let recs=recsD||[];
+  // İZLENEBİLİRLİK GİRİŞ KALİTE: irsaliye filtresi 0 sonuç verdiyse (trace FIFO irsaliyesi ≠ kayıt giriş irsaliyesi olabilir) → YALNIZ STOK ile tekrar dene, boş kalmasin
+  if(!recs.length && KAYIT_IRS && KAYIT_STAGE==='giris' && KAYIT_FILT.stock){
+    let q2=sb.from('control_records').select('*').eq('stage','giris').eq('stock_code',KAYIT_FILT.stock).order('checked_at',{ascending:false}).limit(2000);
+    if(KAYIT_FILT.start) q2=q2.gte('checked_at',KAYIT_FILT.start); if(KAYIT_FILT.end) q2=q2.lte('checked_at',KAYIT_FILT.end+'T23:59:59');
+    const {data:r2}=await q2; if(r2&&r2.length){ recs=r2; KAYIT_IRS=null; }
+  }
+  const pmap={}; (prodsD||[]).forEach(p=>pmap[p.id]=p);
   // Giriş kayıtları: İrsaliye Tarihi mal_kabul'dan (checked_at artık kontrol anı olabilir, irsaliye günü değil)
   const mkTarih={};
   if(KAYIT_STAGE==='giris'){
