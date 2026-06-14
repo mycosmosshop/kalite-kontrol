@@ -3551,7 +3551,21 @@ async function renderIzleme(root){
     if(gates){ gh.append(gates);
       const miss=qd&&qd.ops&&qd.ops.some(op=>(op.proc>0&&(op.real.seri_basi===0||op.real.proses===0))||(op.fin>0&&op.real.son===0));
       if(miss&&IZ_ADMIN)gh.append(el('div',{style:'font-size:9.5px;color:#b45309;margin-top:3px'},'◇ = bu kontrolün kaydı HENÜZ yok; üst sağdaki 🔧 Türet kontrol planına göre oluşturur (yalnız Supabase, LeanSys’e yazılmaz).'));
-    } else if(IZ_ADMIN){ gh.append(el('div',{style:'font-size:10.5px;color:#b45309;margin-top:2px'},'⚠ Bu üretimin kontrol planı bizde yok — üst sağdaki 🔧 Türet ile LeanSys’ten plan çekilip kayıtlar plana göre oluşturulur')); }
+    } else {
+      // gate yok = bu ürünün kontrol planı uygulamaya (control_plan_items) çekilmemiş. LeanSys'te olabilir → tek tıkla çek + op'ları getir.
+      const note=el('div',{style:'font-size:10.5px;color:#b45309;margin-top:3px;display:flex;align-items:center;gap:8px;flex-wrap:wrap'});
+      note.append(el('span',{},'⚠ Kontrol planı uygulamaya çekilmemiş — op kapıları boş.'));
+      if(can('plan')||IZ_ADMIN){
+        const b=el('button',{class:'btn sm',style:'flex:0;font-size:10px;padding:2px 9px;background:#7c3aed;border-color:#7c3aed'},'📥 Planı çek + op’ları getir');
+        b.onclick=async()=>{ b.disabled=true; b.textContent='⏳ Çekiliyor…';
+          const ok=await ensurePlan(n.stok_kodu);
+          if(ok){ toast('Kontrol planı LeanSys’ten çekildi — op kapıları getiriliyor…','ok'); loadTrace((_izKeep&&_izKeep.key),(_izKeep&&_izKeep.irs),(_izKeep&&_izKeep.s),true); }
+          else { b.disabled=false; b.textContent='📥 Planı çek + op’ları getir'; toast('Çekilemedi: LeanSys ajanı kapalı (127.0.0.1:17777) olabilir ya da bu ürünün planı LeanSys’te yok. Kontrol Planı sekmesi → 🔄 LeanSys’ten Güncelle + Çek deneyin.','err'); } };
+        note.append(b);
+        note.append(el('span',{style:'font-size:9px;color:var(--muted)'},'(çekince op kapıları ◇ gelir; SB/PR/SON için 🔧 Türet)'));
+      }
+      gh.append(note);
+    }
     card.append(gh);
     const ml=massLine(n,bp,0); if(ml){ const mh=el('div',{style:'margin-top:8px'}); mh.append(ml); card.append(mh); }
     const mats=(bp[n.node_no]||[]).filter(k=>k.tur==='hammadde');
