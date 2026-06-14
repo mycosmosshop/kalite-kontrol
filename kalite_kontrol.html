@@ -3164,9 +3164,10 @@ async function renderIzleme(root){
         const pick=arr=>{ if(!arr||!arr.length)return null; let base=arr.filter(p=>!p.syn); if(!base.length)base=arr;
           const sortRef=pool=>{ if(ref==null)return pool[0]; const ob=pool.filter(p=>{const t=_ms(p.d);return t!=null&&t<=ref;}); const pp=ob.length?ob:pool; return pp.slice().sort((a,b)=>Math.abs(_ms(a.d)-ref)-Math.abs(_ms(b.d)-ref))[0]; };
           const inA=base.filter(p=>anchorWo&&p.wo===anchorWo);
-          if(inA.length)return sortRef(inA);
-          const coh=base.filter(_coherent); if(!coh.length)return null;   // çok uzak/ilişkisiz → bağlama (◇ türet)
-          return sortRef(coh); };
+          if(inA.length)return sortRef(inA);                       // 1) ÇAPA iş emri (en koherent)
+          const coh=base.filter(_coherent); if(coh.length)return sortRef(coh);   // 2) yakın tarihli (koherans penceresi)
+          return sortRef(base);   // 3) yine de EN YAKIN GERÇEK üretimi al — boş/eksik bırakma (kullanıcı: gerçek varsa al). Hiç üretim yoksa zaten plandan ◇ türet otomatik gösterilir.
+        };
         let foundAny=false;
         // SEVKE YETECEK KADAR: gate'te op başına temsilî sayı göster (1 seri başı / en çok 3 proses / 1 son). Gerçek kayıtlar SİLİNMEZ; yalnız gösterim kırpılır → aynı op her izde aynı görünür, fazla sayı çekilmez.
         const capRec=r=>({seri_basi:Math.min(r&&r.seri_basi||0,1), proses:Math.min(r&&r.proses||0,3), son:Math.min(r&&r.son||0,1)});
