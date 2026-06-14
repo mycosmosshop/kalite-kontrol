@@ -2861,6 +2861,7 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
 // ====================== KONTROL KAYITLARI ======================
 let KAYIT_STAGE='seri_basi';
 let KAYIT_FILT={start:'',end:'',stock:''};
+let KAYIT_GK_FOCUS=null;   // izlenebilirlikten 'giriş kalite' tıklanınca: {stok,ad} → Giriş Kalite Kayıtları sekmesinde LeanSys giriş kontrolü gösterilir
 let KAYIT_PRODS=null;   // izlenebilirlik: bir op'un birden çok üretiminin kayıtları (liste)
 let _kayitDeb=null; // tarih yazarken her tuşta yeniden çizmesin
 let KAYIT_PROD=null;   // belirli bir üretimin kayıtlarına odaklanma
@@ -2887,7 +2888,7 @@ function kayitTabRow(){
   const tabs=el('div',{style:'display:flex;gap:4px;flex-wrap:wrap;margin-bottom:14px;border-bottom:1px solid var(--line)'});
   Object.entries(STAGES).forEach(([k,label])=>{
     tabs.append(el('button',{class:'btn sm '+(KAYIT_STAGE===k?'':'sec'),style:'border-radius:8px 8px 0 0',
-      onclick:()=>{KAYIT_STAGE=k;KAYIT_IRS=null;KAYIT_PRODS=null;renderKayitlar();}}, label+' Kayıtları'));
+      onclick:()=>{KAYIT_STAGE=k;KAYIT_IRS=null;KAYIT_PRODS=null;KAYIT_GK_FOCUS=null;renderKayitlar();}}, label+' Kayıtları'));
   });
   return tabs;
 }
@@ -3263,28 +3264,13 @@ async function renderIzleme(root){
       el('div',{},'Tür'),el('div',{},'Kod / Ad'),el('div',{style:'text-align:right'},'Miktar'),el('div',{style:'text-align:right'},'Kg'),
       el('div',{},'Lot / İrsaliye'),el('div',{},'Tedarikçi / Müşteri'),el('div',{},'Tarih'),el('div',{},'Kayıt / Kontrol'));
   }
-  async function gotoGirisKalite(n){
+  function gotoGirisKalite(n){
     const stok=n.stok_kodu||''; if(!stok)return;
-    // GERÇEK giriş kontrol = LeanSys (VW_KONTROLPLANI_HAMMADDEGIRIS) — ajandan çek, modalda göster
-    let recs=null;
-    try{ const r=await fetch('http://127.0.0.1:17777/giriskontrol?stok='+encodeURIComponent(stok),{mode:'cors'}); const j=await r.json(); if(Array.isArray(j))recs=j; }catch(e){}
-    if(recs){ _showGirisKontrolModal(stok,n.stok_adi||'',recs); return; }
-    // ajan kapalı → eski uygulama kayıtları sekmesine düş
-    const p=(n.irsaliye||'').split('/'); const irs=(p[0]||'').trim()+((p[1]&&p[1].trim())?(' / '+p[1].trim()):''); KAYIT_PROD=null; KAYIT_PRODS=null; KAYIT_IRS=irs||null; KAYIT_STAGE='giris'; KAYIT_FILT={start:'',end:'',stock:stok}; switchTab('kayitlar');
-  }
-  function _showGirisKontrolModal(stok,ad,recs){
-    let m=document.getElementById('girisKontrolModal'); if(m)m.remove();
-    m=el('div',{id:'girisKontrolModal',style:'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px'});
-    const rows=recs.length?recs.map(r=>`<tr style="border-bottom:1px solid var(--line)"><td style="padding:5px 8px;white-space:nowrap">${esc(r.tarih||'')}</td><td style="padding:5px 8px;white-space:nowrap">${esc(r.irsaliye||'')}</td><td style="padding:5px 8px;text-align:right;white-space:nowrap">${r.miktar!=null&&r.miktar!==''?commaFmt(r.miktar):''} ${esc(r.birim||'')}</td><td style="padding:5px 8px">${r.durum?('<b style="color:#15803d">'+esc(r.durum)+'</b>'):'<span style="color:var(--muted)">—</span>'}</td></tr>`).join(''):'<tr><td colspan="4" style="padding:14px;color:var(--muted);text-align:center">Bu malzeme için LeanSys giriş kontrol kaydı yok.</td></tr>';
-    m.innerHTML=`<div style="background:var(--panel);border:1px solid var(--line);border-radius:12px;max-width:760px;width:100%;max-height:82vh;overflow:auto;padding:16px" onclick="event.stopPropagation()">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <div style="font-weight:700">📥 Giriş Kontrol — <b>${esc(stok)}</b> <span style="font-weight:400;color:var(--muted);font-size:.9em">${esc((ad||'').slice(0,44))}</span></div>
-        <button onclick="document.getElementById('girisKontrolModal').remove()" style="border:none;background:#ef4444;color:#fff;border-radius:8px;padding:4px 12px;cursor:pointer;font-weight:600">✕ Kapat</button>
-      </div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:6px">LeanSys gerçek giriş kalite / mal kabul kayıtları (${recs.length} kayıt)</div>
-      <table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--panel2);text-align:left"><th style="padding:5px 8px">Tarih</th><th style="padding:5px 8px">İrsaliye</th><th style="padding:5px 8px;text-align:right">Miktar</th><th style="padding:5px 8px">Sonuç/Durum</th></tr></thead><tbody>${rows}</tbody></table>
-    </div>`;
-    m.onclick=()=>m.remove(); document.body.append(m);
+    // Giriş Kalite Kayıtları sekmesine git; o malzemenin GERÇEK LeanSys giriş kontrolü orada gösterilir (kontrol planı yoksa 'kontrol planı yok')
+    KAYIT_PROD=null; KAYIT_PRODS=null; KAYIT_IRS=null; KAYIT_STAGE='giris';
+    KAYIT_FILT={start:'',end:'',stock:stok};
+    KAYIT_GK_FOCUS={stok, ad:(n.stok_adi||'')};
+    switchTab('kayitlar');
   }
   async function gotoMalKabul(n){
     const stok=n.stok_kodu||'';
@@ -3836,7 +3822,7 @@ async function renderIzleme(root){
     const urun=(_izKeep&&_izKeep.urun)||(key.split(':')[1]||'');
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'},
-      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b20</span>`})),
+      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b21</span>`})),
       el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;align-items:center'},
         el('button',{class:'btn sm sec',style:'flex:0;white-space:nowrap',title:'Görünüm: kart (hikâye) ↔ tablo (düz veri). Tercih kaydedilir.',onclick:()=>{ IZ_VIEW=(IZ_VIEW==='tablo')?'kart':'tablo'; localStorage.setItem('iz_view',IZ_VIEW); loadTrace(key,irs,s); }}, IZ_VIEW==='tablo'?'🗂 Kart görünümü':'🧾 Tablo görünümü'),
         el('div',{class:'autozone'},
@@ -4497,6 +4483,28 @@ async function renderKayitlar(){
     )
   );
   root.append(filt);
+  // İZLENEBİLİRLİKTEN GİRİŞ KALİTE: odaklı malzemenin GERÇEK LeanSys giriş kontrolü (kontrol planı yoksa 'kontrol planı yok')
+  if(KAYIT_STAGE==='giris' && KAYIT_GK_FOCUS){
+    const f=KAYIT_GK_FOCUS;
+    const panel=el('div',{class:'card',style:'border:1px solid var(--accent)'});
+    panel.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap'},
+      el('div',{style:'font-weight:700',html:'📥 Giriş Kontrol — <b>'+esc(f.stok)+'</b> <span style="font-weight:400;color:var(--muted);font-size:.9em">'+esc((f.ad||'').slice(0,46))+'</span>'}),
+      el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{KAYIT_GK_FOCUS=null;renderKayitlar();}},'✕ Odaktan çık')));
+    const pbody=el('div',{style:'margin-top:8px',html:'<span style="color:var(--muted)">⏳ LeanSys giriş kontrol yükleniyor…</span>'});
+    panel.append(pbody); root.append(panel);
+    (async()=>{
+      let recs=null, planHas=false;
+      try{ const r=await fetch('http://127.0.0.1:17777/giriskontrol?stok='+encodeURIComponent(f.stok),{mode:'cors'}); const j=await r.json(); if(Array.isArray(j))recs=j; }catch(e){}
+      try{ const {data:gp}=await sb.from('control_plan_items').select('giris_kalite,active').eq('stock_code',f.stok); planHas=(gp||[]).some(it=>it.active!==false && it.giris_kalite===true); }catch(e){}
+      if(recs===null){ pbody.innerHTML='<span style="color:#b45309">⚠ LeanSys ajanı kapalı/erişilemedi.</span>'; return; }
+      if(recs.length){
+        const rows=recs.map(r=>`<tr style="border-bottom:1px solid var(--line)"><td style="padding:4px 8px;white-space:nowrap">${esc(r.tarih||'')}</td><td style="padding:4px 8px;white-space:nowrap">${esc(r.irsaliye||'')}</td><td style="padding:4px 8px;text-align:right;white-space:nowrap">${(r.miktar!=null&&r.miktar!=='')?commaFmt(r.miktar):''} ${esc(r.birim||'')}</td><td style="padding:4px 8px">${r.durum?('<b style="color:#15803d">'+esc(r.durum)+'</b>'):'<span style="color:var(--muted)">—</span>'}</td></tr>`).join('');
+        pbody.innerHTML='<div style="font-size:11px;color:var(--muted);margin-bottom:4px">LeanSys gerçek giriş kalite / mal kabul kayıtları ('+recs.length+')</div><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--panel2);text-align:left"><th style="padding:4px 8px">Tarih</th><th style="padding:4px 8px">İrsaliye</th><th style="padding:4px 8px;text-align:right">Miktar</th><th style="padding:4px 8px">Sonuç/Durum</th></tr></thead><tbody>'+rows+'</tbody></table>';
+      } else {
+        pbody.innerHTML = planHas ? '<span style="color:var(--muted)">Kontrol planı var, ama bu malzeme için LeanSys giriş kontrol kaydı yok.</span>' : '<span style="color:#b45309">Bu malzemenin <b>kontrol planı yok</b> — giriş kontrolüne tabi değil.</span>';
+      }
+    })();
+  }
   const tb=el('table');
   const isGiris = KAYIT_STAGE==='giris';
   // Giriş kalite kayıtlarında üretim sütunları (Cari/Üretim Mik./Makine) yerine giriş alanları gösterilir
