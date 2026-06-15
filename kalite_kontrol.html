@@ -3830,7 +3830,7 @@ async function renderIzleme(root){
     const urun=(_izKeep&&_izKeep.urun)||(key.split(':')[1]||'');
     const card=el('div',{class:'card'});
     card.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'},
-      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b22</span>`})),
+      el('div',{style:'font-size:13px'},el('span',{html:`🔎 <b>${esc(irs||key)}</b>${s&&s.musteri?(' → '+esc(s.musteri)):''} · ${nodes.length} düğüm${tahminiN?` · ◇${tahminiN}`:''} <span style="font-size:9px;color:#94a3b8" title="izleme sürümü (yeni kodu doğrulamak için)">iz·b23</span>`})),
       el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;align-items:center'},
         el('button',{class:'btn sm sec',style:'flex:0;white-space:nowrap',title:'Görünüm: kart (hikâye) ↔ tablo (düz veri). Tercih kaydedilir.',onclick:()=>{ IZ_VIEW=(IZ_VIEW==='tablo')?'kart':'tablo'; localStorage.setItem('iz_view',IZ_VIEW); loadTrace(key,irs,s); }}, IZ_VIEW==='tablo'?'🗂 Kart görünümü':'🧾 Tablo görünümü'),
         el('div',{class:'autozone'},
@@ -4262,10 +4262,11 @@ async function renderKaliteTest(root){
     if(!rows.length){ out.append(el('div',{class:'card'},el('div',{class:'empty'},'Kayıt yok. Yukarıdan tarih+kod seçip «📥 LeanSys’ten Çek» yap.'))); return; }
     const card=el('div',{class:'card'}); const tb=el('table');
     const chkAll=el('input',{type:'checkbox',title:'Görünenleri seç/bırak'}); chkAll.onclick=e=>{document.querySelectorAll('#ktBody .ktChk').forEach(c=>c.checked=e.target.checked);};
-    tb.append(el('thead',{},el('tr',{}, ...(isAdmin?[el('th',{},chkAll)]:[]), ...['Tarih','Seri/Sıra','Test Adı','Stok Kodu','Stok Adı','Karar','Testi Yapan'].map(h=>el('th',{},h)))));
+    tb.append(el('thead',{},el('tr',{}, ...(isAdmin?[el('th',{},chkAll)]:[]), ...['Test No','Tarih','Seri/Sıra','Test Adı','Stok Kodu','Stok Adı','Karar','Testi Yapan'].map(h=>el('th',{},h)))));
     const body=el('tbody',{id:'ktBody'});
     rows.forEach(r=>{ body.append(el('tr',{style:'cursor:pointer',onclick:()=>showKtDetail(r)},
       ...(isAdmin?[el('td',{onclick:e=>e.stopPropagation()},el('input',{type:'checkbox',class:'ktChk','data-id':String(r.inc_key)}))]:[]),
+      el('td',{style:'white-space:nowrap;font-weight:700;font-size:12px'},(r.seri||'')+(r.sira!=null?(' / '+r.sira):'')),
       el('td',{style:'white-space:nowrap'},fmtDate(r.tarih)),
       el('td',{style:'white-space:nowrap;font-size:12px'},(r.seri||'')+(r.sira!=null?(' / '+r.sira):'')),
       el('td',{style:'font-weight:600'},r.adi||''),
