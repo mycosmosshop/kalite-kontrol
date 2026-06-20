@@ -5697,6 +5697,9 @@ async function ncrPullLeansys(){
     list.sort((a,b)=>(lsParseDate(b.uygunsuzlukTarih)||'').localeCompare(lsParseDate(a.uygunsuzlukTarih)||''));
     toast('Ara tablo: '+okundu+' kayıt · kod sonrası '+kodSonra+' · tarih sonrası '+list.length,(list.length?'ok':'err'));
   }
+  // Aynı uygunsuzluk view'da birden çok stok-hareket satırı olarak gelebilir → lsKey ile TEK kayda indir
+  { const _seen=new Set(); const _before=list.length; list=list.filter(r=>{ const k=lsKey(r); if(_seen.has(k))return false; _seen.add(k); return true; });
+    if(list.length<_before) toast((_before-list.length)+' tekrarlı satır birleştirildi → '+list.length+' uygunsuzluk.','ok'); }
   // zaten içe aktarılmış LeanSys anahtarları (notes damgasından)
   const {data:exist}=await sb.from('ncrs').select('notes');
   const imported=new Set(); (exist||[]).forEach(n=>{const m=(n.notes||'').match(LS_MARK_RE); if(m)imported.add(m[1]);});
@@ -5746,9 +5749,10 @@ async function ncrImportLeansys(selKeys){
   let {data:allNcrs}=await sb.from('ncrs').select('id,ncr_no,notes'); allNcrs=allNcrs||[];
   const byKey={}; allNcrs.forEach(n=>{const m=(n.notes||'').match(LS_MARK_RE); if(m)byKey[m[1]]=n;});
   const numList=allNcrs.map(n=>({ncr_no:n.ncr_no}));
-  let ins=0, upd=0, errN=0;
+  let ins=0, upd=0, errN=0; const doneKeys=new Set();
   for(const r of sel){
-    const key=lsKey(r); const ex=byKey[key];
+    const key=lsKey(r); if(doneKeys.has(key)) continue; doneKeys.add(key);   // batch içi aynı uygunsuzluğu 2 kez işleme
+    const ex=byKey[key];
     if(ex){   // GÜNCELLE — ncr_no, responsible, due_date, created_by'a dokunma (lsToNcr bunları döndürmez)
       const p=lsToNcr(r, ex.ncr_no); delete p.ncr_no; p.updated_at=new Date().toISOString();
       const exUser=lsSplitNotes(ex.notes).user;                 // kullanıcının elle yazdığı not korunur, LeanSys bloğu tazelenir
@@ -5757,7 +5761,7 @@ async function ncrImportLeansys(selKeys){
     } else {  // YENİ
       const no=nextNo('NCR',numList,'ncr_no'); numList.push({ncr_no:no});
       const p=lsToNcr(r,no); p.created_by=ME&&ME.id; p.updated_at=new Date().toISOString();
-      const {error}=await sb.from('ncrs').insert(p); error?errN++:ins++;
+      const {error}=await sb.from('ncrs').insert(p); if(error){errN++;} else { ins++; byKey[key]={ncr_no:no,notes:p.notes}; }
     }
   }
   toast(ins+' yeni + '+upd+' güncellendi'+(errN?(' · '+errN+' hata'):'')+'.', errN?'err':'ok');
