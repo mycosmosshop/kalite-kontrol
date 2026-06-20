@@ -5642,12 +5642,15 @@ function lsToNcr(r, ncrNo){
     'Uygunsuzluk No: '+((r.uygunsuzlukSeri||'')+'/'+(r.uygunsuzlukSira||'')),
     'Başarısızlık Tipi: '+(r.tipi||'-'),
     'Tespit Yeri: '+(r.tespitYeri||'-'),
+    'Tespit Eden: '+(r.tespitEden||'-'),
+    'Personel: '+(r.personel||'-'),
     'Makine: '+([r.makineGrubu,r.makine].filter(Boolean).join(' / ')||'-'),
     'Uygunsuzluk Türü: '+(r.uygunsuzlukTuru||'-'),
     'Hata Tipi: '+(r.hataTipi||'-'),
     'Hata Kaynağı: '+(r.hataKaynagi||'-'),
     'Birim: '+(r.birim||'-'),
     'İş Emri: '+(r.isEmriKodu||'-'),
+    'Evrak No: '+(r.uretimKaydi||'-'),
     'LeanSys Kararı: '+(r.karar||'-'),
     'LeanSys Sonucu: '+(r.sonuc||'-')
   ].join('\n');
