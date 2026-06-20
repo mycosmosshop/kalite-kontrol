@@ -5573,7 +5573,7 @@ async function renderDashboard(){
   setTimeout(()=>drawDashTrend(tcan,days),30);
 }
 // ====================== UYGUNSUZLUK (NCR / 8D) ======================
-let NCR_FILT={status:'',q:'',tip:'',loc:''};
+let NCR_FILT={status:'',q:'',tip:'',loc:'',stock:''};
 function nextNo(prefix, list, field){ const ys=String(new Date().getFullYear()).slice(-2);
   const re=new RegExp('^'+prefix+'-?'+ys+'-?(\\d{3,})$','i');
   let maxN=0; (list||[]).forEach(x=>{ const m=(x[field]||'').match(re); if(m){ const n=Number(m[1]); if(n>maxN)maxN=n; } });
@@ -5896,10 +5896,14 @@ async function renderNCR(){
   [['','Tümü'],...tipSet.map(t=>[t,t])].forEach(([v,t])=>{const o=el('option',{value:v},t);if(v===NCR_FILT.tip)o.selected=true;tipSel.append(o);});
   const locSel=el('select',{class:'inp',onchange:e=>{NCR_FILT.loc=e.target.value;renderNCR();}});
   [['','Tümü'],...locSet.map(t=>[t,t])].forEach(([v,t])=>{const o=el('option',{value:v},t);if(v===NCR_FILT.loc)o.selected=true;locSel.append(o);});
+  const stockSet=[...new Set((ncrs||[]).map(n=>n.stock_code).filter(Boolean))].sort();
+  const stkSel=el('select',{class:'inp',onchange:e=>{NCR_FILT.stock=e.target.value;renderNCR();}});
+  [['','Tümü'],...stockSet.map(t=>[t,t])].forEach(([v,t])=>{const o=el('option',{value:v},t);if(v===NCR_FILT.stock)o.selected=true;stkSel.append(o);});
   fcard.append(el('div',{class:'toolbar'},
     el('div',{class:'field',style:'flex:0;min-width:130px'},el('label',{class:'lab'},'Durum'),stSel),
     el('div',{class:'field',style:'flex:0;min-width:150px'},el('label',{class:'lab'},'Başarısızlık Tipi'),tipSel),
     el('div',{class:'field',style:'flex:0;min-width:150px'},el('label',{class:'lab'},'Lokasyon'),locSel),
+    el('div',{class:'field',style:'flex:0;min-width:140px'},el('label',{class:'lab'},'Stok Kodu'),stkSel),
     el('input',{class:'inp',placeholder:'🔍 NCR/U-no/stok/cari/tip/lokasyon ara…',style:'max-width:260px',value:NCR_FILT.q,oninput:e=>{NCR_FILT.q=e.target.value;
       document.querySelectorAll('#ncrBody tr').forEach(tr=>{const s=e.target.value.toLowerCase();tr.style.display=(!s||(tr.dataset.s||'').includes(s))?'':'none';});}}),
     el('div',{class:'grow'}),
@@ -5914,6 +5918,7 @@ async function renderNCR(){
   const body=el('tbody',{id:'ncrBody'});
   const list=(ncrs||[]).filter(n=>{
     if(NCR_FILT.status && n.status!==NCR_FILT.status) return false;
+    if(NCR_FILT.stock && n.stock_code!==NCR_FILT.stock) return false;
     if(NCR_FILT.tip || NCR_FILT.loc){ const lf=lsFields(n);
       if(NCR_FILT.tip && lf['Başarısızlık Tipi']!==NCR_FILT.tip) return false;
       if(NCR_FILT.loc && lf['Tespit Yeri']!==NCR_FILT.loc) return false; }
