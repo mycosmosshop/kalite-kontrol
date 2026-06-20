@@ -5561,6 +5561,127 @@ function nextNo(prefix, list, field){ const ys=String(new Date().getFullYear()).
 }
 const NCR_DECISION={rework:'🔄 Yeniden işle', scrap:'🗑 Hurda', concession:'⚠ Şartlı kabul', return:'↩ İade'};
 const NCR_STATUS={open:'🟠 Açık', in_progress:'🔵 Devam', closed:'🟢 Kapalı'};
+
+// ====================== LeanSys'ten UYGUNSUZLUK çek → bizim NCR formatı ======================
+// Akış: ajan /uygunsuzluk?from=&to= ile LeanSys (vW_UYGUNSUZLUK_RAPORU, SALT-OKUMA) → Supabase
+// uygunsuzluk_records ara tablosuna tazeler; buradan stok+tarih ile filtrelenip ncrs'e aktarılır.
+let LS_PULL={list:[],imported:new Set()};
+const LS_MARK_RE=/⟦LS:([^⟧]+)⟧/;                            // ncrs.notes içine gömülü LeanSys anahtarı (mükerrer engeli)
+function lsParseDate(s){                                     // 'dd.MM.yyyy' veya ISO → 'yyyy-MM-dd'
+  if(!s) return ''; s=String(s).trim();
+  let m=s.match(/^(\d{2})\.(\d{2})\.(\d{4})/); if(m) return m[3]+'-'+m[2]+'-'+m[1];
+  m=s.match(/^(\d{4})-(\d{2})-(\d{2})/); if(m) return m[1]+'-'+m[2]+'-'+m[3];
+  return '';
+}
+function lsKey(r){ return (r.nckey!=null&&r.nckey!=='')?('NCK'+r.nckey):((r.uygunsuzlukSeri||'')+'/'+(r.uygunsuzlukSira||'')); }
+function lsNum(v){ const n=Number(v); return (isFinite(n)&&n>0)?n:null; }
+// LeanSys uygunsuzluk satırı → ncrs payload'u (bizim format)
+function lsToNcr(r, ncrNo){
+  const iso=lsParseDate(r.uygunsuzlukTarih);
+  const kapIso=lsParseDate(r.kapatmaTarihi);
+  const closed=!!kapIso || /kapa|tamam|kapan|çözül|cozul/i.test(r.sonuc||'');
+  const tur=[r.uygunsuzlukTuru,r.hataTipi].filter(Boolean).join(' / ');
+  const tarif=(r.tarif||'').trim();
+  const notes=[
+    '⟦LS:'+lsKey(r)+'⟧',
+    'LeanSys uygunsuzluk: '+(r.uygunsuzlukSeri||'')+'/'+(r.uygunsuzlukSira||''),
+    r.tipi?('Tip: '+r.tipi):'',
+    r.tespitYeri?('Tespit yeri: '+r.tespitYeri):'',
+    (r.makineGrubu||r.makine)?('Makine: '+[r.makineGrubu,r.makine].filter(Boolean).join(' / ')):'',
+    r.hataKaynagi?('Hata kaynağı: '+r.hataKaynagi):'',
+    r.isEmriKodu?('İş emri: '+r.isEmriKodu):'',
+    (r.birim&&(r.partiHacmi||r.hataliMiktar))?('Birim: '+r.birim):'',
+    r.karar?('LeanSys kararı: '+r.karar):'',
+    r.sonuc?('LeanSys sonucu: '+r.sonuc):''
+  ].filter(Boolean).join('\n');
+  return {
+    ncr_no:ncrNo, source:'leansys',
+    stock_code:r.stokKodu||r.yarimamulKodu||null,
+    stock_name:r.stokAdi||r.yarimamulAdi||null,
+    customer:r.cariAdi||null,
+    detected_at: iso?(iso+'T00:00:00'):new Date().toISOString(),
+    defect_desc: (tur?(tur+(tarif?' — ':'')):'')+tarif || 'LeanSys uygunsuzluk',
+    qty_total: lsNum(r.partiHacmi)||lsNum(r.kontrolMiktar),
+    qty_def: lsNum(r.hataliMiktar),
+    status: closed?'closed':'open',
+    severity:'medium',
+    closed_at: (closed&&kapIso)?(kapIso+'T00:00:00'):null,
+    notes
+  };
+}
+async function ncrPullLeansys(){
+  if(!can('ncr')){ toast('Bu işlem için yetkin yok (Uygunsuzluk).','err'); return; }
+  const code=($('#nclsCode')&&$('#nclsCode').value.trim())||'';
+  const from=($('#nclsFrom')&&$('#nclsFrom').value)||'';
+  const to=($('#nclsTo')&&$('#nclsTo').value)||'';
+  const box=$('#nclsResult'); if(box) box.innerHTML='<div class="empty" style="padding:14px">⏳ LeanSys tazeleniyor…</div>';
+  const btn=$('#nclsBtn'); const _t=btn?btn.textContent:''; if(btn){btn.disabled=true;btn.textContent='⏳ Tazeleniyor…';}
+  // 1) ajan: uygunsuzluk_records'ı bu tarih penceresine tazele (LeanSys'e YALNIZCA SELECT)
+  let res=null;
+  try{ const r=await fetch('http://127.0.0.1:17777/uygunsuzluk?from='+encodeURIComponent(from)+'&to='+encodeURIComponent(to),{mode:'cors'}); res=await r.json(); }catch(e){ res=null; }
+  if(btn){btn.disabled=false;btn.textContent=_t;}
+  if(!res) toast('LeanSys ajanı kapalı/erişilemedi — var olan ara tablo gösteriliyor. (LeanSys_Agent çalışmalı.)','err');
+  else if(!res.ok) toast('LeanSys tazeleme başarısız: '+esc(res.error||'?'),'err');
+  else toast('LeanSys uygunsuzluk ara tablosu tazelendi ('+(res.count||0)+' satır).','ok');
+  // 2) Supabase ara tablodan oku + stok/tarih filtre (LeanSys'e dokunulmaz)
+  const {data:rows,error}=await sb.from('uygunsuzluk_records').select('*');
+  if(error){ if(box)box.innerHTML=''; toast('Ara tablo okunamadı: '+esc(error.message),'err'); return; }
+  let list=(rows||[]).slice();
+  if(code){ const cl=code.toLowerCase(); list=list.filter(r=>String(r.stokKodu||'').toLowerCase()===cl||String(r.yarimamulKodu||'').toLowerCase()===cl); }
+  if(from) list=list.filter(r=>{const d=lsParseDate(r.uygunsuzlukTarih);return d&&d>=from;});
+  if(to)   list=list.filter(r=>{const d=lsParseDate(r.uygunsuzlukTarih);return d&&d<=to;});
+  list.sort((a,b)=>(lsParseDate(b.uygunsuzlukTarih)||'').localeCompare(lsParseDate(a.uygunsuzlukTarih)||''));
+  // zaten içe aktarılmış LeanSys anahtarları (notes damgasından)
+  const {data:exist}=await sb.from('ncrs').select('notes');
+  const imported=new Set(); (exist||[]).forEach(n=>{const m=(n.notes||'').match(LS_MARK_RE); if(m)imported.add(m[1]);});
+  LS_PULL={list,imported};
+  renderLsPullTable();
+}
+function renderLsPullTable(){
+  const box=$('#nclsResult'); if(!box) return; box.innerHTML='';
+  const list=LS_PULL.list||[];
+  if(!list.length){ box.append(el('div',{class:'empty',style:'padding:14px'},'Bu kod/tarih için LeanSys’te uygunsuzluk bulunamadı.')); return; }
+  const yeni=list.filter(r=>!LS_PULL.imported.has(lsKey(r))).length;
+  box.append(el('div',{style:'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0 8px'},
+    el('div',{style:'font-size:13px;color:var(--muted)'},list.length+' kayıt · '+yeni+' yeni (içe aktarılmamış)'),
+    el('div',{class:'grow'}),
+    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{box.querySelectorAll('input.nclsChk:not(:disabled)').forEach(c=>c.checked=true);}},'Tümünü Seç'),
+    el('button',{class:'btn sm',style:'flex:0',onclick:async()=>{const sel=new Set();box.querySelectorAll('input.nclsChk:checked').forEach(c=>sel.add(c.dataset.k));await ncrImportLeansys(sel);}},'⬇ Seçilenleri NCR’a Aktar')
+  ));
+  const wrap=el('div',{class:'tbl-wrap',style:'max-height:360px;overflow:auto'});
+  const tb=el('table');
+  tb.append(el('thead',{},el('tr',{},...['','Tarih','Stok','Cari','Tür / Hata','Tanım','Parti','Hatalı','LeanSys Sonuç','Durum'].map(h=>el('th',{},h)))));
+  const body=el('tbody');
+  list.forEach(r=>{ const k=lsKey(r); const done=LS_PULL.imported.has(k);
+    const chk=el('input',{type:'checkbox',class:'nclsChk'}); chk.dataset.k=k; if(done){chk.disabled=true;}else{chk.checked=true;}
+    const d=lsParseDate(r.uygunsuzlukTarih);
+    body.append(el('tr',{style:done?'opacity:.5':''},
+      el('td',{},chk),
+      el('td',{style:'white-space:nowrap'},d?d.split('-').reverse().join('.'):'—'),
+      el('td',{},r.stokKodu||r.yarimamulKodu||'—'),
+      el('td',{style:'font-size:12px'},r.cariAdi||'—'),
+      el('td',{style:'font-size:12px'},[r.uygunsuzlukTuru,r.hataTipi].filter(Boolean).join(' / ')||'—'),
+      el('td',{style:'font-size:12px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:r.tarif||''},r.tarif||'—'),
+      el('td',{style:'text-align:right'},(r.partiHacmi||'—')),
+      el('td',{style:'text-align:right;color:#f87171'},(r.hataliMiktar||'—')),
+      el('td',{style:'font-size:12px'},r.sonuc||(r.kapatmaTarihi?'Kapalı':'—')),
+      el('td',{},done?el('span',{class:'pill ok',style:'font-size:11px'},'✓ Aktarıldı'):el('span',{class:'pill proses',style:'font-size:11px'},'Yeni'))
+    ));
+  });
+  tb.append(body); wrap.append(tb); box.append(wrap);
+}
+async function ncrImportLeansys(selKeys){
+  if(!can('ncr')){ toast('Bu işlem için yetkin yok (Uygunsuzluk).','err'); return; }
+  const sel=(LS_PULL.list||[]).filter(r=>selKeys.has(lsKey(r))&&!LS_PULL.imported.has(lsKey(r)));
+  if(!sel.length){ toast('İçe aktarılacak yeni (aktarılmamış) kayıt seçilmedi.','err'); return; }
+  if(!confirm(sel.length+' LeanSys uygunsuzluk kaydı NCR olarak içe aktarılacak.\n(LeanSys’e dokunulmaz; yalnız buradaki NCR listesine eklenir.)\nDevam?')) return;
+  let {data:allNcrs}=await sb.from('ncrs').select('ncr_no'); allNcrs=allNcrs||[];
+  const payloads=sel.map(r=>{ const no=nextNo('NCR',allNcrs,'ncr_no'); allNcrs.push({ncr_no:no}); const p=lsToNcr(r,no); p.created_by=ME&&ME.id; p.updated_at=new Date().toISOString(); return p; });
+  const {error}=await sb.from('ncrs').insert(payloads);
+  if(error){ toast('İçe aktarma hatası: '+esc(error.message),'err'); return; }
+  toast(payloads.length+' uygunsuzluk NCR olarak içe aktarıldı.','ok');
+  renderNCR();
+}
 // RET kontrol kaydı kaydedilince otomatik uygunsuzluk (NCR) aç
 async function autoOpenNCR(rec, prod){
   try{
@@ -5612,6 +5733,21 @@ async function renderNCR(){
     el('p',{style:'color:var(--muted);font-size:13px;margin:8px 0 0'},'Uygunsuzluk kayıtlarını izle ve 8D adımlarıyla kapat. RET çıkan kontrol kayıtları için tek tıkla NCR aç; manuel uygunsuzluk da eklenebilir.')
   );
   root.append(hdr);
+  // 🏭 LeanSys'ten uygunsuzluk çek (salt-okuma) → bizim NCR formatına
+  if(can('ncr')){
+    const _ty=new Date(); const _pad=n=>String(n).padStart(2,'0'); const _defFrom=_ty.getFullYear()+'-01-01'; const _defTo=_ty.getFullYear()+'-'+_pad(_ty.getMonth()+1)+'-'+_pad(_ty.getDate());
+    root.append(collapseBar('🏭 LeanSys’ten Uygunsuzluk Çek (bizim NCR formatına)',
+      el('p',{style:'color:var(--muted);margin:0 0 8px;font-size:13px',html:'LeanSys uygunsuzluk raporundan (<b>salt-okuma</b>) seçtiğin <b>stok kodu</b> ve <b>tarih aralığındaki</b> kayıtları çeker, önizler ve seçtiklerini <b>NCR</b> olarak içe aktarır. Daha önce aktarılanlar tekrar eklenmez. <b>LeanSys’e hiçbir şey yazılmaz/silinmez.</b>'}),
+      el('div',{class:'msg info',style:'margin:0 0 10px;font-size:12px',html:'⚙ <b>LeanSys_Agent</b> çalışıyor olmalı (Masaüstü → Leansys Verileri). Bu işlem, paylaşılan <b>uygunsuzluk ara tablosunu</b> seçtiğin tarih penceresine göre tazeler.'}),
+      el('div',{class:'toolbar'},
+        el('div',{class:'field',style:'flex:0;min-width:170px'},el('label',{class:'lab'},'Stok Kodu (boş = tümü)'),el('input',{class:'inp',id:'nclsCode',placeholder:'700.0.454'})),
+        el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Başlangıç'),el('input',{type:'date',class:'inp',id:'nclsFrom',value:_defFrom})),
+        el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),el('input',{type:'date',class:'inp',id:'nclsTo',value:_defTo})),
+        el('button',{class:'btn sm',id:'nclsBtn',style:'flex:0',onclick:ncrPullLeansys},'🔄 LeanSys’ten Çek')
+      ),
+      el('div',{id:'nclsResult'})
+    ));
+  }
   // RET → NCR önerileri
   if(candidateRet.length){
     const sug=el('div',{class:'card'});
