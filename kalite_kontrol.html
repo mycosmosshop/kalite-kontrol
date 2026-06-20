@@ -5609,6 +5609,10 @@ function lsParseNo(no, yilFallback){
   if(!year) year=(/^\d{4}$/.test(String(yilFallback))?String(yilFallback):String(new Date().getFullYear()));
   return {year, sira:sira||null};
 }
+// Virgül/noktalı virgül/satır ile AYRILMIŞ çoklu No → {year,sira} dizisi. "U2026/355, 366, U2025/12"
+function lsParseNoList(raw, yilFallback){
+  return String(raw||'').split(/[,;\n]+/).map(s=>s.trim()).filter(Boolean).map(s=>lsParseNo(s,yilFallback)).filter(Boolean);
+}
 // notes alanını KULLANICI kısmı (marker öncesi) + LeanSys BLOĞU (⟦LS:..⟧ ve sonrası) olarak ayır; blok satırlarını {etiket,değer} dizisine ayrıştır
 function lsSplitNotes(notes){
   notes=String(notes||''); const i=notes.indexOf('⟦LS:');
@@ -5666,10 +5670,12 @@ async function ncrPullLeansys(){
   const to=($('#nclsTo')&&$('#nclsTo').value)||'';
   const noRaw=($('#nclsNo')&&$('#nclsNo').value.trim())||'';
   const yil=($('#nclsYil')&&$('#nclsYil').value.trim())||'';
-  const byNo=lsParseNo(noRaw, yil);                              // No girildiyse {year,sira}; yoksa null
-  // No modunda ajan O YILI çeker (stok/tarih atlanır); aksi halde tarih aralığı
-  const aFrom = byNo ? (byNo.year+'-01-01') : from;
-  const aTo   = byNo ? (byNo.year+'-12-31') : to;
+  const noList=lsParseNoList(noRaw, yil);                        // virgülle çoklu No → [{year,sira}…]
+  const byNo = noList.length ? noList : null;
+  // No modunda ajan ilgili YIL(lar)ı çeker (stok/tarih atlanır); aksi halde tarih aralığı
+  const _years = byNo ? byNo.map(x=>Number(x.year)) : [];
+  const aFrom = byNo ? (Math.min(..._years)+'-01-01') : from;
+  const aTo   = byNo ? (Math.max(..._years)+'-12-31') : to;
   const box=$('#nclsResult'); if(box) box.innerHTML='<div class="empty" style="padding:14px">⏳ LeanSys tazeleniyor…</div>';
   const btn=$('#nclsBtn'); const _t=btn?btn.textContent:''; if(btn){btn.disabled=true;btn.textContent='⏳ Tazeleniyor…';}
   // 1) ajan: uygunsuzluk_records'ı bu pencereye tazele (LeanSys'e YALNIZCA SELECT)
@@ -5684,11 +5690,12 @@ async function ncrPullLeansys(){
   if(error){ if(box)box.innerHTML=''; toast('Ara tablo okunamadı: '+esc(error.message),'err'); return; }
   let list=(rows||[]).slice(); const okundu=list.length;
   if(byNo){
-    // UYGUNSUZLUK NO modu: seri (yıl) + sıra ile eşle; stok/tarih atlanır
-    list=list.filter(r=>{ const ser=String(r.uygunsuzlukSeri||''); const okY=!byNo.year||ser.includes(byNo.year);
-      const okS=!byNo.sira||String(r.uygunsuzlukSira||'').trim()===String(byNo.sira); return okY&&okS; });
+    // UYGUNSUZLUK NO modu: çoklu No'dan herhangi biri eşleşirse al (seri=yıl + sıra); stok/tarih atlanır
+    list=list.filter(r=>{ const ser=String(r.uygunsuzlukSeri||''); const sira=String(r.uygunsuzlukSira||'').trim();
+      return byNo.some(p=> (!p.year||ser.includes(p.year)) && (!p.sira||sira===String(p.sira)) ); });
     list.sort((a,b)=>(lsParseDate(b.uygunsuzlukTarih)||'').localeCompare(lsParseDate(a.uygunsuzlukTarih)||''));
-    toast('Uygunsuzluk No araması: '+okundu+' okundu · '+list.length+' eşleşti'+(byNo.sira?(' (No '+byNo.year+'/'+byNo.sira+')'):(' (tüm '+byNo.year+')')),(list.length?'ok':'err'));
+    const _lbl=byNo.map(p=>p.sira?(p.year+'/'+p.sira):('tüm '+p.year)).join(', ');
+    toast('Uygunsuzluk No araması: '+okundu+' okundu · '+list.length+' eşleşti ('+_lbl+')',(list.length?'ok':'err'));
   } else {
     // STOK eşleşmesi ESNEK: boşluk/büyük-küçük duyarsız; tam eşit ya da biri diğerini içeriyorsa (ör. "700.0.444" → "700.0.444-2X")
     const _norm=s=>String(s||'').trim().toLowerCase().replace(/\s+/g,'');
@@ -5843,11 +5850,11 @@ async function renderNCR(){
         el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Başlangıç'),el('input',{type:'date',class:'inp',id:'nclsFrom',value:_defFrom})),
         el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),el('input',{type:'date',class:'inp',id:'nclsTo',value:_defTo})),
         el('div',{style:'width:1px;align-self:stretch;background:var(--border);margin:0 2px'}),
-        el('div',{class:'field',style:'flex:0;min-width:140px'},el('label',{class:'lab'},'Uygunsuzluk No'),el('input',{class:'inp',id:'nclsNo',placeholder:'U2026/355 ya da 355'})),
+        el('div',{class:'field',style:'flex:0;min-width:190px'},el('label',{class:'lab'},'Uygunsuzluk No (virgülle çoklu)'),el('input',{class:'inp',id:'nclsNo',placeholder:'U2026/355, 366, U2025/12'})),
         el('div',{class:'field',style:'flex:0;max-width:90px'},el('label',{class:'lab'},'Yıl'),el('input',{class:'inp',id:'nclsYil',inputmode:'numeric',placeholder:String(_ty.getFullYear()),value:String(_ty.getFullYear())})),
         el('button',{class:'btn sm',id:'nclsBtn',style:'flex:0',onclick:ncrPullLeansys},'🔄 LeanSys’ten Çek')
       ),
-      el('div',{style:'font-size:11px;color:var(--muted);margin:-4px 0 4px',html:'💡 <b>Uygunsuzluk No</b> girersen o numara/yıl tek kayıt çekilir (stok ve tarih aralığı dikkate alınmaz). U-kodundaki yıl yoksa <b>Yıl</b> kullanılır.'}),
+      el('div',{style:'font-size:11px;color:var(--muted);margin:-4px 0 4px',html:'💡 <b>Uygunsuzluk No</b> girersen o numara(lar) çekilir (stok ve tarih aralığı dikkate alınmaz). <b>Virgülle çoklu</b> yazabilirsin: <code>U2026/355, 366, U2025/12</code>. U-kodunda yıl yoksa <b>Yıl</b> kullanılır.'}),
       el('div',{id:'nclsResult'})
     ));
   }
