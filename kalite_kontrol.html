@@ -5588,6 +5588,15 @@ function lsDecision(k){ k=_tr(k); if(!k) return null;
   return null; }  // Degerlendirme / Düsük kalite → karar henüz yok, boş kalsın
 // LeanSys tip → önem: dış başarısızlık (müşteriye giden) = yüksek, diğer = orta
 function lsSeverity(r){ const t=_tr(r.tipi)+' '+_tr(r.uygunsuzlukTuru); return (t.includes('dis basari')||t.includes('disbasari'))?'high':'medium'; }
+// notes alanını KULLANICI kısmı (marker öncesi) + LeanSys BLOĞU (⟦LS:..⟧ ve sonrası) olarak ayır; blok satırlarını {etiket,değer} dizisine ayrıştır
+function lsSplitNotes(notes){
+  notes=String(notes||''); const i=notes.indexOf('⟦LS:');
+  if(i<0) return {user:notes.trim(), block:'', fields:[]};
+  const user=notes.slice(0,i).trim(), block=notes.slice(i).trim(), fields=[];
+  block.split('\n').forEach(line=>{ line=line.trim(); if(!line||line.startsWith('⟦LS:'))return;
+    const c=line.indexOf(':'); if(c>0){ const lab=line.slice(0,c).trim(), val=line.slice(c+1).trim(); if(val&&val!=='-')fields.push([lab,val]); } });
+  return {user, block, fields};
+}
 // LeanSys uygunsuzluk satırı → ncrs payload'u (bizim format)
 function lsToNcr(r, ncrNo){
   const iso=lsParseDate(r.uygunsuzlukTarih);
@@ -5595,18 +5604,21 @@ function lsToNcr(r, ncrNo){
   const closed=!!kapIso || /kapa|tamam|kapan|çözül|cozul/i.test(r.sonuc||'');
   const tur=[r.uygunsuzlukTuru,r.hataTipi].filter(Boolean).join(' / ');
   const tarif=(r.tarif||'').trim();
+  // LeanSys bilgi BLOĞU — ⟦LS:key⟧ markeri + "Etiket: değer" satırları (modal bunu ayrı panele ayrıştırır).
   const notes=[
     '⟦LS:'+lsKey(r)+'⟧',
-    'LeanSys uygunsuzluk: '+(r.uygunsuzlukSeri||'')+'/'+(r.uygunsuzlukSira||''),
-    r.tipi?('Tip: '+r.tipi):'',
-    r.tespitYeri?('Tespit yeri: '+r.tespitYeri):'',
-    (r.makineGrubu||r.makine)?('Makine: '+[r.makineGrubu,r.makine].filter(Boolean).join(' / ')):'',
-    r.hataKaynagi?('Hata kaynağı: '+r.hataKaynagi):'',
-    r.isEmriKodu?('İş emri: '+r.isEmriKodu):'',
-    (r.birim&&(r.partiHacmi||r.hataliMiktar))?('Birim: '+r.birim):'',
-    r.karar?('LeanSys kararı: '+r.karar):'',
-    r.sonuc?('LeanSys sonucu: '+r.sonuc):''
-  ].filter(Boolean).join('\n');
+    'Uygunsuzluk No: '+((r.uygunsuzlukSeri||'')+'/'+(r.uygunsuzlukSira||'')),
+    'Başarısızlık Tipi: '+(r.tipi||'-'),
+    'Tespit Yeri: '+(r.tespitYeri||'-'),
+    'Makine: '+([r.makineGrubu,r.makine].filter(Boolean).join(' / ')||'-'),
+    'Uygunsuzluk Türü: '+(r.uygunsuzlukTuru||'-'),
+    'Hata Tipi: '+(r.hataTipi||'-'),
+    'Hata Kaynağı: '+(r.hataKaynagi||'-'),
+    'Birim: '+(r.birim||'-'),
+    'İş Emri: '+(r.isEmriKodu||'-'),
+    'LeanSys Kararı: '+(r.karar||'-'),
+    'LeanSys Sonucu: '+(r.sonuc||'-')
+  ].join('\n');
   return {
     ncr_no:ncrNo, source:'leansys',
     stock_code:r.stokKodu||r.yarimamulKodu||null,
@@ -5704,6 +5716,8 @@ async function ncrImportLeansys(selKeys){
     const key=lsKey(r); const ex=byKey[key];
     if(ex){   // GÜNCELLE — ncr_no, responsible, due_date, created_by'a dokunma (lsToNcr bunları döndürmez)
       const p=lsToNcr(r, ex.ncr_no); delete p.ncr_no; p.updated_at=new Date().toISOString();
+      const exUser=lsSplitNotes(ex.notes).user;                 // kullanıcının elle yazdığı not korunur, LeanSys bloğu tazelenir
+      p.notes=(exUser?exUser+'\n':'')+p.notes;
       const {error}=await sb.from('ncrs').update(p).eq('id',ex.id); error?errN++:upd++;
     } else {  // YENİ
       const no=nextNo('NCR',numList,'ncr_no'); numList.push({ncr_no:no});
@@ -5887,7 +5901,20 @@ async function openNCREdit(existing, fromRet, allNcrs, stockCat, cariList){
     el('div',{class:'field grow'},el('label',{class:'lab'},'Termin'),(()=>{const i=el('input',{type:'date',class:'inp'}); i.value=n.due_date||''; F.due_date=i; return i;})())
   ));
   m.append(fld('defect_desc','Hata / Uygunsuzluk Tanımı','Hatanın net tanımı, nerede tespit edildi…',3, fr.record?(fr.record.vals||[]).filter(v=>(v.samples||[]).some(s=>s.ok===false)).map(v=>v.measure_name+(v.nitel_hedef?' ('+v.nitel_hedef+')':'')).join(', '):''));
+  // 🏭 LeanSys uygunsuzluk bilgileri — notes içindeki LeanSys bloğundan SALT-OKUNUR panel (Uygunsuzluk No, İç/Dış başarısızlık, tespit yeri…)
+  const _ls=lsSplitNotes(n.notes);
+  if(_ls.fields.length){
+    const grid=el('div',{style:'display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px 16px;padding:11px 13px;border:1px solid var(--border);border-radius:8px;background:var(--panel2);margin-bottom:8px'});
+    _ls.fields.forEach(([lab,val])=>grid.append(el('div',{},
+      el('div',{style:'font-size:10px;text-transform:uppercase;letter-spacing:.3px;color:var(--muted)'},lab),
+      el('div',{style:'font-size:13px;font-weight:600;color:var(--text);word-break:break-word'},val)
+    )));
+    m.append(el('div',{style:'font-weight:700;margin:10px 0 6px;color:var(--accent)'},'🏭 LEANSYS UYGUNSUZLUK BİLGİLERİ'),
+      el('div',{style:'font-size:11px;color:var(--muted);margin:-4px 0 6px'},'LeanSys’ten otomatik geldi (salt-okunur). Düzenlemek için LeanSys’ten tekrar çekip güncelle.'),
+      grid);
+  }
   m.append(fld('notes','Ek Notlar','',2));
+  F.notes.value=_ls.user;   // Ek Notlar yalnız kullanıcının kendi notunu gösterir; LeanSys bloğu yukarıdaki panelde
   // 8D ayrı modülde (eightd) — kaydedilmiş NCR'dan başlatılır/düzenlenir
   if(existing){
     const e8note=el('div',{style:'margin-top:12px;padding:10px;border:1px dashed var(--border);border-radius:8px;background:var(--panel2);font-size:12.5px;color:var(--muted)'},
@@ -5901,6 +5928,7 @@ async function openNCREdit(existing, fromRet, allNcrs, stockCat, cariList){
   btns.append(el('button',{class:'btn sm',style:'flex:0',onclick:async()=>{
     const payload={ncr_no:ncrNo};
     Object.keys(F).forEach(k=>{ let v=F[k].value; if(v==='')v=null; if((k==='qty_total'||k==='qty_def')&&v!=null)v=Number(v); payload[k]=v; });
+    if(_ls.block){ payload.notes=((payload.notes||'').trim()?(payload.notes.trim()+'\n'):'')+_ls.block; }  // kullanıcı notu + korunan LeanSys bloğu
     if(fr.record){ payload.record_id=fr.record.id; payload.production_id=fr.record.production_id; payload.source='record'; payload.detected_at=fr.record.checked_at; }
     payload.updated_at=new Date().toISOString();
     if(payload.status==='closed' && !n.closed_at) payload.closed_at=new Date().toISOString();
