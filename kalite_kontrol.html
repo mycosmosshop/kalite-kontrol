@@ -5618,6 +5618,8 @@ function lsSplitNotes(notes){
     const c=line.indexOf(':'); if(c>0){ const lab=line.slice(0,c).trim(), val=line.slice(c+1).trim(); if(val&&val!=='-')fields.push([lab,val]); } });
   return {user, block, fields};
 }
+// NCR'ın LeanSys uygunsuzluk numarasını (U2026/355) notes bloğundan çek (yoksa '')
+function lsNoOf(n){ const f=lsSplitNotes(n&&n.notes).fields.find(x=>x[0]==='Uygunsuzluk No'); return f?f[1]:''; }
 // LeanSys uygunsuzluk satırı → ncrs payload'u (bizim format)
 function lsToNcr(r, ncrNo){
   const iso=lsParseDate(r.uygunsuzlukTarih);
@@ -5875,8 +5877,8 @@ async function renderNCR(){
   const body=el('tbody',{id:'ncrBody'});
   const list=(ncrs||[]).filter(n=>!NCR_FILT.status||n.status===NCR_FILT.status);
   if(!list.length) body.append(el('tr',{},el('td',{colspan:10},el('div',{class:'empty'},'NCR kaydı yok.'))));
-  list.forEach(n=>body.append(el('tr',{style:'cursor:pointer','data-s':`${n.ncr_no} ${n.stock_code} ${n.customer||''} ${n.defect_desc||''}`.toLowerCase(),onclick:()=>openNCREdit(n,null,ncrs,stockCat,cariList)},
-    el('td',{style:'font-weight:700;font-family:monospace'},n.ncr_no),
+  list.forEach(n=>body.append(el('tr',{style:'cursor:pointer','data-s':`${n.ncr_no} ${lsNoOf(n)} ${n.stock_code} ${n.customer||''} ${n.defect_desc||''}`.toLowerCase(),onclick:()=>openNCREdit(n,null,ncrs,stockCat,cariList)},
+    el('td',{style:'font-weight:700;font-family:monospace'},n.ncr_no,(()=>{const u=lsNoOf(n);return u?el('div',{style:'font-weight:400;font-size:10.5px;color:var(--muted)',title:'LeanSys uygunsuzluk no'},u):'';})()),
     el('td',{style:'white-space:nowrap'},fmtDate(n.detected_at)),
     el('td',{},n.stock_code||''),
     el('td',{style:'font-size:12px'},n.customer||'—'),
