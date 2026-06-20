@@ -2911,6 +2911,18 @@ function _docTarayicidaAcilir(link){
   const e=(String(link||'').split('.').pop()||'').toLowerCase();
   return ['pdf','jpg','jpeg','png','gif','bmp','webp','svg'].indexOf(e)>=0;
 }
+// 🔄 LeanSys stok dokümanlarını tazele (ajan /refreshstokdok → _stokdok_refresh.ps1; LeanSys SALT-OKUMA)
+async function refreshStokDokLeansys(){
+  if(!can('import')){ toast('Bu işlem için yetkin yok (İçe Aktar).','err'); return; }
+  const btn=$('#sdRefreshBtn'); const _t=btn?btn.textContent:''; if(btn){btn.disabled=true;btn.textContent='⏳ Güncelleniyor…';}
+  let res=null;
+  try{ const r=await fetch('http://127.0.0.1:17777/refreshstokdok',{mode:'cors'}); res=await r.json(); }catch(e){ res=null; }
+  if(btn){btn.disabled=false;btn.textContent=_t;}
+  if(!res){ toast('LeanSys ajanı kapalı/erişilemedi. Masaüstündeki LeanSys_Agent çalışmalı (Startup).','err'); return; }
+  if(!res.ok){ toast('Stok dokümanları güncelleme başarısız: '+esc(res.error||'?'),'err'); return; }
+  toast('Stok dokümanları LeanSys’ten güncellendi ('+(res.count||0)+' satır). Liste tazeleniyor…','ok');
+  renderStokDokumanlari($('#tab-stokdok'));
+}
 async function renderStokDokumanlari(root){
   root.innerHTML='';
   root.append(el('div',{class:'msg info',html:'📄 LeanSys <b>Stok Dokümanları</b> (kod bazlı). <b>Stok kodu</b>, stok adı veya doküman adı ile ara. Dosyalar ağ paylaşımında (<code>\\\\10.11.11.11\\dokumanlar\\stokgorsel</code>) — <b>linki kopyalayıp</b> Dosya Gezgini adres çubuğuna yapıştır.'}));
@@ -2921,6 +2933,7 @@ async function renderStokDokumanlari(root){
   root.append(el('div',{class:'card'},el('div',{class:'toolbar'},
     el('div',{class:'field',style:'flex:1;min-width:260px;max-width:440px'},el('label',{class:'lab'},'Ara'),search),
     el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{search.value='';load(true);}},'Temizle'),
+    can('import')?el('button',{class:'btn sm',id:'sdRefreshBtn',style:'flex:0',title:'LeanSys stok dokümanlarını Supabase’e tazele (salt-okuma; LeanSys’e yazılmaz). LeanSys_Agent çalışmalı.',onclick:()=>refreshStokDokLeansys()},'🔄 LeanSys’ten Güncelle'):'',
     el('div',{class:'grow'}), countEl
   )));
   const out=el('div'); root.append(out);
