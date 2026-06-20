@@ -403,11 +403,12 @@ document.addEventListener('fullscreenchange',()=>{ if(_fsBtn) _fsBtn.textContent
 
 // ---- PWA: service worker + "Uygulamayı Yükle" (PC + tablet + telefon) ----
 if('serviceWorker' in navigator){
-  // OTOMATİK GÜNCELLEME: yeni SW aktive olup kontrolü alınca sayfayı BİR KEZ tazele → eski önbellek takılmaz.
-  const _hadController = !!navigator.serviceWorker.controller;   // ilk kurulumda reload etme, sadece GÜNCELLEMEde
-  let _swReloaded=false;
+  // YENİ SÜRÜM: otomatik reload ETME (çalışırken seni sekmeden atmasın). Sadece bilgilendir; kullanıcı uygun olunca yeniler.
+  const _hadController = !!navigator.serviceWorker.controller;   // ilk kurulumda haber verme, sadece GÜNCELLEMEde
+  let _swNotified=false;
   navigator.serviceWorker.addEventListener('controllerchange',()=>{
-    if(_swReloaded || !_hadController) return; _swReloaded=true; location.reload();
+    if(_swNotified || !_hadController) return; _swNotified=true;
+    try{ toast('🔄 Yeni sürüm hazır. İşin bitince sayfayı yenile (Ctrl+R) — kaldığın sekmeye döner.','ok'); }catch(e){}
   });
   window.addEventListener('load',()=>{
     // updateViaCache:'none' → sw.js HER ZAMAN HTTP cache ATLANARAK çekilir (GitHub Pages 10 dk cache'i SW güncellemesini geciktirmesin)
@@ -549,7 +550,9 @@ async function afterLogin(){
     return;
   }
   $('#pending').classList.add('hidden');
-  switchTab('uretimler');
+  let _last=null; try{ _last=localStorage.getItem('kk_active_tab'); }catch(e){}
+  const _lb=_last&&document.querySelector('nav.tabs button[data-tab="'+_last+'"]');
+  switchTab(_lb && !_lb.classList.contains('hidden') ? _last : 'uretimler');   // yenileme sonrası kaldığın sekme (yetkin yoksa varsayılan)
 }
 
 // ====================== TABS ======================
@@ -574,6 +577,7 @@ function switchTab(name){
   if(name==='eightd')renderEightD();
   if(name==='cert')renderCert();
   if(name==='admin')renderAdmin();
+  try{ localStorage.setItem('kk_active_tab',name); }catch(e){}   // yenileme sonrası bu sekmeye dön
 }
 document.querySelectorAll('nav.tabs button').forEach(b=>b.onclick=async()=>{
   // plandan çıkarken kaydedilmemiş değişiklik varsa sor (yoksa sormadan geç)
