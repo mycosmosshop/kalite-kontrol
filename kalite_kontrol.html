@@ -5624,13 +5624,18 @@ async function ncrPullLeansys(){
   else if(!res.ok) toast('LeanSys tazeleme başarısız: '+esc(res.error||'?'),'err');
   else toast('LeanSys uygunsuzluk ara tablosu tazelendi ('+(res.count||0)+' satır).','ok');
   // 2) Supabase ara tablodan oku + stok/tarih filtre (LeanSys'e dokunulmaz)
-  const {data:rows,error}=await sb.from('uygunsuzluk_records').select('*');
+  const {data:rows,error}=await sb.from('uygunsuzluk_records').select('*').limit(50000);
   if(error){ if(box)box.innerHTML=''; toast('Ara tablo okunamadı: '+esc(error.message),'err'); return; }
-  let list=(rows||[]).slice();
-  if(code){ const cl=code.toLowerCase(); list=list.filter(r=>String(r.stokKodu||'').toLowerCase()===cl||String(r.yarimamulKodu||'').toLowerCase()===cl); }
+  let list=(rows||[]).slice(); const okundu=list.length;
+  // STOK eşleşmesi ESNEK: boşluk/büyük-küçük duyarsız; tam eşit ya da biri diğerini içeriyorsa (ör. "700.0.444" → "700.0.444-2X")
+  const _norm=s=>String(s||'').trim().toLowerCase().replace(/\s+/g,'');
+  if(code){ const cl=_norm(code); list=list.filter(r=>{ const a=_norm(r.stokKodu), b=_norm(r.yarimamulKodu);
+    return (a&&(a===cl||a.includes(cl)||cl.includes(a)))||(b&&(b===cl||b.includes(cl)||cl.includes(b))); }); }
+  const kodSonra=list.length;
   if(from) list=list.filter(r=>{const d=lsParseDate(r.uygunsuzlukTarih);return d&&d>=from;});
   if(to)   list=list.filter(r=>{const d=lsParseDate(r.uygunsuzlukTarih);return d&&d<=to;});
   list.sort((a,b)=>(lsParseDate(b.uygunsuzlukTarih)||'').localeCompare(lsParseDate(a.uygunsuzlukTarih)||''));
+  toast('Ara tablo: '+okundu+' kayıt · kod filtresi sonrası '+kodSonra+' · tarih sonrası '+list.length,(list.length?'ok':'err'));
   // zaten içe aktarılmış LeanSys anahtarları (notes damgasından)
   const {data:exist}=await sb.from('ncrs').select('notes');
   const imported=new Set(); (exist||[]).forEach(n=>{const m=(n.notes||'').match(LS_MARK_RE); if(m)imported.add(m[1]);});
