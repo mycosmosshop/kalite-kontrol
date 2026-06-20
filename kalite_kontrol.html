@@ -5669,7 +5669,7 @@ async function ncrPullLeansys(){
   const from=($('#nclsFrom')&&$('#nclsFrom').value)||'';
   const to=($('#nclsTo')&&$('#nclsTo').value)||'';
   const noRaw=($('#nclsNo')&&$('#nclsNo').value.trim())||'';
-  const yil=($('#nclsYil')&&$('#nclsYil').value.trim())||'';
+  const yil=(from&&from.slice(0,4))||'';   // U-kodunda yıl yoksa Başlangıç tarihinin yılı (yoksa bu yıl)
   const noList=lsParseNoList(noRaw, yil);                        // virgülle çoklu No → [{year,sira}…]
   const byNo = noList.length ? noList : null;
   // No modunda ajan ilgili YIL(lar)ı çeker (stok/tarih atlanır); aksi halde tarih aralığı
@@ -5851,10 +5851,9 @@ async function renderNCR(){
         el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),el('input',{type:'date',class:'inp',id:'nclsTo',value:_defTo})),
         el('div',{style:'width:1px;align-self:stretch;background:var(--border);margin:0 2px'}),
         el('div',{class:'field',style:'flex:0;min-width:190px'},el('label',{class:'lab'},'Uygunsuzluk No (virgülle çoklu)'),el('input',{class:'inp',id:'nclsNo',placeholder:'U2026/355, 366, U2025/12'})),
-        el('div',{class:'field',style:'flex:0;max-width:90px'},el('label',{class:'lab'},'Yıl'),el('input',{class:'inp',id:'nclsYil',inputmode:'numeric',placeholder:String(_ty.getFullYear()),value:String(_ty.getFullYear())})),
         el('button',{class:'btn sm',id:'nclsBtn',style:'flex:0',onclick:ncrPullLeansys},'🔄 LeanSys’ten Çek')
       ),
-      el('div',{style:'font-size:11px;color:var(--muted);margin:-4px 0 4px',html:'💡 <b>Uygunsuzluk No</b> girersen o numara(lar) çekilir (stok ve tarih aralığı dikkate alınmaz). <b>Virgülle çoklu</b> yazabilirsin: <code>U2026/355, 366, U2025/12</code>. U-kodunda yıl yoksa <b>Yıl</b> kullanılır.'}),
+      el('div',{style:'font-size:11px;color:var(--muted);margin:-4px 0 4px',html:'💡 <b>Uygunsuzluk No</b> girersen o numara(lar) çekilir (stok ve tarih aralığı dikkate alınmaz). <b>Virgülle çoklu</b> yazabilirsin: <code>U2026/355, 366, U2025/12</code>. U-kodunda yıl yoksa <b>Başlangıç</b> tarihinin yılı kullanılır.'}),
       el('div',{id:'nclsResult'})
     ));
   }
