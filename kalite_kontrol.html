@@ -5588,6 +5588,14 @@ function lsDecision(k){ k=_tr(k); if(!k) return null;
   return null; }  // Degerlendirme / Düsük kalite → karar henüz yok, boş kalsın
 // LeanSys tip → önem: dış başarısızlık (müşteriye giden) = yüksek, diğer = orta
 function lsSeverity(r){ const t=_tr(r.tipi)+' '+_tr(r.uygunsuzlukTuru); return (t.includes('dis basari')||t.includes('disbasari'))?'high':'medium'; }
+// "Uygunsuzluk No" girişini {year, sira}'ya ayrıştır. "U2026/355" / "U2026 355" / "355" / "2026" kabul; 4 haneli 2000-2100 → yıl, diğeri → sıra. Yıl yoksa Yıl alanı (ya da bu yıl).
+function lsParseNo(no, yilFallback){
+  no=String(no||'').trim(); if(!no) return null;
+  const nums=no.match(/\d+/g)||[]; let year=null, sira=null;
+  nums.forEach(x=>{ if(x.length===4 && +x>=2000 && +x<=2100) year=x; else sira=x; });
+  if(!year) year=(/^\d{4}$/.test(String(yilFallback))?String(yilFallback):String(new Date().getFullYear()));
+  return {year, sira:sira||null};
+}
 // notes alanını KULLANICI kısmı (marker öncesi) + LeanSys BLOĞU (⟦LS:..⟧ ve sonrası) olarak ayır; blok satırlarını {etiket,değer} dizisine ayrıştır
 function lsSplitNotes(notes){
   notes=String(notes||''); const i=notes.indexOf('⟦LS:');
@@ -5640,28 +5648,42 @@ async function ncrPullLeansys(){
   const code=($('#nclsCode')&&$('#nclsCode').value.trim())||'';
   const from=($('#nclsFrom')&&$('#nclsFrom').value)||'';
   const to=($('#nclsTo')&&$('#nclsTo').value)||'';
+  const noRaw=($('#nclsNo')&&$('#nclsNo').value.trim())||'';
+  const yil=($('#nclsYil')&&$('#nclsYil').value.trim())||'';
+  const byNo=lsParseNo(noRaw, yil);                              // No girildiyse {year,sira}; yoksa null
+  // No modunda ajan O YILI çeker (stok/tarih atlanır); aksi halde tarih aralığı
+  const aFrom = byNo ? (byNo.year+'-01-01') : from;
+  const aTo   = byNo ? (byNo.year+'-12-31') : to;
   const box=$('#nclsResult'); if(box) box.innerHTML='<div class="empty" style="padding:14px">⏳ LeanSys tazeleniyor…</div>';
   const btn=$('#nclsBtn'); const _t=btn?btn.textContent:''; if(btn){btn.disabled=true;btn.textContent='⏳ Tazeleniyor…';}
-  // 1) ajan: uygunsuzluk_records'ı bu tarih penceresine tazele (LeanSys'e YALNIZCA SELECT)
+  // 1) ajan: uygunsuzluk_records'ı bu pencereye tazele (LeanSys'e YALNIZCA SELECT)
   let res=null;
-  try{ const r=await fetch('http://127.0.0.1:17777/uygunsuzluk?from='+encodeURIComponent(from)+'&to='+encodeURIComponent(to),{mode:'cors'}); res=await r.json(); }catch(e){ res=null; }
+  try{ const r=await fetch('http://127.0.0.1:17777/uygunsuzluk?from='+encodeURIComponent(aFrom)+'&to='+encodeURIComponent(aTo),{mode:'cors'}); res=await r.json(); }catch(e){ res=null; }
   if(btn){btn.disabled=false;btn.textContent=_t;}
   if(!res) toast('LeanSys ajanı kapalı/erişilemedi — var olan ara tablo gösteriliyor. (LeanSys_Agent çalışmalı.)','err');
   else if(!res.ok) toast('LeanSys tazeleme başarısız: '+esc(res.error||'?'),'err');
   else toast('LeanSys uygunsuzluk ara tablosu tazelendi ('+(res.count||0)+' satır).','ok');
-  // 2) Supabase ara tablodan oku + stok/tarih filtre (LeanSys'e dokunulmaz)
+  // 2) Supabase ara tablodan oku + filtre (LeanSys'e dokunulmaz)
   const {data:rows,error}=await sbAnon.from('uygunsuzluk_records').select('*').limit(50000);
   if(error){ if(box)box.innerHTML=''; toast('Ara tablo okunamadı: '+esc(error.message),'err'); return; }
   let list=(rows||[]).slice(); const okundu=list.length;
-  // STOK eşleşmesi ESNEK: boşluk/büyük-küçük duyarsız; tam eşit ya da biri diğerini içeriyorsa (ör. "700.0.444" → "700.0.444-2X")
-  const _norm=s=>String(s||'').trim().toLowerCase().replace(/\s+/g,'');
-  if(code){ const cl=_norm(code); list=list.filter(r=>{ const a=_norm(r.stokKodu), b=_norm(r.yarimamulKodu);
-    return (a&&(a===cl||a.includes(cl)||cl.includes(a)))||(b&&(b===cl||b.includes(cl)||cl.includes(b))); }); }
-  const kodSonra=list.length;
-  if(from) list=list.filter(r=>{const d=lsParseDate(r.uygunsuzlukTarih);return d&&d>=from;});
-  if(to)   list=list.filter(r=>{const d=lsParseDate(r.uygunsuzlukTarih);return d&&d<=to;});
-  list.sort((a,b)=>(lsParseDate(b.uygunsuzlukTarih)||'').localeCompare(lsParseDate(a.uygunsuzlukTarih)||''));
-  toast('Ara tablo: '+okundu+' kayıt · kod filtresi sonrası '+kodSonra+' · tarih sonrası '+list.length,(list.length?'ok':'err'));
+  if(byNo){
+    // UYGUNSUZLUK NO modu: seri (yıl) + sıra ile eşle; stok/tarih atlanır
+    list=list.filter(r=>{ const ser=String(r.uygunsuzlukSeri||''); const okY=!byNo.year||ser.includes(byNo.year);
+      const okS=!byNo.sira||String(r.uygunsuzlukSira||'').trim()===String(byNo.sira); return okY&&okS; });
+    list.sort((a,b)=>(lsParseDate(b.uygunsuzlukTarih)||'').localeCompare(lsParseDate(a.uygunsuzlukTarih)||''));
+    toast('Uygunsuzluk No araması: '+okundu+' okundu · '+list.length+' eşleşti'+(byNo.sira?(' (No '+byNo.year+'/'+byNo.sira+')'):(' (tüm '+byNo.year+')')),(list.length?'ok':'err'));
+  } else {
+    // STOK eşleşmesi ESNEK: boşluk/büyük-küçük duyarsız; tam eşit ya da biri diğerini içeriyorsa (ör. "700.0.444" → "700.0.444-2X")
+    const _norm=s=>String(s||'').trim().toLowerCase().replace(/\s+/g,'');
+    if(code){ const cl=_norm(code); list=list.filter(r=>{ const a=_norm(r.stokKodu), b=_norm(r.yarimamulKodu);
+      return (a&&(a===cl||a.includes(cl)||cl.includes(a)))||(b&&(b===cl||b.includes(cl)||cl.includes(b))); }); }
+    const kodSonra=list.length;
+    if(from) list=list.filter(r=>{const d=lsParseDate(r.uygunsuzlukTarih);return d&&d>=from;});
+    if(to)   list=list.filter(r=>{const d=lsParseDate(r.uygunsuzlukTarih);return d&&d<=to;});
+    list.sort((a,b)=>(lsParseDate(b.uygunsuzlukTarih)||'').localeCompare(lsParseDate(a.uygunsuzlukTarih)||''));
+    toast('Ara tablo: '+okundu+' kayıt · kod sonrası '+kodSonra+' · tarih sonrası '+list.length,(list.length?'ok':'err'));
+  }
   // zaten içe aktarılmış LeanSys anahtarları (notes damgasından)
   const {data:exist}=await sb.from('ncrs').select('notes');
   const imported=new Set(); (exist||[]).forEach(n=>{const m=(n.notes||'').match(LS_MARK_RE); if(m)imported.add(m[1]);});
@@ -5789,8 +5811,12 @@ async function renderNCR(){
         el('div',{class:'field',style:'flex:0;min-width:170px'},el('label',{class:'lab'},'Stok Kodu (boş = tümü)'),el('input',{class:'inp',id:'nclsCode',placeholder:'700.0.454'})),
         el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Başlangıç'),el('input',{type:'date',class:'inp',id:'nclsFrom',value:_defFrom})),
         el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),el('input',{type:'date',class:'inp',id:'nclsTo',value:_defTo})),
+        el('div',{style:'width:1px;align-self:stretch;background:var(--border);margin:0 2px'}),
+        el('div',{class:'field',style:'flex:0;min-width:140px'},el('label',{class:'lab'},'Uygunsuzluk No'),el('input',{class:'inp',id:'nclsNo',placeholder:'U2026/355 ya da 355'})),
+        el('div',{class:'field',style:'flex:0;max-width:90px'},el('label',{class:'lab'},'Yıl'),el('input',{class:'inp',id:'nclsYil',inputmode:'numeric',placeholder:String(_ty.getFullYear()),value:String(_ty.getFullYear())})),
         el('button',{class:'btn sm',id:'nclsBtn',style:'flex:0',onclick:ncrPullLeansys},'🔄 LeanSys’ten Çek')
       ),
+      el('div',{style:'font-size:11px;color:var(--muted);margin:-4px 0 4px',html:'💡 <b>Uygunsuzluk No</b> girersen o numara/yıl tek kayıt çekilir (stok ve tarih aralığı dikkate alınmaz). U-kodundaki yıl yoksa <b>Yıl</b> kullanılır.'}),
       el('div',{id:'nclsResult'})
     ));
   }
