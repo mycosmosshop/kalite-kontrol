@@ -5578,6 +5578,16 @@ function lsParseDate(s){                                     // 'dd.MM.yyyy' vey
 }
 function lsKey(r){ return (r.nckey!=null&&r.nckey!=='')?('NCK'+r.nckey):((r.uygunsuzlukSeri||'')+'/'+(r.uygunsuzlukSira||'')); }
 function lsNum(v){ const n=Number(v); return (isFinite(n)&&n>0)?n:null; }
+const _tr=s=>String(s||'').toLowerCase().replace(/ş/g,'s').replace(/ı/g,'i').replace(/İ/g,'i').replace(/ç/g,'c').replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ö/g,'o');
+// LeanSys serbest-metin KARAR → bizim NCR_DECISION (rework/scrap/concession/return). Eşleşmezse null (—).
+function lsDecision(k){ k=_tr(k); if(!k) return null;
+  if(k.includes('hurda')||k.includes('imha')) return 'scrap';
+  if(k.includes('iade')) return 'return';
+  if(k.includes('yeniden')||k.includes('re-work')||k.includes('rework')||k.includes('tamir')||k.includes('revizyon')||k.includes('ayikla')) return 'rework';
+  if(k.includes('sartli')||k.includes('kullanilsin')||k.includes('konsesyon')) return 'concession';
+  return null; }  // Degerlendirme / Düsük kalite → karar henüz yok, boş kalsın
+// LeanSys tip → önem: dış başarısızlık (müşteriye giden) = yüksek, diğer = orta
+function lsSeverity(r){ const t=_tr(r.tipi)+' '+_tr(r.uygunsuzlukTuru); return (t.includes('dis basari')||t.includes('disbasari'))?'high':'medium'; }
 // LeanSys uygunsuzluk satırı → ncrs payload'u (bizim format)
 function lsToNcr(r, ncrNo){
   const iso=lsParseDate(r.uygunsuzlukTarih);
@@ -5606,8 +5616,9 @@ function lsToNcr(r, ncrNo){
     defect_desc: (tur?(tur+(tarif?' — ':'')):'')+tarif || 'LeanSys uygunsuzluk',
     qty_total: lsNum(r.partiHacmi)||lsNum(r.kontrolMiktar),
     qty_def: lsNum(r.hataliMiktar),
+    decision: lsDecision(r.karar),
     status: closed?'closed':'open',
-    severity:'medium',
+    severity: lsSeverity(r),
     closed_at: (closed&&kapIso)?(kapIso+'T00:00:00'):null,
     notes
   };
@@ -5651,17 +5662,17 @@ function renderLsPullTable(){
   if(!list.length){ box.append(el('div',{class:'empty',style:'padding:14px'},'Bu kod/tarih için LeanSys’te uygunsuzluk bulunamadı.')); return; }
   const yeni=list.filter(r=>!LS_PULL.imported.has(lsKey(r))).length;
   box.append(el('div',{style:'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0 8px'},
-    el('div',{style:'font-size:13px;color:var(--muted)'},list.length+' kayıt · '+yeni+' yeni (içe aktarılmamış)'),
+    el('div',{style:'font-size:13px;color:var(--muted)'},list.length+' kayıt · '+yeni+' yeni · '+(list.length-yeni)+' aktarılmış (tekrar seçilirse güncellenir)'),
     el('div',{class:'grow'}),
-    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{box.querySelectorAll('input.nclsChk:not(:disabled)').forEach(c=>c.checked=true);}},'Tümünü Seç'),
-    el('button',{class:'btn sm',style:'flex:0',onclick:async()=>{const sel=new Set();box.querySelectorAll('input.nclsChk:checked').forEach(c=>sel.add(c.dataset.k));await ncrImportLeansys(sel);}},'⬇ Seçilenleri NCR’a Aktar')
+    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{box.querySelectorAll('input.nclsChk').forEach(c=>c.checked=true);}},'Tümünü Seç'),
+    el('button',{class:'btn sm',style:'flex:0',onclick:async()=>{const sel=new Set();box.querySelectorAll('input.nclsChk:checked').forEach(c=>sel.add(c.dataset.k));await ncrImportLeansys(sel);}},'⬇ Seçilenleri NCR’a Aktar/Güncelle')
   ));
   const wrap=el('div',{class:'tbl-wrap',style:'max-height:360px;overflow:auto'});
   const tb=el('table');
   tb.append(el('thead',{},el('tr',{},...['','Tarih','Stok','Cari','Tür / Hata','Tanım','Parti','Hatalı','LeanSys Sonuç','Durum'].map(h=>el('th',{},h)))));
   const body=el('tbody');
   list.forEach(r=>{ const k=lsKey(r); const done=LS_PULL.imported.has(k);
-    const chk=el('input',{type:'checkbox',class:'nclsChk'}); chk.dataset.k=k; if(done){chk.disabled=true;}else{chk.checked=true;}
+    const chk=el('input',{type:'checkbox',class:'nclsChk'}); chk.dataset.k=k; chk.checked=!done;   // yeni→seçili; aktarılmış→seçince güncellenir
     const d=lsParseDate(r.uygunsuzlukTarih);
     body.append(el('tr',{style:done?'opacity:.5':''},
       el('td',{},chk),
@@ -5680,14 +5691,27 @@ function renderLsPullTable(){
 }
 async function ncrImportLeansys(selKeys){
   if(!can('ncr')){ toast('Bu işlem için yetkin yok (Uygunsuzluk).','err'); return; }
-  const sel=(LS_PULL.list||[]).filter(r=>selKeys.has(lsKey(r))&&!LS_PULL.imported.has(lsKey(r)));
-  if(!sel.length){ toast('İçe aktarılacak yeni (aktarılmamış) kayıt seçilmedi.','err'); return; }
-  if(!confirm(sel.length+' LeanSys uygunsuzluk kaydı NCR olarak içe aktarılacak.\n(LeanSys’e dokunulmaz; yalnız buradaki NCR listesine eklenir.)\nDevam?')) return;
-  let {data:allNcrs}=await sb.from('ncrs').select('ncr_no'); allNcrs=allNcrs||[];
-  const payloads=sel.map(r=>{ const no=nextNo('NCR',allNcrs,'ncr_no'); allNcrs.push({ncr_no:no}); const p=lsToNcr(r,no); p.created_by=ME&&ME.id; p.updated_at=new Date().toISOString(); return p; });
-  const {error}=await sb.from('ncrs').insert(payloads);
-  if(error){ toast('İçe aktarma hatası: '+esc(error.message),'err'); return; }
-  toast(payloads.length+' uygunsuzluk NCR olarak içe aktarıldı.','ok');
+  const sel=(LS_PULL.list||[]).filter(r=>selKeys.has(lsKey(r)));
+  if(!sel.length){ toast('Kayıt seçilmedi.','err'); return; }
+  const yeniN=sel.filter(r=>!LS_PULL.imported.has(lsKey(r))).length, guncelN=sel.length-yeniN;
+  if(!confirm(sel.length+' kayıt işlenecek: '+yeniN+' yeni NCR + '+guncelN+' güncelleme.\n(Güncellemede stok/cari/adet/karar/önem/durum/tanım LeanSys’ten tazelenir; elle girdiğin Sorumlu ve Termin KORUNUR.)\n(LeanSys’e dokunulmaz.)\nDevam?')) return;
+  // mevcut NCR'lar: id+ncr_no+notes → LeanSys anahtarı eşleme; numara üretimi için ncr_no listesi
+  let {data:allNcrs}=await sb.from('ncrs').select('id,ncr_no,notes'); allNcrs=allNcrs||[];
+  const byKey={}; allNcrs.forEach(n=>{const m=(n.notes||'').match(LS_MARK_RE); if(m)byKey[m[1]]=n;});
+  const numList=allNcrs.map(n=>({ncr_no:n.ncr_no}));
+  let ins=0, upd=0, errN=0;
+  for(const r of sel){
+    const key=lsKey(r); const ex=byKey[key];
+    if(ex){   // GÜNCELLE — ncr_no, responsible, due_date, created_by'a dokunma (lsToNcr bunları döndürmez)
+      const p=lsToNcr(r, ex.ncr_no); delete p.ncr_no; p.updated_at=new Date().toISOString();
+      const {error}=await sb.from('ncrs').update(p).eq('id',ex.id); error?errN++:upd++;
+    } else {  // YENİ
+      const no=nextNo('NCR',numList,'ncr_no'); numList.push({ncr_no:no});
+      const p=lsToNcr(r,no); p.created_by=ME&&ME.id; p.updated_at=new Date().toISOString();
+      const {error}=await sb.from('ncrs').insert(p); error?errN++:ins++;
+    }
+  }
+  toast(ins+' yeni + '+upd+' güncellendi'+(errN?(' · '+errN+' hata'):'')+'.', errN?'err':'ok');
   renderNCR();
 }
 // RET kontrol kaydı kaydedilince otomatik uygunsuzluk (NCR) aç
