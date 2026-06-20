@@ -333,6 +333,9 @@
 const SUPABASE_URL  = 'https://nnubrxbpthmkitueixbh.supabase.co';
 const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5udWJyeGJwdGhta2l0dWVpeGJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1NjI2MDIsImV4cCI6MjA5NjEzODYwMn0.CHZUOylf_q8kkOQbFf9VWZ6-doUTlynmAhahM2EuImE';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+// Oturumsuz (saf ANON rol) istemci — RLS politikasi yalniz "to anon" olan ara tablolari okumak icin
+// (uygunsuzluk_records gibi). Giris yapinca sb 'authenticated' rolu gonderir; o tablo onu engeller.
+const sbAnon = supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {auth:{persistSession:false,autoRefreshToken:false,storageKey:'sb-anon-readonly'}});
 
 let ME = null;           // {id,email}
 let PROFILE = null;      // {approved,is_admin}
@@ -5624,7 +5627,7 @@ async function ncrPullLeansys(){
   else if(!res.ok) toast('LeanSys tazeleme başarısız: '+esc(res.error||'?'),'err');
   else toast('LeanSys uygunsuzluk ara tablosu tazelendi ('+(res.count||0)+' satır).','ok');
   // 2) Supabase ara tablodan oku + stok/tarih filtre (LeanSys'e dokunulmaz)
-  const {data:rows,error}=await sb.from('uygunsuzluk_records').select('*').limit(50000);
+  const {data:rows,error}=await sbAnon.from('uygunsuzluk_records').select('*').limit(50000);
   if(error){ if(box)box.innerHTML=''; toast('Ara tablo okunamadı: '+esc(error.message),'err'); return; }
   let list=(rows||[]).slice(); const okundu=list.length;
   // STOK eşleşmesi ESNEK: boşluk/büyük-küçük duyarsız; tam eşit ya da biri diğerini içeriyorsa (ör. "700.0.444" → "700.0.444-2X")
