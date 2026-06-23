@@ -2819,8 +2819,8 @@ async function saveControl(p,items,state,stage,sampleFor){
   // (yeni bir yanma değeri girilene kadar taşınır; her girişte ileri segmenti günceller)
   try{
     const _savedAt=(ins&&ins.checked_at)||rec.checked_at||new Date().toISOString();
-    const _yn=await _propagateYanmaForward(rec.stock_code,_savedAt,rec.vals);
-    if(_yn) toast(`Yanma değeri sonraki ${_yn} seri başı/proses kontrolüne yansıtıldı.`,'ok');
+    const _yn=await _propagateYanmaForward(rec.stock_code,_savedAt,rec.vals,ins&&ins.id);
+    if(_yn) toast(`Yanma değeri aynı tarih ve sonraki ${_yn} kontrole yansıtıldı.`,'ok');
   }catch(e){ console.warn('yanma taşıma:',e); }
   $('#modalRoot').innerHTML='';
   if(!$('#tab-kayitlar').classList.contains('hidden'))renderKayitlar();
@@ -2829,19 +2829,21 @@ async function saveControl(p,items,state,stage,sampleFor){
   if($('#tab-bekleyen') && !$('#tab-bekleyen').classList.contains('hidden'))renderBekleyen();   // girilen kontrol bekleyenlerden kalksın
 }
 
-// Yanma değerini ileri taşı: kaydedilen yanma örneklerini, AYNI stoğun checked_at'i SONRA olan
-// seri_basi/proses kontrollerine yazar (yeni değer girilene kadar taşınır; her giriş ileri segmenti günceller).
-async function _propagateYanmaForward(stockCode, savedTimeISO, savedVals){
+// Yanma değerini ileri taşı: kaydedilen yanma örneklerini, AYNI stoğun AYNI GÜN ve SONRAKİ
+// seri_basi/proses/son kontrollerine yazar (yeni değer girilene kadar taşınır; her giriş ileri segmenti günceller).
+async function _propagateYanmaForward(stockCode, savedTimeISO, savedVals, selfId){
   const yvals=(savedVals||[]).filter(v=>/yanma/.test(deTr(v.measure_name||'')) && (v.samples||[]).some(s=>s.value!=null&&s.value!==''));
   if(!yvals.length || !stockCode || !savedTimeISO) return 0;
-  // sonraki seri başı/proses kayıtlarını çek (sayfalı; 1000 kapağını aş)
+  // AYNI tarih DAHİL: kaydedilen kontrolün GÜN BAŞINDAN itibaren tüm sonraki kontroller (sayfalı; 1000 kapağını aş)
+  const dayStart=String(savedTimeISO).slice(0,10)+'T00:00:00.000Z';
   let rows=[];
   for(let from=0; from<20000; from+=1000){
-    const {data,error}=await sb.from('control_records').select('id,vals').eq('stock_code',stockCode).in('stage',['seri_basi','proses']).gt('checked_at',savedTimeISO).range(from,from+999);
+    const {data,error}=await sb.from('control_records').select('id,vals').eq('stock_code',stockCode).in('stage',['seri_basi','proses','son']).gte('checked_at',dayStart).range(from,from+999);
     if(error) break; rows.push(...(data||[])); if(!data||data.length<1000) break;
   }
   let n=0;
   for(const r of rows){
+    if(selfId!=null && r.id===selfId) continue;   // kaydın kendisini atla
     const vals=r.vals||[]; let changed=false;
     yvals.forEach(yv=>{
       const tgt=vals.find(v=>v.measure_name===yv.measure_name);
@@ -5098,6 +5100,9 @@ async function editRecord(r,prod){
     const {error}=await sb.from('control_records').update(patch).eq('id',r.id);
     if(error){toast(esc(error.message),'err');return;}
     if(overall==='RET') await autoOpenNCR({id:r.id,overall_result:overall,vals,stock_code:r.stock_code,stock_name:r.stock_name,checked_at:r.checked_at,production_id:r.production_id,giris_cari:r.giris_cari}, prod);   // RET → otomatik uygunsuzluk
+    // YANMA TAŞIMA: bu kayıttaki yanma değerini aynı stoğun AYNI GÜN ve sonraki seri başı/proses/son kontrollerine yansıt
+    if(r.stage!=='giris'){ try{ const _yn=await _propagateYanmaForward(r.stock_code, r.checked_at||new Date().toISOString(), vals, r.id);
+      if(_yn) toast(`Yanma değeri aynı tarih ve sonraki ${_yn} kontrole yansıtıldı.`,'ok'); }catch(e){ console.warn('yanma taşıma:',e); } }
     toast('Kayıt güncellendi.','ok'); root.innerHTML=''; renderKayitlar();
   }
   render();
