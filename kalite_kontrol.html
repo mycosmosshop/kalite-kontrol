@@ -1046,11 +1046,6 @@ async function runBulkAutoGiris(rows,plan,regen,status,go){
   const recIds=rows.map(r=>r.rec_id).filter(x=>x!=null);
   const have=new Set();
   for(let i=0;i<recIds.length;i+=200){ const {data}=await sb.from('control_records').select('mal_kabul_rec_id').in('mal_kabul_rec_id',recIds.slice(i,i+200)); (data||[]).forEach(d=>{ if(d.mal_kabul_rec_id!=null)have.add(d.mal_kabul_rec_id); }); }
-  // yanma vb. ilk yapılan değerleri (stok|ölçüm → ilk örnekler) — taşımak için
-  const stocks=[...new Set(rows.map(r=>r.stok_kodu).filter(Boolean))];
-  const priorMap={};
-  for(let i=0;i<stocks.length;i+=100){ const {data:hist}=await sb.from('control_records').select('stock_code,checked_at,vals').in('stock_code',stocks.slice(i,i+100)).order('checked_at',{ascending:true});
-    (hist||[]).forEach(rc=>{ (rc.vals||[]).forEach(v=>{ if(/yanma/.test(deTr(v.measure_name||''))){ const k=rc.stock_code+'|'+v.measure_name; if(!priorMap[k]&&Array.isArray(v.samples)&&v.samples.length)priorMap[k]=v.samples; } }); }); }
   let made=0,skipped=0,cleaned=0;
   for(const r of rows){
     const items=stageItems(opItemsFor(plan.filter(x=>x.stock_code===r.stok_kodu),null),'giris');
@@ -1059,7 +1054,7 @@ async function runBulkAutoGiris(rows,plan,regen,status,go){
       if(regen){ await sb.from('control_records').delete().eq('mal_kabul_rec_id',r.rec_id); cleaned++; }
       else { skipped++; continue; }
     }
-    const rec=buildAutoGirisRec(r,items,priorMap);
+    const rec=buildAutoGirisRec(r,items);
     if(!rec){ skipped++; continue; }
     const {error}=await sb.from('control_records').insert(rec);
     if(error){ console.warn(error.message); skipped++; } else made++;
@@ -1079,14 +1074,17 @@ function girisCheckedAt(dateStr){
   base.setHours(0,mins,Math.floor(Math.random()*60),0); return base;
 }
 // mal kabul kaydından otomatik giriş kontrol kaydı (buildAutoRec'in giriş eşdeğeri)
-function buildAutoGirisRec(mk,items,priorMap){
+function buildAutoGirisRec(mk,items){
   if(!items.length) return null;
   const when=girisCheckedAt(mk.tarih); const measurer=AUTO_MEASURER||'';
   const vals=items.map(it=>{ const n=sampleCount(it,'giris'); it._prod=mk.stok_adi||'';
-    const ov=(priorMap&&/yanma/.test(deTr(it.measure_name||'')))?priorMap[mk.stok_kodu+'|'+it.measure_name]:null;
+    const isYanma=/yanma/.test(deTr(it.measure_name||''));
+    const samples = isYanma
+      ? Array.from({length:n},()=>({value:'0',ok:true,by:measurer}))   // GİRİŞ yanma: otomatikte 0 (gerekirse elle düzeltilir)
+      : genSamples(it,n,null,measurer);
     return {plan_item_id:it.id,measure_name:it.measure_name,target:it.target,unit:it.unit,nitel_hedef:it.nitel_hedef,
       lower_limit:it.lower_limit,upper_limit:it.upper_limit,method:it.method,sampling_frequency:it.sampling_frequency,
-      is_qualitative:it.is_qualitative,sample_size:n,samples:genSamples(it,n,ov,measurer)}; });
+      is_qualitative:it.is_qualitative,sample_size:n,samples}; });
   const overall=vals.flatMap(v=>v.samples).some(s=>s.ok===false)?'RET':'OK';
   return {production_id:null, stock_code:mk.stok_kodu, stock_name:mk.stok_adi, stage:'giris',
     operator:measurer, shift:shiftForTime(when), checked_at:when.toISOString(), vals, overall_result:overall,
@@ -2513,7 +2511,9 @@ async function openControl(p, forceStage, suggestTime){
   let _autoGirisTime=null;   // 🎲 Otomatik doldur giriş kalitede çalışınca kontrol saati = random 08:01–17:30 (irsaliye günü)
   function autoFillStage(){
     itemsForStage(stage).forEach(it=>{ const st=stItem(it); const n=sampleFor(it,stage);
-      st.samples=genSamples(it,n); st.cur={value:'',ok:st.samples.length?st.samples[st.samples.length-1].ok:false}; });
+      const yanmaGiris = stage==='giris' && /yanma/.test(deTr(it.measure_name||''));   // GİRİŞ yanma: otomatikte 0
+      st.samples = yanmaGiris ? Array.from({length:n},()=>({value:'0',ok:true})) : genSamples(it,n);
+      st.cur={value:'',ok:st.samples.length?st.samples[st.samples.length-1].ok:false}; });
     operVal=AUTO_MEASURER;   // ölçümcü: kalite operatörü
     if(p.__giris){ _autoGirisTime=girisCtrlLocal(p.giris_tarih||p.prod_date); }
     render();
@@ -2645,7 +2645,7 @@ async function openControl(p, forceStage, suggestTime){
           if(_ly && _ly.value!=='' && _ly.value!=null){ st.cur.value=String(_ly.value); st.cur.ok=_ly.ok; st._seeded=true; }
         }
         const n=sampleFor(it,stage);
-        const qual=it.is_qualitative;
+        const qual=!measurableItem(it);   // yanma/ölçülebilir-nitel → sayısal input (toggle değil)
         // kayan OK/RET toggle (başlangıç RET)
         const tgl=el('button',{type:'button',class:'tgl'});
         tgl.innerHTML='<span class="lbl"></span><span class="knob"></span>';
@@ -2829,12 +2829,15 @@ function measurerFor(p){
 }
 // saate göre vardiya (3 vardiya: 1=08–16, 2=16–24, 3=00–08)
 function shiftForTime(d){ const dt=(d instanceof Date)?d:new Date(d); if(isNaN(dt))return null; const h=dt.getHours(); return (h>=8&&h<20)?1:2; }  // 08:00–20:00 → 1. vardiya, 20:00–08:00 → 2. vardiya
+// is_qualitative olsa bile ÖLÇÜLEBİLİR sayılır (değer girilir/gösterilir): yanma hızı, ya da nitel hedefi
+// sayı+ölçü birimi olanlar (ör "100mm/dk", "30 Kg/M3"). Gerçek nitel (GÖZLE/çeşit) ölçülemez (toggle).
+function measurableItem(it){
+  const nitel=String((it&&it.nitel_hedef)||'');
+  return !it.is_qualitative || /yanma/.test(deTr((it&&it.measure_name)||'')) || (/\d/.test(nitel) && /(mm|cm|dk|sn|kg|gr|m3|m2|mpa|mic|%|°)/i.test(nitel));
+}
 function genSamples(it,n,override,by){
   const out=[]; const who=by||AUTO_MEASURER;
-  // is_qualitative olsa bile ÖLÇÜLEBİLİR olanlar sayı üretsin (kullanıcı: "yanma hızı ölçüsel, değeri olmalı"):
-  //   yanma hızı, ya da nitel hedefi sayı+ölçü birimi olanlar (ör "100mm/dk", "30 Kg/M3") → değer üret; gerçek nitel (GÖZLE/çeşit) boş kalır.
-  const nitel=String(it.nitel_hedef||'');
-  const olculebilir = !it.is_qualitative || /yanma/.test(deTr(it.measure_name||'')) || (/\d/.test(nitel) && /(mm|cm|dk|sn|kg|gr|m3|m2|mpa|mic|%|°)/i.test(nitel));
+  const olculebilir = measurableItem(it);
   for(let i=0;i<n;i++){
     if(!olculebilir){ out.push({value:null,ok:true,by:who}); continue; }
     const ov=(override&&override.length)?override[i%override.length]:null;   // ilk yapılan değeri taşı (ör. yanma)
@@ -4889,7 +4892,7 @@ async function editRecord(r,prod){
     const body=el('tbody');
     vals.forEach(v=>{
       const smps=v.samples&&v.samples.length?v.samples:[{value:null,ok:null,note:null}];
-      const qual=v.is_qualitative;
+      const qual=!measurableItem(v);   // yanma/ölçülebilir-nitel → sayısal input (toggle değil)
       smps.forEach((smp,s)=>{
         const tgl=el('button',{type:'button',class:'tgl'});
         tgl.innerHTML='<span class="lbl"></span><span class="knob"></span>';
