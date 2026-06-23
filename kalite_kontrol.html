@@ -1083,6 +1083,7 @@ async function _renderDueControls(root){
   const groups={seri_basi:[], proses:[], son:[]};
   PRODS.forEach(p=>{
     if(!p.start_time) return;
+    if(!(Number(p.quantity)>0)) return;   // miktar 0 veya boş → kontrol gerekmez, kuyrukta gösterme
     const start=new Date(p.start_time).getTime(), end=p.end_time?new Date(p.end_time).getTime():null, finished=!!end;
     if(!finished && (now-start)>3*24*60*60000) return;      // 3 günden eski AÇIK üretim = unutulmuş/kapanmamış (gerçek koşu < birkaç gün), listeleme
     if(finished && (now-end)>14*24*60*60000) return;        // çok eski bitmişi listeleme
@@ -2815,7 +2816,8 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
     (hist||[]).forEach(rc=>{ (rc.vals||[]).forEach(v=>{ if(/yanma/.test(deTr(v.measure_name||''))){ const k=rc.stock_code+'|'+v.measure_name; if(!priorMap[k]&&Array.isArray(v.samples)&&v.samples.length) priorMap[k]=v.samples; } }); }); }
   let made=0,prodN=0,skipped=0,cleaned=0,recalcN=0;
   for(const p of prods){
-    if(!p.start_time){skipped++;continue;}   // sadece BAŞLAMA şart; miktar yoksa (devam eden üretim) mevcut süreyle seri başı üretilir
+    if(!p.start_time){skipped++;continue;}   // başlama şart
+    if(!(Number(p.quantity)>0)){skipped++;continue;}   // miktar 0 veya boş → kontrol ÜRETİLMEZ (kullanıcı kuralı)
     const cs=cyc[(p.machine_code||'?')+'||'+(p.stock_code||'?')], start=new Date(p.start_time);
     let end, durMin, recomputed=false, finished=false;
     if(cs>0 && Number(p.quantity)>0){ const durSec=Number(p.quantity)*cs; end=new Date(start.getTime()+durSec*1000); durMin=durSec/60; recomputed=true; finished=true;  // BİTİŞ = başlama + adet × çevrim (DB'ye yazılır)
@@ -2844,7 +2846,7 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
     const offWhen=()=>new Date(Math.min(start.getTime()+Math.round((1+Math.random()*4)*60000), endMs-30000));
     if(!cur.has('seri_basi')){ const r=buildAutoRec(p,'seri_basi',offWhen(),items,priorMap); if(r)recs.push(r); }       // seri üretim başından birkaç dk sonra
     // proses: plana göre saatlik (freq). Seri başından sonra 1 freq (ör. 1 saat) GEÇMEDİYSE proses üretilmez (kısa üretim → sadece Seri Başı + Son)
-    if(!cur.has('proses')){ for(let t=freq;t<durMin;t+=freq){ const jit=Math.round((Math.random()*10-5)*60000); // ±5 dk sapma — hep tam saat olmasın
+    if(!cur.has('proses')){ for(let t=freq,_pn=0;t<durMin&&_pn<100;t+=freq,_pn++){ const jit=Math.round((Math.random()*10-5)*60000); // ±5 dk sapma — hep tam saat olmasın (üst sınır 100)
       let tm=start.getTime()+t*60000+jit; tm=Math.min(Math.max(tm,start.getTime()+60000),end.getTime()-60000); // aralıkta kal
       const r=buildAutoRec(p,'proses',new Date(tm),items,priorMap); if(r)recs.push(r); } }
     if(finished && !cur.has('son')){ const r=buildAutoRec(p,'son',end,items,priorMap); if(r)recs.push(r); }          // son: yalnız BİTMİŞ üretimde (devam edende üretilmez)
