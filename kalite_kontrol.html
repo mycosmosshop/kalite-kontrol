@@ -4305,11 +4305,85 @@ async function renderUrunAgaci(root){
         el('button',{class:'btn sm sec',style:'flex:0 0 auto;white-space:nowrap',title:'Tüm alt ağaçları (her seviye) aç',onclick:async(e)=>{ e.stopPropagation(); const b=e.currentTarget; const _t=b.textContent; b.disabled=true; b.textContent='⏳ açılıyor…'; for(const nd of roots) await expandAll(nd); b.disabled=false; b.textContent=_t; }},'⊞ Tümünü Aç'),
         el('button',{class:'btn sm sec',style:'flex:0 0 auto;white-space:nowrap',title:'Tüm alt ağaçları kapat',onclick:(e)=>{ e.stopPropagation(); roots.forEach(collapseAll); }},'⊟ Tümünü Kapat'));
     }
+    right.append(el('button',{class:'btn sm',style:'flex:0 0 auto;white-space:nowrap',title:'Bu ürün ağacını antetli PDF olarak yazdır (tüm seviyeler, basamaklı)',onclick:async(e)=>{ e.stopPropagation(); const b=e.currentTarget; const _t=b.textContent; b.disabled=true; b.textContent='⏳ PDF…'; try{ await printBomTree(hid,h); }catch(err){ toast('PDF hatası: '+esc(err&&err.message||err),'err'); } finally{ b.disabled=false; b.textContent=_t; } }},'📄 PDF (antetli)'));
     if(isAdmin) right.append(el('button',{class:'btn sm danger',style:'flex:0 0 auto;white-space:nowrap',title:'Bu ürün ağacını YALNIZ Supabase’ten sil (LeanSys’e dokunmaz)',onclick:async(e)=>{ e.stopPropagation(); if(await delUaCard(hid,h)) loadHeaders(); }},'🗑 Bu ağacı sil'));
     det.append(el('div',{style:'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;padding:8px 11px'},
       el('div',{style:'color:var(--muted);font-size:12.5px'},`Ağaç: ${esc(h.agac_adi||'-')}${h.varsayilan?' ⭐varsayılan':''} · Kayıt ${fmtDate(h.kayit_tarihi)} · ${lines.length} tüketim${expN?` · ▸ ${expN} alt-ağaç`:''}`),
       right));
     det.append(tree);
+  }
+  // 📄 Açık ürün ağacını ANTETLİ PDF olarak yazdır — tüm seviyeler özyinelemeli, ekrandakiyle aynı basamaklı (indent) tree
+  async function printBomTree(hid,h){
+    const win=window.open('','_blank','width=1100,height=840');
+    if(!win){ toast('Açılır pencere engellendi — tarayıcı ayarlarından bu siteye izin ver.','err'); return; }
+    try{ win.document.write('<!DOCTYPE html><meta charset="utf-8"><body style="font:14px Arial;padding:24px;color:#555">⏳ Ürün ağacı hazırlanıyor…</body>'); win.document.close(); }catch(_){}
+    async function fetchTree(headerId,depth){
+      const {data}=await sb.from('urun_agaclari').select('*').eq('header_id',headerId).order('cinsi').order('tuketim_kodu');
+      const out=[];
+      for(const l of (data||[])){ out.push({l,depth});
+        if(l.alt_header_id!=null && HEADERSET.has(l.alt_header_id)) out.push(...await fetchTree(l.alt_header_id,depth+1)); }
+      return out;
+    }
+    const flat=await fetchTree(hid,0);
+    if(!flat.length){ toast('Tüketim satırı yok.','err'); try{win.close();}catch(_){}; return; }
+    const logoSrc=(document.querySelector('.brand-logo')||{}).src||'';
+    const today=fmtDate(new Date().toISOString());
+    const totalN=flat.length, subN=flat.filter(x=>x.depth>0).length;
+    const bodyHtml=flat.map(({l,depth})=>{
+      const indent=depth*18;
+      const pre = depth>0 ? '<span style="color:#9aa3ad">'+('│ '.repeat(Math.max(0,depth-1)))+'└ </span>' : '';
+      const rowStyle = depth===0 ? 'background:#eaf1fb' : '';
+      const w = depth===0?'800':'600';
+      return `<tr style="${rowStyle}"><td class="kod"><span style="padding-left:${indent}px;white-space:nowrap">${pre}<b style="font-weight:${w}">${esc(l.tuketim_kodu||'')}</b></span></td>`
+        + `<td>${esc(l.tuketim_adi||'')}</td>`
+        + `<td class="num">${l.miktar!=null?esc(commaFmt(l.miktar)):''}</td>`
+        + `<td class="ctr">${esc(l.birim||'')}</td>`
+        + `<td class="num">${l.fire_orani!=null?esc(commaFmt(l.fire_orani)):'0'}</td>`
+        + `<td>${esc(l.cinsi||'')}</td></tr>`;
+    }).join('');
+    const html = `<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><title>Ürün Ağacı ${esc(h.urun_kodu||'')}</title>
+<style>
+ @page{size:A4 portrait;margin:9mm}
+ *{box-sizing:border-box} body{font-family:Arial,Helvetica,sans-serif;color:#000;margin:0;padding:6px}
+ table.antet{width:100%;border-collapse:collapse;margin-bottom:5px}
+ table.antet td,table.antet th{border:1px solid #000;padding:3px 6px;vertical-align:middle}
+ table.antet th{background:#e8e8e8;text-align:left;font-size:8.5px;white-space:nowrap;font-weight:700}
+ table.antet td{font-size:9px}
+ .logo-cell{width:170px;text-align:center;padding:4px} .logo-cell img{max-width:160px;max-height:50px}
+ .title-cell{text-align:center;font-size:17px;font-weight:800;letter-spacing:.05em}
+ table.docbox{border-collapse:collapse;width:210px} table.docbox td{border:1px solid #000;padding:2px 6px;font-size:8.5px}
+ table.docbox td:first-child{background:#e8e8e8;font-weight:700;width:60px;white-space:nowrap}
+ table.data{width:100%;border-collapse:collapse;table-layout:fixed;margin-top:6px}
+ table.data th{background:#dce6f2;border:1px solid #555;padding:4px 5px;font-size:8px;text-transform:uppercase;text-align:left}
+ table.data td{border:1px solid #bbb;padding:3px 5px;font-size:8.5px;vertical-align:top;word-wrap:break-word}
+ table.data td.num{text-align:right} table.data td.ctr{text-align:center} table.data td.kod{overflow:hidden}
+ table.data tr{page-break-inside:avoid}
+ .footer{margin-top:8px;font-size:8px;color:#666;display:flex;justify-content:space-between}
+</style></head><body>
+<table class="antet"><tr>
+  <td class="logo-cell">${logoSrc?`<img src="${logoSrc}">`:'SANİFOAM'}</td>
+  <td class="title-cell">ÜRÜN AĞACI (BOM)</td>
+  <td style="width:212px;padding:0">
+    <table class="docbox">
+      <tr><td>Tarih</td><td>${esc(today)}</td></tr>
+      <tr><td>Ağaç</td><td>${esc(h.agac_adi||'-')}${h.varsayilan?' ⭐':''}</td></tr>
+      <tr><td>Sayfa</td><td>1/1</td></tr>
+    </table>
+  </td>
+</tr></table>
+<table class="antet">
+  <tr><th style="width:90px">Ürün Kodu</th><td style="width:150px">${esc(h.urun_kodu||'')}</td><th style="width:80px">Ürün Adı</th><td>${esc(h.urun_adi||'')}</td></tr>
+  <tr><th>Kayıt Tarihi</th><td>${esc(fmtDate(h.kayit_tarihi))}</td><th>Toplam</th><td>${totalN} tüketim${subN?` · ${subN} alt seviye`:''}</td></tr>
+</table>
+<table class="data">
+  <colgroup><col style="width:30%"><col><col style="width:10%"><col style="width:8%"><col style="width:8%"><col style="width:16%"></colgroup>
+  <thead><tr><th>Tüketim Kodu</th><th>Tüketim Adı</th><th style="text-align:right">Miktar</th><th>Birim</th><th style="text-align:right">Fire %</th><th>Cinsi</th></tr></thead>
+  <tbody>${bodyHtml}</tbody>
+</table>
+<div class="footer"><span>Sanifoam — Ürün Ağacı (BOM)</span><span>${esc(h.urun_kodu||'')} · ${totalN} satır · ${esc(today)}</span></div>
+<script>window.onload=function(){setTimeout(function(){window.print();},350);}<\/script>
+</body></html>`;
+    try{ win.document.open(); win.document.write(html); win.document.close(); }catch(e){ toast('PDF yazılamadı: '+esc(e.message||e),'err'); }
   }
   loadHeaders();
 }
