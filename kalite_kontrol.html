@@ -831,6 +831,7 @@ async function renderBekleyen(){
 }
 // 📦 Mal Kabul — üst sekme (salt görünüm; LeanSys mal kabul verisi). Kontrol girişi Girilecek Kontroller'de.
 let _mkDeb=null;
+let _mkLastRows=[];   // Mal Kabul'da o an listelenen satırlar (toplu otomatik giriş kontrol üretimi bunları kapsar)
 async function renderMalKabul(){
   const root=$('#tab-malkabul'); root.innerHTML='';
   root.append(el('div',{class:'card'},
@@ -856,6 +857,7 @@ async function renderMalKabul(){
     el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{fSearch.value='';fFrom.value='';fTo.value='';fTur.value='0';load();}},'Temizle'),
     el('button',{class:'btn sm',style:'flex:0',title:'LeanSys mal kabul aktarım penceresini açar (stok kodu / tarih seç → AKTAR). İlk seferde tarayıcı “Aç” diye sorabilir. Aktarım bitince 🔄 Yenile ile listeyi tazele.',onclick:()=>{fetch('http://127.0.0.1:17777/open?app=malkabul',{mode:'cors'}).then(()=>toast('Mal Kabul aktarım penceresi açılıyor… Aktarım bitince 🔄 Yenile’ye bas.','ok')).catch(()=>toast('LeanSys ajanı kapalı. Önce LeanSys_Agent çalışmalı (Startup).','err'));}},'📥 LeanSys’ten Aktar'),
     el('button',{class:'btn sm sec',style:'flex:0',title:'Listeyi yeniden yükle (aktarımdan sonra yeni kayıtları getir) — filtreler korunur',onclick:()=>load()},'🔄 Yenile'),
+    (can('auto')||(PROFILE&&PROFILE.is_admin))?el('button',{class:'btn sm',style:'flex:0',title:'Listede görünen mal kabullere giriş kalite planına göre otomatik kontrol üret',onclick:()=>openMalKabulAuto()},'🎲 Otomatik Kontrol Üret'):'',
     el('div',{class:'grow'}), mkTools, cnt)));
   const out=el('div'); root.append(out);
   let _mkSeq=0;
@@ -883,14 +885,28 @@ async function renderMalKabul(){
     const codes=[...new Set(rows.map(r=>r.stok_kodu).filter(Boolean))];
     const planSet=new Set(); if(codes.length){ const {data:pp}=await sb.from('control_plan_items').select('stock_code').in('stock_code',codes).eq('giris_kalite',true).eq('active',true); (pp||[]).forEach(p=>planSet.add(p.stock_code)); }
     if(my!==_mkSeq) return;   // ikinci await sonrası tekrar kontrol
+    // bu mal kabul satırlarının giriş kontrol kayıtları (rec_id → sonuç/say) → tıklanabilir rozet
+    const ctrlMap={}; const recIds=rows.map(r=>r.rec_id).filter(x=>x!=null);
+    for(let i=0;i<recIds.length;i+=200){ const {data:cr}=await sb.from('control_records').select('mal_kabul_rec_id,overall_result').in('mal_kabul_rec_id',recIds.slice(i,i+200)); (cr||[]).forEach(c=>{ const k=c.mal_kabul_rec_id; if(k==null)return; const cur=ctrlMap[k]||{n:0,ret:false}; cur.n++; if(c.overall_result==='RET')cur.ret=true; ctrlMap[k]=cur; }); }
+    if(my!==_mkSeq) return;
+    _mkLastRows=rows;
     const c=$('#mkCount'); if(c)c.textContent=String(rows.length)+(rows.length>=500?'+':'');
     out.innerHTML='';
     if(!rows.length){ out.append(el('div',{class:'card'},el('div',{class:'empty'},'Kayıt yok. (Önce sunucuda _malkabul_guncelle.bat çalıştır.)'))); return; }
     const card=el('div',{class:'card'}); const tb=el('table');
     const isAdmin=PROFILE&&PROFILE.is_admin;
     const chkAll=el('input',{type:'checkbox',title:'Görünenleri seç/bırak'}); chkAll.onclick=e=>{document.querySelectorAll('#mkBody .mkChk').forEach(c=>c.checked=e.target.checked);};
-    tb.append(el('thead',{},el('tr',{}, ...(isAdmin?[el('th',{},chkAll)]:[]), ...['İrsaliye Tarih','Kayıt Tarihi','Stok Kodu','Stok Adı','Tedarikçi','Miktar','İrsaliye','Depo','Tür','Giriş Planı'].map(h=>el('th',{},h)))));
+    tb.append(el('thead',{},el('tr',{}, ...(isAdmin?[el('th',{},chkAll)]:[]), ...['İrsaliye Tarih','Kayıt Tarihi','Stok Kodu','Stok Adı','Tedarikçi','Miktar','İrsaliye','Depo','Tür','Giriş Kontrol'].map(h=>el('th',{},h)))));
     const body=el('tbody',{id:'mkBody'});
+    function mkCtrlCell(r){
+      const cc=ctrlMap[r.rec_id];
+      if(cc){ const cls=cc.ret?'ret':'ok'; const txt=(cc.ret?'RET':'OK')+(cc.n>1?(' ×'+cc.n):'');
+        return el('span',{class:'pill '+cls,style:'cursor:pointer',title:'Giriş kalite kaydını gör (Giriş Kalite Kayıtları)',onclick:e=>{e.stopPropagation();gotoGirisRecords(r.stok_kodu,(r.seri||'')+(r.sira?(' / '+r.sira):''));}},txt); }
+      const hasPlan=planSet.has(r.stok_kodu);
+      if(hasPlan && !r._iz) return el('span',{class:'pill gray',style:'cursor:pointer',title:'Bu mal kabul için giriş kontrolü gir',onclick:e=>{e.stopPropagation();girisKaliteGir(r);}},'kontrol gir ▸');
+      if(hasPlan) return el('span',{class:'pill gray'},'—');
+      return el('span',{class:'pill gray'},'plan yok');
+    }
     rows.forEach(r=>{ body.append(el('tr',{},
       ...(isAdmin?[el('td',{}, r._iz?el('span',{title:'İzlenebilirlikten gelen alış (FIFO_HAREKET) — aktarılmış kayıt değil, silinemez',style:'color:var(--muted)'},'·'):el('input',{type:'checkbox',class:'mkChk','data-id':String(r.rec_id)}))]:[]),
       el('td',{style:'white-space:nowrap'},fmtDate(r.tarih)),
@@ -902,7 +918,7 @@ async function renderMalKabul(){
       el('td',{style:'font-size:11px;white-space:nowrap'},(r.seri||'')+(r.sira?(' / '+r.sira):'')),
       el('td',{style:'font-size:11px'},r.depo||''),
       el('td',{}, r.iade===1?el('span',{class:'pill ret'},'İade'):el('span',{class:'pill gray'},'Mal Kabul')),
-      el('td',{}, planSet.has(r.stok_kodu)?el('span',{class:'pill ok'},'var'):el('span',{class:'pill gray'},'yok')))); });
+      el('td',{}, mkCtrlCell(r)))); });
     tb.append(body); card.append(el('div',{class:'tbl-wrap'},tb)); out.append(card);
   }
   fTur.value='0'; load();
@@ -993,6 +1009,88 @@ function girisKaliteGir(mk){
     quantity:mk.miktar, unit:mk.birim, customer:mk.cari_adi, operator:'', machine_name:'', machine_code:'', work_order:irs,
     __giris:true, mal_kabul_rec_id:mk.rec_id, giris_cari:mk.cari_adi, giris_irsaliye:irs, giris_miktar:mk.miktar, giris_birim:mk.birim };
   openControl(p,'giris');
+}
+// Mal Kabul rozetinden → Giriş Kalite Kayıtları'na git (üretimdeki gotoRecords gibi; tıklanabilir sembol)
+function gotoGirisRecords(stock,irs){ KAYIT_PROD=null; KAYIT_PRODS=null; KAYIT_GK_FOCUS=null; KAYIT_IRS=irs||null; KAYIT_STAGE='giris'; KAYIT_FILT={start:'',end:'',stock:stock||''}; switchTab('kayitlar'); }
+// 🎲 Mal Kabul — TOPLU otomatik giriş kontrolü (üretimdeki gibi, ama daha basit: zaman çizelgesi yok, irsaliye gününde tek kontrol)
+async function openMalKabulAuto(){
+  if(!(can('auto')||(PROFILE&&PROFILE.is_admin))){ toast('Yetki yok.','err'); return; }
+  const root=$('#modalRoot');
+  const rows=(_mkLastRows||[]).filter(r=>r.rec_id!=null && r.iade!==1);   // iade ve sentetik (rec_id'siz iz) satırlar hariç
+  if(!rows.length){ toast('Listede uygun mal kabul kaydı yok.','err'); return; }
+  root.innerHTML='<div class="modal-bg"><div class="modal"><div class="empty">Yükleniyor…</div></div></div>';
+  const codes=[...new Set(rows.map(r=>r.stok_kodu).filter(Boolean))];
+  const plan=[];
+  for(let i=0;i<codes.length;i+=100){ const {data:pa}=await sb.from('control_plan_items').select('*').in('stock_code',codes.slice(i,i+100)).eq('active',true); (pa||[]).forEach(it=>{ if(it.giris_kalite===true)plan.push(it); }); }
+  const planStocks=new Set(plan.map(x=>x.stock_code));
+  const withPlan=rows.filter(r=>planStocks.has(r.stok_kodu));
+  const noPlanStocks=[...new Set(rows.filter(r=>!planStocks.has(r.stok_kodu)).map(r=>r.stok_kodu).filter(Boolean))];
+  root.innerHTML='';
+  if(!withPlan.length){ toast('Listedeki stokların hiçbirinin giriş kalite planı yok.','err'); return; }
+  const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
+  const m=el('div',{class:'modal',style:'position:relative;max-width:640px'});
+  m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
+  m.append(el('h3',{},'🎲 Mal Kabul — Otomatik Giriş Kontrolü'));
+  m.append(el('p',{class:'meta',html:`Listede görünen <b>${withPlan.length}</b> mal kabul kaydına, stoğun <b>giriş kalite planına</b> göre otomatik kontrol üretilir (kontrol saati irsaliye gününde rastgele iş saati; yanma vb. değerler ilk yapılan kayıttan taşınır). Zaten giriş kontrolü olan kayıtlar atlanır.`}));
+  if(noPlanStocks.length) m.append(el('div',{class:'msg err',style:'margin:0 0 10px',html:`⚠ Giriş planı OLMAYAN stoklar atlanır: <b>${noPlanStocks.map(esc).join(', ')}</b>`}));
+  const regenCb=el('input',{type:'checkbox'});
+  m.append(el('label',{style:'display:flex;align-items:center;gap:6px;margin:6px 0 12px;cursor:pointer'},regenCb,'Var olan giriş kontrolünü silip yeniden üret'));
+  const status=el('div',{style:'margin-top:6px;color:var(--muted);font-size:13px'});
+  const go=el('button',{class:'btn',onclick:()=>runBulkAutoGiris(withPlan,plan,regenCb.checked,status,go)},'🎲 Üret');
+  m.append(el('div',{},go),status);
+  bg.append(m); root.append(bg);
+}
+async function runBulkAutoGiris(rows,plan,regen,status,go){
+  go.disabled=true;
+  const recIds=rows.map(r=>r.rec_id).filter(x=>x!=null);
+  const have=new Set();
+  for(let i=0;i<recIds.length;i+=200){ const {data}=await sb.from('control_records').select('mal_kabul_rec_id').in('mal_kabul_rec_id',recIds.slice(i,i+200)); (data||[]).forEach(d=>{ if(d.mal_kabul_rec_id!=null)have.add(d.mal_kabul_rec_id); }); }
+  // yanma vb. ilk yapılan değerleri (stok|ölçüm → ilk örnekler) — taşımak için
+  const stocks=[...new Set(rows.map(r=>r.stok_kodu).filter(Boolean))];
+  const priorMap={};
+  for(let i=0;i<stocks.length;i+=100){ const {data:hist}=await sb.from('control_records').select('stock_code,checked_at,vals').in('stock_code',stocks.slice(i,i+100)).order('checked_at',{ascending:true});
+    (hist||[]).forEach(rc=>{ (rc.vals||[]).forEach(v=>{ if(/yanma/.test(deTr(v.measure_name||''))){ const k=rc.stock_code+'|'+v.measure_name; if(!priorMap[k]&&Array.isArray(v.samples)&&v.samples.length)priorMap[k]=v.samples; } }); }); }
+  let made=0,skipped=0,cleaned=0;
+  for(const r of rows){
+    const items=stageItems(opItemsFor(plan.filter(x=>x.stock_code===r.stok_kodu),null),'giris');
+    if(!items.length){ skipped++; continue; }
+    if(have.has(r.rec_id)){
+      if(regen){ await sb.from('control_records').delete().eq('mal_kabul_rec_id',r.rec_id); cleaned++; }
+      else { skipped++; continue; }
+    }
+    const rec=buildAutoGirisRec(r,items,priorMap);
+    if(!rec){ skipped++; continue; }
+    const {error}=await sb.from('control_records').insert(rec);
+    if(error){ console.warn(error.message); skipped++; } else made++;
+    status.textContent=`İşleniyor… ${made} kayıt`;
+  }
+  status.textContent=`Bitti ✓ ${made} giriş kontrol kaydı üretildi. ${skipped} atlandı (plan yok / zaten var).${cleaned?` ${cleaned} yeniden üretildi.`:''}`;
+  toast(`${made} giriş kontrol kaydı oluşturuldu.`, made?'ok':'err');
+  go.disabled=false;
+  try{ loadControlCounts(); }catch(e){}
+  if($('#tab-malkabul') && !$('#tab-malkabul').classList.contains('hidden')) renderMalKabul();
+}
+// irsaliye gününde rastgele bir iş saati (08:01–17:30) → giriş kontrolü zamanı
+function girisCheckedAt(dateStr){
+  const base = dateStr ? new Date(String(dateStr).slice(0,10)+'T00:00:00') : new Date();
+  if(isNaN(base.getTime())) return new Date();
+  const start=8*60+1, endm=17*60+30; const mins=start+Math.floor(Math.random()*(endm-start));
+  base.setHours(0,mins,Math.floor(Math.random()*60),0); return base;
+}
+// mal kabul kaydından otomatik giriş kontrol kaydı (buildAutoRec'in giriş eşdeğeri)
+function buildAutoGirisRec(mk,items,priorMap){
+  if(!items.length) return null;
+  const when=girisCheckedAt(mk.tarih); const measurer=AUTO_MEASURER||'';
+  const vals=items.map(it=>{ const n=sampleCount(it,'giris'); it._prod=mk.stok_adi||'';
+    const ov=(priorMap&&/yanma/.test(deTr(it.measure_name||'')))?priorMap[mk.stok_kodu+'|'+it.measure_name]:null;
+    return {plan_item_id:it.id,measure_name:it.measure_name,target:it.target,unit:it.unit,nitel_hedef:it.nitel_hedef,
+      lower_limit:it.lower_limit,upper_limit:it.upper_limit,method:it.method,sampling_frequency:it.sampling_frequency,
+      is_qualitative:it.is_qualitative,sample_size:n,samples:genSamples(it,n,ov,measurer)}; });
+  const overall=vals.flatMap(v=>v.samples).some(s=>s.ok===false)?'RET':'OK';
+  return {production_id:null, stock_code:mk.stok_kodu, stock_name:mk.stok_adi, stage:'giris',
+    operator:measurer, shift:shiftForTime(when), checked_at:when.toISOString(), vals, overall_result:overall,
+    mal_kabul_rec_id:mk.rec_id, giris_cari:mk.cari_adi, giris_irsaliye:(mk.seri||'')+(mk.sira?(' / '+mk.sira):''),
+    giris_miktar:mk.miktar, giris_birim:mk.birim};
 }
 // (eski openGirisKalite — artık kullanılmıyor; girisKaliteGir+openControl ile seri başı modalı kullanılıyor)
 async function openGirisKalite(mk){
