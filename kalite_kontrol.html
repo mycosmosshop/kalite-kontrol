@@ -1721,7 +1721,7 @@ function exportVdaTemplate(sc,stockName){
   const items=planSorted((PLAN||[]).filter(p=>p.stock_code===sc));
   if(!items.length){ toast('Bu planda madde yok.','err'); return; }
   const today=fmtDate(new Date().toISOString());
-  const head=['Ölçü No','Op No','Ölçülecek Değer','Nicel Hedef','Nitel Hedef / Birim','Alt Limit','Üst Limit','Yöntem','Ölçüm 1','Ölçüm 2','Ölçüm 3','Ölçüm 4','Ölçüm 5','Min','Maks','Ortalama','Sonuç'];
+  const head=['Ölçü No','Op No','Ölçülecek Değer','Nicel Hedef','Nitel Hedef / Birim','Alt Limit','Üst Limit','Yöntem','Ölçüm 1','Ölçüm 2','Ölçüm 3','Ölçüm 4','Ölçüm 5','Sonuç'];
   const aoa=[];
   aoa.push(['SANİFOAM — VDA 6.5 ÜRÜN DENETİMİ · FULL ÖLÇÜM ŞABLONU (5 ÖLÇÜM)']);
   aoa.push(['Stok Kodu',sc,'','Stok Adı',stockName||'','','Tarih',today]);
@@ -1730,7 +1730,7 @@ function exportVdaTemplate(sc,stockName){
   const headerRow=aoa.length; aoa.push(head);
   const dataStart=aoa.length;
   items.forEach((it,i)=>{ aoa.push([ i+1, it.op_no??'', it.measure_name||'', it.target??'', (it.is_qualitative?it.nitel_hedef:it.unit)||it.nitel_hedef||it.unit||'',
-    it.lower_limit??'', it.upper_limit??'', it.method||'', '','','','','', '','','', '' ]); });
+    it.lower_limit??'', it.upper_limit??'', it.method||'', '','','','','', '' ]); });
   const ws=XLSX.utils.aoa_to_sheet(aoa);
   const thin={style:'thin',color:{rgb:'888888'}}, allB={top:thin,bottom:thin,left:thin,right:thin};
   const setS=(r,c,s)=>{ const ref=XLSX.utils.encode_cell({r,c}); if(!ws[ref])ws[ref]={t:'s',v:''}; ws[ref].s=s; };
@@ -1747,21 +1747,18 @@ function exportVdaTemplate(sc,stockName){
   [[1,1],[1,4],[1,7],[2,1],[2,4],[2,7]].forEach(([r,c])=>setS(r,c,valS));
   for(let c=0;c<head.length;c++) setS(headerRow,c,headS);
   for(let i=0;i<items.length;i++){ const r=dataStart+i;
-    for(let c=0;c<head.length;c++){ let s=dataS; if(c>=8&&c<=12)s=measS; else if(c>=13)s=calcS; else if(c===0||c===1)s=ctrS; setS(r,c,s); } }
-  // formüller (stili koruyarak): Min/Maks/Ortalama + limitlere göre Sonuç
+    for(let c=0;c<head.length;c++){ let s=dataS; if(c>=8&&c<=12)s=measS; else if(c===13)s=calcS; else if(c===0||c===1)s=ctrS; setS(r,c,s); } }
+  // formül (stili koruyarak): limitlere göre Sonuç (OK/RET)
   for(let i=0;i<items.length;i++){ const r=dataStart+i, xr=r+1, meas=`I${xr}:M${xr}`;
     const setF=(c,f,t)=>{ const ref=XLSX.utils.encode_cell({r,c}); const sty=ws[ref]&&ws[ref].s; ws[ref]={t:t||'n',f,s:sty}; };
-    setF(13,`IF(COUNT(${meas})=0,"",MIN(${meas}))`);
-    setF(14,`IF(COUNT(${meas})=0,"",MAX(${meas}))`);
-    setF(15,`IF(COUNT(${meas})=0,"",ROUND(AVERAGE(${meas}),3))`);
     const it=items[i];
     const hasLo=it.lower_limit!=null&&it.lower_limit!==''&&!isNaN(Number(it.lower_limit));
     const hasHi=it.upper_limit!=null&&it.upper_limit!==''&&!isNaN(Number(it.upper_limit));
     if(hasLo||hasHi){ const cs=[]; if(hasLo)cs.push(`MIN(${meas})>=F${xr}`); if(hasHi)cs.push(`MAX(${meas})<=G${xr}`);
-      setF(16,`IF(COUNT(${meas})=0,"",IF(AND(${cs.join(',')}),"OK","RET"))`,'s'); }
+      setF(13,`IF(COUNT(${meas})=0,"",IF(AND(${cs.join(',')}),"OK","RET"))`,'s'); }
   }
   ws['!merges']=[{s:{r:0,c:0},e:{r:0,c:head.length-1}}];
-  ws['!cols']=[{wch:7},{wch:6},{wch:26},{wch:11},{wch:18},{wch:9},{wch:9},{wch:16},{wch:9},{wch:9},{wch:9},{wch:9},{wch:9},{wch:9},{wch:9},{wch:11},{wch:8}];
+  ws['!cols']=[{wch:7},{wch:6},{wch:26},{wch:11},{wch:18},{wch:9},{wch:9},{wch:16},{wch:9},{wch:9},{wch:9},{wch:9},{wch:9},{wch:8}];
   ws['!rows']=[]; ws['!rows'][0]={hpt:20}; ws['!rows'][headerRow]={hpt:26};
   const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'VDA 6.5 Ölçüm');
   XLSX.writeFile(wb,`VDA65_olcum_sablonu_${sc}.xlsx`);
