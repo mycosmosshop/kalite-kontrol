@@ -591,6 +591,19 @@ document.querySelectorAll('nav.tabs button').forEach(b=>b.onclick=async()=>{
 // ====================== ÜRETİMLER ======================
 let PRODS=[];
 let URETIM_FILT={start:'',end:'',stock:'',group:'',machine:'',ids:[]};
+// Tarih filtresi: native <input type=date> yıl hanesine ilk rakam yazıldığında (örn "2"→0002)
+// tarih geçerli sayılıp change tetikler; her seferinde renderUretimler() çalışıp input'u silerse
+// odak kayar ve yıl yazılamaz. Bu yüzden değeri hemen sakla ama yeniden çizimi debounce et +
+// anlamsız küçük yıllarda çizme.
+let _ufDateT=null;
+function ufDateChange(field,val){
+  URETIM_FILT[field]=val;
+  clearTimeout(_ufDateT);
+  // val boşsa hemen çiz (temizleme), doluysa yıl >=1000 olana dek bekle
+  const _y = val ? parseInt(String(val).slice(0,4),10) : 0;
+  if(val && (!_y || _y<1000)) return; // 0002 / 0202 gibi ara değerlerde çizme
+  _ufDateT=setTimeout(()=>renderUretimler(),500);
+}
 // LeanSys MAKİNE GRUBU (şube) eşlemesi: makine kodu -> grup adı (URETIMRAPORU_VW.MAKINEGRUP_ADI, 155 makine 1:1).
 // productions zaten machine_code içerdiği için grup satır bazında BURADAN türetilir (Supabase kolonu gerekmez).
 // Yeni makine eklenirse buraya bir satır eklenir; bilinmeyen kod -> '' (Tümü dışında "(grupsuz)" olarak görünür).
@@ -1178,8 +1191,8 @@ async function renderUretimler(){
       el('div',{class:'stat'},el('b',{id:'urunCount'},String(stockSet.length)),el('span',{},'Farklı ürün')),
       el('button',{class:'btn sm',style:'flex:0',title:'Supabase’den yeniden çek (LeanSys aktarımından sonra)',onclick:()=>renderUretimler()},'🔄 Yenile'),
       el('button',{class:'btn sm',style:'flex:0',title:'LeanSys aktarım penceresini açar (üretimi güncelle). İlk seferde tarayıcı “Aç” diye sorar.',onclick:()=>{fetch('http://127.0.0.1:17777/open',{mode:'cors'}).then(()=>toast('LeanSys penceresi açılıyor… Aktarım bitince 🔄 Yenile.','ok')).catch(()=>toast('LeanSys ajanı kapalı. Masaüstündeki LeanSys_Aktar’a çift tıkla.','err'));}},'📥 LeanSys Güncelle'),
-      el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Başlangıç'),el('input',{type:'date',class:'inp',value:URETIM_FILT.start,onchange:e=>{URETIM_FILT.start=e.target.value;renderUretimler();}})),
-      el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),el('input',{type:'date',class:'inp',value:URETIM_FILT.end,onchange:e=>{URETIM_FILT.end=e.target.value;renderUretimler();}})),
+      el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Başlangıç'),el('input',{type:'date',class:'inp',value:URETIM_FILT.start,onchange:e=>ufDateChange('start',e.target.value)})),
+      el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),el('input',{type:'date',class:'inp',value:URETIM_FILT.end,onchange:e=>ufDateChange('end',e.target.value)})),
       el('div',{class:'field',style:'flex:0;min-width:180px'},el('label',{class:'lab'},'Stok Kodu'),
         (()=>{ const s=el('select',{class:'inp',id:'uretimStokSel',onchange:e=>{URETIM_FILT.stock=e.target.value;renderUretimler();}});
           s.append(el('option',{value:''},'Tümü')); stockSet.slice().sort().forEach(k=>{const o=el('option',{value:k},k); if(k===URETIM_FILT.stock)o.selected=true; s.append(o);}); return s; })()),
