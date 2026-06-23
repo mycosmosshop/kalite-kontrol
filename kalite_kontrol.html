@@ -842,12 +842,14 @@ async function renderMalKabul(){
   const fTo=el('input',{type:'date',class:'inp',onchange:load});
   const fTur=el('select',{class:'inp',onchange:load}); [['0','Mal Kabul'],['1','İade'],['','Hepsi']].forEach(([v,t])=>fTur.append(el('option',{value:v},t)));
   const cnt=el('div',{class:'stat'},el('b',{id:'mkCount'},'—'),el('span',{},'kayıt'));
-  // Admin: SADECE Supabase mal_kabul silme (LeanSys'e ASLA dokunmaz)
-  const mkTools=(PROFILE&&PROFILE.is_admin)?el('div',{class:'autozone'},
-    el('button',{class:'autozone-handle',title:'Mal kabul araçları — yalnızca SUPABASE silme (LeanSys’e dokunmaz)',onclick:e=>{e.stopPropagation();toggleAutozone(e.currentTarget);}},'▾'),
+  // Mal kabul araçları (▾): Otomatik Kontrol Üret + (admin) SADECE Supabase mal_kabul silme (LeanSys'e ASLA dokunmaz)
+  const _canAuto=can('auto')||(PROFILE&&PROFILE.is_admin), _isAdmin=PROFILE&&PROFILE.is_admin;
+  const mkTools=(_canAuto||_isAdmin)?el('div',{class:'autozone'},
+    el('button',{class:'autozone-handle',title:'Mal kabul araçları',onclick:e=>{e.stopPropagation();toggleAutozone(e.currentTarget);}},'▾'),
     el('div',{class:'auto-menu'},
-      el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteSelectedMalKabul();}},'🗑 Seçilenleri Sil (Supabase)'),
-      el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteAllMalKabul();}},'🧨 TÜMÜNÜ Sil (Supabase)')
+      _canAuto?el('button',{class:'btn sm',title:'Listede görünen mal kabullere giriş kalite planına göre otomatik kontrol üret',onclick:()=>{closeAutozones();openMalKabulAuto();}},'🎲 Otomatik Kontrol Üret'):'',
+      _isAdmin?el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteSelectedMalKabul();}},'🗑 Seçilenleri Sil (Supabase)'):'',
+      _isAdmin?el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteAllMalKabul();}},'🧨 TÜMÜNÜ Sil (Supabase)'):''
     )):'';
   root.append(el('div',{class:'card'},el('div',{class:'toolbar'},
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Ara'),fSearch),
@@ -857,7 +859,6 @@ async function renderMalKabul(){
     el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{fSearch.value='';fFrom.value='';fTo.value='';fTur.value='0';load();}},'Temizle'),
     el('button',{class:'btn sm',style:'flex:0',title:'LeanSys mal kabul aktarım penceresini açar (stok kodu / tarih seç → AKTAR). İlk seferde tarayıcı “Aç” diye sorabilir. Aktarım bitince 🔄 Yenile ile listeyi tazele.',onclick:()=>{fetch('http://127.0.0.1:17777/open?app=malkabul',{mode:'cors'}).then(()=>toast('Mal Kabul aktarım penceresi açılıyor… Aktarım bitince 🔄 Yenile’ye bas.','ok')).catch(()=>toast('LeanSys ajanı kapalı. Önce LeanSys_Agent çalışmalı (Startup).','err'));}},'📥 LeanSys’ten Aktar'),
     el('button',{class:'btn sm sec',style:'flex:0',title:'Listeyi yeniden yükle (aktarımdan sonra yeni kayıtları getir) — filtreler korunur',onclick:()=>load()},'🔄 Yenile'),
-    (can('auto')||(PROFILE&&PROFILE.is_admin))?el('button',{class:'btn sm',style:'flex:0',title:'Listede görünen mal kabullere giriş kalite planına göre otomatik kontrol üret',onclick:()=>openMalKabulAuto()},'🎲 Otomatik Kontrol Üret'):'',
     el('div',{class:'grow'}), mkTools, cnt)));
   const out=el('div'); root.append(out);
   let _mkSeq=0;
