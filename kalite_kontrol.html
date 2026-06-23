@@ -1083,8 +1083,8 @@ async function _renderDueControls(root){
   const groups={seri_basi:[], proses:[], son:[]};
   PRODS.forEach(p=>{
     if(!p.start_time) return;
-    if(!(Number(p.quantity)>0)) return;   // miktar 0 veya boş → kontrol gerekmez, kuyrukta gösterme
     const start=new Date(p.start_time).getTime(), end=p.end_time?new Date(p.end_time).getTime():null, finished=!!end;
+    if(finished && !(Number(p.quantity)>0)) return;   // BİTMİŞ + miktar 0/boş → kontrol gerekmez (devam edenler GÖSTERİLİR)
     if(!finished && (now-start)>3*24*60*60000) return;      // 3 günden eski AÇIK üretim = unutulmuş/kapanmamış (gerçek koşu < birkaç gün), listeleme
     if(finished && (now-end)>14*24*60*60000) return;        // çok eski bitmişi listeleme
     const elapsed=Math.max(0,Math.round(((end||now)-start)/60000));
@@ -2817,20 +2817,27 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
   let made=0,prodN=0,skipped=0,cleaned=0,recalcN=0;
   for(const p of prods){
     if(!p.start_time){skipped++;continue;}   // başlama şart
-    if(!(Number(p.quantity)>0)){   // miktar 0 veya boş → kontrol ÜRETİLMEZ; varsa eski (hatalı/otomatik) kontroller temizlenir
-      if(have[p.id] && have[p.id].size){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); if(recMap[p.id])recMap[p.id]={}; cleaned++; }
-      skipped++; continue;
-    }
     const cs=cyc[(p.machine_code||'?')+'||'+(p.stock_code||'?')], start=new Date(p.start_time);
-    let end, durMin, recomputed=false, finished=false;
-    if(cs>0 && Number(p.quantity)>0){ const durSec=Number(p.quantity)*cs; end=new Date(start.getTime()+durSec*1000); durMin=durSec/60; recomputed=true; finished=true;  // BİTİŞ = başlama + adet × çevrim (DB'ye yazılır)
+    const _qty=Number(p.quantity);
+    let end, durMin, recomputed=false, finished=false, ongoing=false;
+    if(cs>0 && _qty>0){ const durSec=_qty*cs; end=new Date(start.getTime()+durSec*1000); durMin=durSec/60; recomputed=true; finished=true;  // BİTİŞ = başlama + adet × çevrim (DB'ye yazılır)
       const {error:upErr}=await sb.from('productions').update({end_time:end.toISOString(),duration_min:Math.round(durMin)}).eq('id',p.id);
       if(upErr){ console.warn('Bitiş güncellenemedi:',upErr.message); } else recalcN++;
       p.end_time=end.toISOString(); p.duration_min=Math.round(durMin);
     } else if(p.end_time){ end=new Date(p.end_time); durMin=Math.round((end.getTime()-start.getTime())/60000); if(durMin<0)durMin+=1440; finished=true; // çevrim yok → mevcut başlama/bitişten süreyi hesapla (proses de üretilsin)
       if(durMin<=0 && Number(p.duration_min)>0){ durMin=Number(p.duration_min); end=new Date(start.getTime()+durMin*60000); }  // bitiş=başlama ama süre bilgisi varsa onu kullan
     } else if(Number(p.duration_min)>0){ durMin=Number(p.duration_min); end=new Date(start.getTime()+durMin*60000); finished=true; }  // bitiş yok ama süre var
-    else { skipped++; continue; }  // DEVAM EDEN (bitmemiş) üretim → bitene kadar otomatik kontrol ÜRETİLMEZ
+    else { // DEVAM EDEN (bitmemiş) üretim → ŞU ANA KADAR GEÇEN süre kadar SB + proses üret; SON ÜRETME (henüz bitmedi). Kalan proses/son kuyrukta vadesi geldikçe gelir.
+      const _nowMs=Date.now();
+      if(_nowMs<=start.getTime()){ skipped++; continue; }                       // başlama gelecekte → atla
+      if((_nowMs-start.getTime())>3*24*60*60000){ skipped++; continue; }        // 3 günden eski AÇIK üretim = unutulmuş/kapanmamış → atla
+      ongoing=true; durMin=Math.max(0,Math.round((_nowMs-start.getTime())/60000)); end=new Date(_nowMs); finished=false;
+    }
+    // BİTMİŞ ama miktar 0 veya boş → kontrol olmamalı; varsa eski (hatalı) kayıtları temizle, atla
+    if(finished && !(_qty>0)){
+      if(have[p.id] && have[p.id].size){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); if(recMap[p.id])recMap[p.id]={}; cleaned++; }
+      skipped++; continue;
+    }
     // çevrim girildiyse BİTİŞ değişti → o üretimin TÜM kontrolleri yeni zaman çizelgesine göre baştan üretilsin (eski/tutarsız kontroller silinir)
     if(recomputed && !regen){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); recMap[p.id]={}; }
     if(regen){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); recMap[p.id]={}; }
