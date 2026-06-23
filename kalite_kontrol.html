@@ -2817,7 +2817,10 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
   let made=0,prodN=0,skipped=0,cleaned=0,recalcN=0;
   for(const p of prods){
     if(!p.start_time){skipped++;continue;}   // başlama şart
-    if(!(Number(p.quantity)>0)){skipped++;continue;}   // miktar 0 veya boş → kontrol ÜRETİLMEZ (kullanıcı kuralı)
+    if(!(Number(p.quantity)>0)){   // miktar 0 veya boş → kontrol ÜRETİLMEZ; varsa eski (hatalı/otomatik) kontroller temizlenir
+      if(have[p.id] && have[p.id].size){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); if(recMap[p.id])recMap[p.id]={}; cleaned++; }
+      skipped++; continue;
+    }
     const cs=cyc[(p.machine_code||'?')+'||'+(p.stock_code||'?')], start=new Date(p.start_time);
     let end, durMin, recomputed=false, finished=false;
     if(cs>0 && Number(p.quantity)>0){ const durSec=Number(p.quantity)*cs; end=new Date(start.getTime()+durSec*1000); durMin=durSec/60; recomputed=true; finished=true;  // BİTİŞ = başlama + adet × çevrim (DB'ye yazılır)
