@@ -2413,13 +2413,21 @@ async function openControl(p, forceStage, suggestTime){
   const existing=recs||[];
   // periyodik maddeler (VDA yıllık, requalification, yanma vb.) için "kalan süre": geçmişten son fiilen yapılma + plan periodic_start
   const refT=new Date(p.start_time||p.prod_date||Date.now()).getTime();
-  const firstDone={}, lastDone={}, startMap={};
+  const firstDone={}, lastDone={}, startMap={}, _lastYanma={};
   { const {data:hist}=await sb.from('control_records').select('id,checked_at,vals').eq('stock_code',p.stock_code);
-    (hist||[]).forEach(rc=>{ const before=new Date(rc.checked_at).getTime()<=refT;
+    const _yB={}, _yA={};   // yanma: en son girilen değer (B=refT öncesi öncelikli, A=genel en yeni)
+    (hist||[]).forEach(rc=>{ const tMs=new Date(rc.checked_at).getTime(); const before=tMs<=refT;
       (rc.vals||[]).forEach(vv=>{ const k=vv.measure_name; if(!k)return;
         if(!firstDone[k]||rc.checked_at<firstDone[k]) firstDone[k]=rc.checked_at;
         const measured=(vv.samples||[]).some(s=>(s.value!=null&&s.value!=='')||s.ok===true||s.ok===false);
-        if(measured && before && (!lastDone[k]||rc.checked_at>lastDone[k])) lastDone[k]=rc.checked_at; }); });
+        if(measured && before && (!lastDone[k]||rc.checked_at>lastDone[k])) lastDone[k]=rc.checked_at;
+        if(measured && /yanma/.test(deTr(k))){   // yanma değerini taşımak için son örneği yakala
+          const s0=(vv.samples||[]).find(s=>(s.value!=null&&s.value!=='')||s.ok===true||s.ok===false)||{};
+          const cand={at:tMs,value:(s0.value!=null?s0.value:''),ok:s0.ok===true};
+          if(!_yA[k]||tMs>_yA[k].at) _yA[k]=cand;
+          if(before && (!_yB[k]||tMs>_yB[k].at)) _yB[k]=cand;
+        } }); });
+    Object.keys({..._yA,..._yB}).forEach(k=>{ _lastYanma[k]=_yB[k]||_yA[k]; });
     (allItems||[]).forEach(it=>{ if(it.periodic_start) startMap[it.id]=it.periodic_start; }); }
 
   const root=$('#modalRoot');
@@ -2518,6 +2526,12 @@ async function openControl(p, forceStage, suggestTime){
       const body=el('tbody');
       items.forEach(it=>{
         const st=stItem(it);
+        // YANMA: seri başı/proses girişinde, o stok için SON girilen yanma değeriyle ÖN-DOLDUR
+        // (yeni değer yazılana kadar taşınır; zaman/diğer ölçümler etkilenmez, otomatik üretim gerekmez)
+        if((stage==='seri_basi'||stage==='proses') && /yanma/.test(deTr(it.measure_name||'')) && !st._seeded && !st.samples.length && (st.cur.value===''||st.cur.value==null)){
+          const _ly=_lastYanma[it.measure_name];
+          if(_ly && _ly.value!=='' && _ly.value!=null){ st.cur.value=String(_ly.value); st.cur.ok=_ly.ok; st._seeded=true; }
+        }
         const n=sampleFor(it,stage);
         const qual=it.is_qualitative;
         // kayan OK/RET toggle (başlangıç RET)
