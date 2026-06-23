@@ -842,12 +842,13 @@ async function renderMalKabul(){
   const fTo=el('input',{type:'date',class:'inp',onchange:load});
   const fTur=el('select',{class:'inp',onchange:load}); [['0','Mal Kabul'],['1','İade'],['','Hepsi']].forEach(([v,t])=>fTur.append(el('option',{value:v},t)));
   const cnt=el('div',{class:'stat'},el('b',{id:'mkCount'},'—'),el('span',{},'kayıt'));
-  // Mal kabul araçları (▾): Otomatik Kontrol Üret + (admin) SADECE Supabase mal_kabul silme (LeanSys'e ASLA dokunmaz)
-  const _canAuto=can('auto')||(PROFILE&&PROFILE.is_admin), _isAdmin=PROFILE&&PROFILE.is_admin;
-  const mkTools=(_canAuto||_isAdmin)?el('div',{class:'autozone'},
+  // Mal kabul araçları (▾): Otomatik Kontrol Üret + Seçilenlerin Giriş Kayıtlarını Sil + (admin) SADECE Supabase mal_kabul silme (LeanSys'e ASLA dokunmaz)
+  const _canAuto=can('auto')||(PROFILE&&PROFILE.is_admin), _isAdmin=PROFILE&&PROFILE.is_admin, _canClean=can('delete')||(PROFILE&&PROFILE.is_admin);
+  const mkTools=(_canAuto||_isAdmin||_canClean)?el('div',{class:'autozone'},
     el('button',{class:'autozone-handle',title:'Mal kabul araçları',onclick:e=>{e.stopPropagation();toggleAutozone(e.currentTarget);}},'▾'),
     el('div',{class:'auto-menu'},
       _canAuto?el('button',{class:'btn sm',title:'Listede görünen mal kabullere giriş kalite planına göre otomatik kontrol üret',onclick:()=>{closeAutozones();openMalKabulAuto();}},'🎲 Otomatik Kontrol Üret'):'',
+      _canClean?el('button',{class:'btn sm danger',title:'Seçili mal kabullerin GİRİŞ KONTROL kayıtlarını sil (mal kabul satırlarına dokunulmaz; tekrar üretebilirsin)',onclick:()=>{closeAutozones();cleanSelectedGirisRecords();}},'🧹 Seçilenlerin Giriş Kayıtlarını Sil'):'',
       _isAdmin?el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteSelectedMalKabul();}},'🗑 Seçilenleri Sil (Supabase)'):'',
       _isAdmin?el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteAllMalKabul();}},'🧨 TÜMÜNÜ Sil (Supabase)'):''
     )):'';
@@ -896,20 +897,21 @@ async function renderMalKabul(){
     if(!rows.length){ out.append(el('div',{class:'card'},el('div',{class:'empty'},'Kayıt yok. (Önce sunucuda _malkabul_guncelle.bat çalıştır.)'))); return; }
     const card=el('div',{class:'card'}); const tb=el('table');
     const isAdmin=PROFILE&&PROFILE.is_admin;
+    const showChk=isAdmin||can('delete');   // admin (mal kabul sil) veya giriş kayıtlarını temizleme yetkisi → seçim kutuları
     const chkAll=el('input',{type:'checkbox',title:'Görünenleri seç/bırak'}); chkAll.onclick=e=>{document.querySelectorAll('#mkBody .mkChk').forEach(c=>c.checked=e.target.checked);};
-    tb.append(el('thead',{},el('tr',{}, ...(isAdmin?[el('th',{},chkAll)]:[]), ...['İrsaliye Tarih','Kayıt Tarihi','Stok Kodu','Stok Adı','Tedarikçi','Miktar','İrsaliye','Depo','Tür','Giriş Kontrol'].map(h=>el('th',{},h)))));
+    tb.append(el('thead',{},el('tr',{}, ...(showChk?[el('th',{},chkAll)]:[]), ...['İrsaliye Tarih','Kayıt Tarihi','Stok Kodu','Stok Adı','Tedarikçi','Miktar','İrsaliye','Depo','Tür','GKK (Giriş Kalite)'].map(h=>el('th',{},h)))));
     const body=el('tbody',{id:'mkBody'});
     function mkCtrlCell(r){
       const cc=ctrlMap[r.rec_id];
-      if(cc){ const cls=cc.ret?'ret':'ok'; const txt=(cc.ret?'RET':'OK')+(cc.n>1?(' ×'+cc.n):'');
-        return el('span',{class:'pill '+cls,style:'cursor:pointer',title:'Giriş kalite kaydını gör (Giriş Kalite Kayıtları)',onclick:e=>{e.stopPropagation();gotoGirisRecords(r.stok_kodu,(r.seri||'')+(r.sira?(' / '+r.sira):''));}},txt); }
+      if(cc){ const cls=cc.ret?'ret':'ok'; const txt='GKK '+(cc.ret?'RET':'OK')+(cc.n>1?(' ×'+cc.n):'');
+        return el('span',{class:'pill '+cls,style:'cursor:pointer',title:'Giriş kalite (GKK) ölçüm sonuçlarını gör',onclick:e=>{e.stopPropagation();openGirisRecord(r.rec_id,r.stok_kodu,(r.seri||'')+(r.sira?(' / '+r.sira):''));}},txt); }
       const hasPlan=planSet.has(r.stok_kodu);
       if(hasPlan && !r._iz) return el('span',{class:'pill gray',style:'cursor:pointer',title:'Bu mal kabul için giriş kontrolü gir',onclick:e=>{e.stopPropagation();girisKaliteGir(r);}},'kontrol gir ▸');
       if(hasPlan) return el('span',{class:'pill gray'},'—');
       return el('span',{class:'pill gray'},'plan yok');
     }
     rows.forEach(r=>{ body.append(el('tr',{},
-      ...(isAdmin?[el('td',{}, r._iz?el('span',{title:'İzlenebilirlikten gelen alış (FIFO_HAREKET) — aktarılmış kayıt değil, silinemez',style:'color:var(--muted)'},'·'):el('input',{type:'checkbox',class:'mkChk','data-id':String(r.rec_id)}))]:[]),
+      ...(showChk?[el('td',{}, r._iz?el('span',{title:'İzlenebilirlikten gelen alış (FIFO_HAREKET) — aktarılmış kayıt değil, silinemez',style:'color:var(--muted)'},'·'):el('input',{type:'checkbox',class:'mkChk','data-id':String(r.rec_id)}))]:[]),
       el('td',{style:'white-space:nowrap'},fmtDate(r.tarih)),
       el('td',{style:'white-space:nowrap;font-size:11px;color:var(--muted)'},r.kayit_tarih||''),
       el('td',{style:'font-weight:600'}, r.stok_kodu||''),
@@ -1013,6 +1015,28 @@ function girisKaliteGir(mk){
 }
 // Mal Kabul rozetinden → Giriş Kalite Kayıtları'na git (üretimdeki gotoRecords gibi; tıklanabilir sembol)
 function gotoGirisRecords(stock,irs){ KAYIT_PROD=null; KAYIT_PRODS=null; KAYIT_GK_FOCUS=null; KAYIT_IRS=irs||null; KAYIT_STAGE='giris'; KAYIT_FILT={start:'',end:'',stock:stock||''}; switchTab('kayitlar'); }
+// GKK rozetine tıkla → o mal kabulün giriş ölçüm sonuçlarını AÇ (tek kayıt → modal; birden çok → Giriş Kalite Kayıtları listesi)
+async function openGirisRecord(recId,stock,irs){
+  if(recId==null){ gotoGirisRecords(stock,irs); return; }
+  const {data}=await sb.from('control_records').select('*').eq('mal_kabul_rec_id',recId).eq('stage','giris').order('checked_at',{ascending:false});
+  const list=data||[];
+  if(list.length===1){ editRecord(list[0],null); return; }
+  gotoGirisRecords(stock,irs);   // hiç yok / birden çok → liste
+}
+// Seçili mal kabullerin GİRİŞ KONTROL kayıtlarını sil (mal_kabul satırlarına ASLA dokunmaz) → tekrar otomatik üretilebilir
+async function cleanSelectedGirisRecords(){
+  if(!(can('delete')||(PROFILE&&PROFILE.is_admin))){ toast('Yetki yok.','err'); return; }
+  const ids=[...document.querySelectorAll('#mkBody .mkChk:checked')].map(c=>Number(c.dataset.id)).filter(x=>!isNaN(x));
+  if(!ids.length){ toast('Önce satır seç (sol kutucuk).','err'); return; }
+  let total=0;
+  for(let i=0;i<ids.length;i+=200){ const {count}=await sb.from('control_records').select('id',{count:'exact',head:true}).in('mal_kabul_rec_id',ids.slice(i,i+200)).eq('stage','giris'); total+=count||0; }
+  if(!total){ toast('Seçilenlerde silinecek giriş kontrol kaydı yok.','ok'); return; }
+  if(!confirm(`${total} giriş kontrol kaydı (seçili ${ids.length} mal kabul satırı) Supabase'ten SİLİNECEK.\n\nMal kabul satırlarına DOKUNULMAZ; “Otomatik Kontrol Üret” ile yeniden üretebilirsin. Devam?`)) return;
+  for(let i=0;i<ids.length;i+=200){ const {error}=await sb.from('control_records').delete().in('mal_kabul_rec_id',ids.slice(i,i+200)).eq('stage','giris'); if(error){ toast('Silme hatası: '+esc(error.message),'err'); return; } }
+  toast(`${total} giriş kontrol kaydı silindi (Supabase). Mal kabul satırları korundu.`,'ok');
+  try{ loadControlCounts(); }catch(e){}
+  renderMalKabul();
+}
 // 🎲 Mal Kabul — TOPLU otomatik giriş kontrolü (üretimdeki gibi, ama daha basit: zaman çizelgesi yok, irsaliye gününde tek kontrol)
 async function openMalKabulAuto(){
   if(!(can('auto')||(PROFILE&&PROFILE.is_admin))){ toast('Yetki yok.','err'); return; }
