@@ -2631,11 +2631,46 @@ async function saveControl(p,items,state,stage,sampleFor){
   if(error){toast(esc(error.message),'err');return;}
   toast(`${STAGES[stage]} kontrolü kaydedildi (${overall}).`, overall==='RET'?'err':'ok');
   if(overall==='RET') await autoOpenNCR(ins||rec, p);   // RET → otomatik uygunsuzluk
+  // YANMA TAŞIMA: bu kayıtta yanma değeri varsa, aynı stoğun SONRAKİ seri başı/proses kontrollerine yansıt
+  // (yeni bir yanma değeri girilene kadar taşınır; her girişte ileri segmenti günceller)
+  try{
+    const _savedAt=(ins&&ins.checked_at)||rec.checked_at||new Date().toISOString();
+    const _yn=await _propagateYanmaForward(rec.stock_code,_savedAt,rec.vals);
+    if(_yn) toast(`Yanma değeri sonraki ${_yn} seri başı/proses kontrolüne yansıtıldı.`,'ok');
+  }catch(e){ console.warn('yanma taşıma:',e); }
   $('#modalRoot').innerHTML='';
   if(!$('#tab-kayitlar').classList.contains('hidden'))renderKayitlar();
   loadControlCounts();
   if($('#tab-uretimler') && !$('#tab-uretimler').classList.contains('hidden'))renderUretimler();
   if($('#tab-bekleyen') && !$('#tab-bekleyen').classList.contains('hidden'))renderBekleyen();   // girilen kontrol bekleyenlerden kalksın
+}
+
+// Yanma değerini ileri taşı: kaydedilen yanma örneklerini, AYNI stoğun checked_at'i SONRA olan
+// seri_basi/proses kontrollerine yazar (yeni değer girilene kadar taşınır; her giriş ileri segmenti günceller).
+async function _propagateYanmaForward(stockCode, savedTimeISO, savedVals){
+  const yvals=(savedVals||[]).filter(v=>/yanma/.test(deTr(v.measure_name||'')) && (v.samples||[]).some(s=>s.value!=null&&s.value!==''));
+  if(!yvals.length || !stockCode || !savedTimeISO) return 0;
+  // sonraki seri başı/proses kayıtlarını çek (sayfalı; 1000 kapağını aş)
+  let rows=[];
+  for(let from=0; from<20000; from+=1000){
+    const {data,error}=await sb.from('control_records').select('id,vals').eq('stock_code',stockCode).in('stage',['seri_basi','proses']).gt('checked_at',savedTimeISO).range(from,from+999);
+    if(error) break; rows.push(...(data||[])); if(!data||data.length<1000) break;
+  }
+  let n=0;
+  for(const r of rows){
+    const vals=r.vals||[]; let changed=false;
+    yvals.forEach(yv=>{
+      const tgt=vals.find(v=>v.measure_name===yv.measure_name);
+      if(tgt){ tgt.samples=(yv.samples||[]).map(s=>({value:s.value,ok:s.ok===true,note:s.note||null,by:s.by||null})); changed=true; }
+    });
+    if(changed){
+      const overall=vals.flatMap(v=>v.samples||[]).some(s=>s.ok===false)?'RET':'OK';
+      const {error}=await sb.from('control_records').update({vals,overall_result:overall}).eq('id',r.id);
+      if(!error) n++;
+    }
+  }
+  if(n) { loadControlCounts && loadControlCounts(); }
+  return n;
 }
 
 // ====================== OTOMATİK (RASTGELE UYGUN) ÖLÇÜ ======================
