@@ -274,6 +274,7 @@
     <h2 style="display:inline-block"><img src="favicon-64.png?v=3" alt="" style="height:22px;vertical-align:-5px;margin-right:7px">Kalite Kontrol</h2>
     <div class="sp"></div>
     <div class="who"><div id="whoEmail"></div><div id="whoRole"></div></div>
+    <button class="theme-btn" id="adminLockBtn" title="Admin kilidi" style="display:none" onclick="toggleAdminLock()">🔒</button>
     <button class="btn sm" id="installBtn" title="Uygulamayı cihaza/masaüstüne yükle">📲 Uygulamayı Yükle</button>
     <button class="theme-btn" id="fsBtn" title="Tam ekran / Normal">⛶</button>
     <button class="theme-btn" id="themeBtnTop" title="Tema değiştir">🌙</button>
@@ -352,6 +353,20 @@ function applyTheme(t){
 function toggleTheme(){ applyTheme(document.body.classList.contains('light')?'dark':'light'); }
 // yetki kontrolü (admin her şeye sahip)
 function can(p){ return !!(PROFILE && (PROFILE.is_admin || PROFILE['can_'+p])); }
+// ===== Admin kilidi: güçlü/tehlikeli admin işlemleri (▾ menüleri, İçeriği Temizle, Sil) ŞİFRE ile açılır; varsayılan GİZLİ =====
+let ADMIN_UNLOCKED = sessionStorage.getItem('kk_admin_unlock')==='1';
+function paintAdminLock(){ const b=document.getElementById('adminLockBtn'); if(!b)return;
+  b.style.display=(PROFILE&&PROFILE.is_admin)?'':'none';   // kilit yalnız admine görünür
+  b.textContent=ADMIN_UNLOCKED?'🔓':'🔒';
+  b.title=ADMIN_UNLOCKED?'Admin kilidi AÇIK — tıkla: kapat (gizle)':'Admin kilidi — tıkla: aç (şifre)';
+  b.style.color=ADMIN_UNLOCKED?'#16a34a':''; }
+function _refreshAdminGatedViews(){ try{ const a=document.querySelector('nav.tabs button.active'); if(a&&a.dataset.tab) switchTab(a.dataset.tab); }catch(e){} }
+function toggleAdminLock(){
+  if(ADMIN_UNLOCKED){ ADMIN_UNLOCKED=false; sessionStorage.removeItem('kk_admin_unlock'); paintAdminLock(); _refreshAdminGatedViews(); toast('🔒 Admin kilidi kapandı (admin işlemleri gizlendi).','ok'); return; }
+  const p=prompt('Admin kilidi şifresi:'); if(p===null)return;
+  if(p==='sanifoam2026'){ ADMIN_UNLOCKED=true; sessionStorage.setItem('kk_admin_unlock','1'); paintAdminLock(); _refreshAdminGatedViews(); toast('🔓 Admin kilidi açıldı — admin işlemleri görünür.','ok'); }
+  else toast('Şifre yanlış.','err');
+}
 applyTheme((function(){try{return localStorage.getItem('kk_theme')}catch(e){return null}})()||'dark');
 document.addEventListener('click',e=>{ if(e.target&&(e.target.id==='themeBtnTop'||e.target.id==='themeBtnAuth')) toggleTheme(); });
 document.addEventListener('click',()=>document.querySelectorAll('.autozone.open').forEach(z=>z.classList.remove('open')));  // dışına tıklayınca kapat
@@ -534,6 +549,7 @@ async function afterLogin(){
   $('#auth').classList.add('hidden'); $('#app').classList.remove('hidden');
   $('#whoEmail').textContent=ME.email;
   $('#whoRole').textContent=PROFILE.is_admin?'Yönetici':(PROFILE.approved?'Onaylı':'Onay bekliyor');
+  paintAdminLock();   // admin kilidi butonu (yalnız admine görünür)
   $('#adminTab').classList.toggle('hidden', !PROFILE.is_admin);
   $('#leansysTab').classList.toggle('hidden', !PROFILE.is_admin);   // LeanSys sekmesi sadece admin
   $('#dashTab').classList.toggle('hidden', !can('dashboard'));   // admin + yetkili görür
@@ -844,7 +860,7 @@ async function renderMalKabul(){
   const cnt=el('div',{class:'stat'},el('b',{id:'mkCount'},'—'),el('span',{},'kayıt'));
   // Mal kabul araçları (▾): Otomatik Kontrol Üret + Seçilenlerin Giriş Kayıtlarını Sil + (admin) SADECE Supabase mal_kabul silme (LeanSys'e ASLA dokunmaz)
   const _canAuto=can('auto')||(PROFILE&&PROFILE.is_admin), _isAdmin=PROFILE&&PROFILE.is_admin, _canClean=can('delete')||(PROFILE&&PROFILE.is_admin);
-  const mkTools=(_canAuto||_isAdmin||_canClean)?el('div',{class:'autozone'},
+  const mkTools=(ADMIN_UNLOCKED && (_canAuto||_isAdmin||_canClean))?el('div',{class:'autozone'},
     el('button',{class:'autozone-handle',title:'Mal kabul araçları',onclick:e=>{e.stopPropagation();toggleAutozone(e.currentTarget);}},'▾'),
     el('div',{class:'auto-menu'},
       _canAuto?el('button',{class:'btn sm',title:'Listede görünen mal kabullere giriş kalite planına göre otomatik kontrol üret',onclick:()=>{closeAutozones();openMalKabulAuto();}},'🎲 Otomatik Kontrol Üret'):'',
@@ -1325,7 +1341,7 @@ async function renderUretimler(){
           s.append(el('option',{value:''},'Tümü')); machineSet.forEach(([code,name])=>{const o=el('option',{value:code},(name?name+' ':'')+'('+code+')'); if(code===URETIM_FILT.machine)o.selected=true; s.append(o);}); return s; })()),
       aktifFiltre?el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{URETIM_FILT={start:'',end:'',stock:'',group:'',machine:'',ids:[]};renderUretimler();}},'Temizle'):'',
       el('div',{class:'grow'}),
-      (can('auto')||can('import')||PROFILE.is_admin)?el('div',{class:'autozone'},
+      (ADMIN_UNLOCKED && (can('auto')||can('import')||PROFILE.is_admin))?el('div',{class:'autozone'},
         el('button',{class:'autozone-handle',title:'Üretim araçları',onclick:e=>{e.stopPropagation();toggleAutozone(e.currentTarget);}},'▾'),
         el('div',{class:'auto-menu',onclick:e=>e.stopPropagation()},
           can('auto')?el('button',{class:'btn sm',onclick:()=>{closeAutozones();openBulkAuto();}},'🎲 Otomatik Kontrol Üret'):'',
@@ -5078,8 +5094,8 @@ async function editRecord(r,prod){
     m.append(el('div',{class:'field',style:'margin-top:8px'},el('label',{class:'lab'},'Genel Not'),el('textarea',{class:'inp',id:'er_note',rows:'2',disabled:canEdit?undefined:true},r.note||'')));
     const btns=el('div',{style:'display:flex;gap:8px;margin-top:10px;flex-wrap:wrap'});
     if(canEdit) btns.append(el('button',{class:'btn',onclick:saveEdit},'💾 Kaydet'));
-    if(PROFILE&&PROFILE.is_admin) btns.append(el('button',{class:'btn sec',style:'flex:0',title:'Ölçümleri sil, kaydı boş (turuncu) duruma getir',onclick:clearContent},'🧹 İçeriği Temizle'));
-    if(canDelete) btns.append(el('button',{class:'btn danger',style:'flex:0',onclick:()=>delRecord(r.id)},'🗑 Sil'));
+    if(ADMIN_UNLOCKED && PROFILE && PROFILE.is_admin) btns.append(el('button',{class:'btn sec',style:'flex:0',title:'Ölçümleri sil, kaydı boş (turuncu) duruma getir',onclick:clearContent},'🧹 İçeriği Temizle'));
+    if(ADMIN_UNLOCKED && canDelete) btns.append(el('button',{class:'btn danger',style:'flex:0',onclick:()=>delRecord(r.id)},'🗑 Sil'));
     if(!canEdit && !canDelete && !(PROFILE&&PROFILE.is_admin)) btns.append(el('button',{class:'btn sec',onclick:()=>root.innerHTML=''},'Kapat'));
     m.append(btns);
     bg.append(m); root.append(bg);
