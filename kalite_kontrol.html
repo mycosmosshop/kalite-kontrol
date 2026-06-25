@@ -1238,7 +1238,9 @@ async function _renderDueControls(root){
     if(!p.start_time) return;
     const start=new Date(p.start_time).getTime(), end=p.end_time?new Date(p.end_time).getTime():null, finished=!!end;
     if(finished && !(Number(p.quantity)>0)) return;   // BİTMİŞ + miktar 0/boş → kontrol gerekmez (devam edenler GÖSTERİLİR)
-    if(!finished && (now-start)>3*24*60*60000) return;      // 3 günden eski AÇIK üretim = unutulmuş/kapanmamış (gerçek koşu < birkaç gün), listeleme
+    // DEVAM EDEN (bitişi olmayan) üretim YALNIZ BUGÜN başladıysa canlı proses üretir.
+    // Önceki günlerden kalan "açık" üretimler (bitişi kaçmış) gün boyu proses biriktirip kuyruğu DOLDURMASIN.
+    if(!finished && new Date(start).toISOString().slice(0,10) !== new Date(now).toISOString().slice(0,10)) return;
     if(finished && (now-end)>14*24*60*60000) return;        // çok eski bitmişi listeleme
     const elapsed=Math.max(0,Math.round(((end||now)-start)/60000));
     const o=byProd[p.id]||{seri:false,proses:0,son:false};
@@ -3087,7 +3089,8 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
     else { // DEVAM EDEN (bitmemiş) üretim → ŞU ANA KADAR GEÇEN süre kadar SB + proses üret; SON ÜRETME (henüz bitmedi). Kalan proses/son kuyrukta vadesi geldikçe gelir.
       const _nowMs=nowWallMs();
       if(_nowMs<=start.getTime()){ skipped++; continue; }                       // başlama gelecekte → atla
-      if((_nowMs-start.getTime())>3*24*60*60000){ skipped++; continue; }        // 3 günden eski AÇIK üretim = unutulmuş/kapanmamış → atla
+      // YALNIZ BUGÜN başlayan devam-eden üretim canlı proses üretir; önceki günlerden kalan açık üretimleri atla (bitişi kaçmış)
+      if(new Date(start.getTime()).toISOString().slice(0,10) !== new Date(_nowMs).toISOString().slice(0,10)){ skipped++; continue; }
       ongoing=true; durMin=Math.max(0,Math.round((_nowMs-start.getTime())/60000)); end=new Date(_nowMs); finished=false;
     }
     // BİTMİŞ ama miktar 0 veya boş → kontrol olmamalı; varsa eski (hatalı) kayıtları temizle, atla
