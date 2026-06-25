@@ -392,6 +392,9 @@ const fmtTime = d => d? new Date(d).toLocaleTimeString('tr-TR',{hour:'2-digit',m
 // LeanSys üretim saatleri (start_time/end_time) Supabase'e saat-dilimsiz (naive) yazılıp UTC sanıldığı için
 // yerel gösterimde +3 kayıyordu. Bu fonksiyon değeri UTC olarak okur = orijinal Türkiye duvar-saati (kayma yok).
 const fmtTimeWall = d => d? new Date(d).toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit',timeZone:'UTC'}):'';
+// start_time/checked_at "duvar saati" UTC etiketiyle saklanır (fmtTimeWall UTC gösterir). Devam eden üretimde
+// GEÇEN SÜRE için ŞİMDİ'yi de duvar-saati olarak al (yerel saat bileşenlerini UTC ms'ye çevir) → TZ kayması olmaz.
+function nowWallMs(){ const d=new Date(); return Date.UTC(d.getFullYear(),d.getMonth(),d.getDate(),d.getHours(),d.getMinutes(),d.getSeconds()); }
 const toLocalInput = t => { if(!t) return ''; const d=new Date(t); if(isNaN(d))return''; const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };  // ISO → datetime-local (yerel)
 // Giriş kalite kontrol zamanı: irsaliye TARİHİ (gün) + rastgele saat 08:01–17:30 (yerel). İrsaliye tarihinde saat olmadığı için.
 function girisCtrlLocal(dateStr){ const d=String(dateStr||'').slice(0,10); if(!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null; const m=481+Math.floor(Math.random()*(1050-481+1)); const p=n=>String(n).padStart(2,'0'); return `${d}T${p(Math.floor(m/60))}:${p(m%60)}`; }  // 481=08:01 .. 1050=17:30 (dk)
@@ -1229,7 +1232,7 @@ async function _renderDueControls(root){
       for(let from=0;;from+=1000){ const {data}=await sb.from('control_plan_items').select('stock_code,op_no,sampling_frequency,process_control,final_control,giris_kalite,active').in('stock_code',chunk).range(from,from+999); pl.push(...(data||[])); if(!data||data.length<1000)break; } }
     pl.filter(it=>it.active!==false).forEach(it=>{ (planByStock[it.stock_code]||(planByStock[it.stock_code]=[])).push(it); });
     Object.keys(planByStock).forEach(sc=>{ freqByStock[sc]=prosesCycleFreq(planByStock[sc]); }); }
-  const now=Date.now();
+  const now=nowWallMs();
   const groups={seri_basi:[], proses:[], son:[]};
   PRODS.forEach(p=>{
     if(!p.start_time) return;
@@ -2640,7 +2643,7 @@ async function openControl(p, forceStage, suggestTime){
   const _startMs = p.start_time?new Date(p.start_time).getTime():null;
   const _endMs = p.end_time?new Date(p.end_time).getTime():null;
   const _finished = !!_endMs;
-  const _elapsedMin = _startMs ? Math.max(0, Math.round(((_endMs||Date.now())-_startMs)/60000)) : 0;
+  const _elapsedMin = _startMs ? Math.max(0, Math.round(((_endMs||nowWallMs())-_startMs)/60000)) : 0;
   const _prosesDue = (_startMs && _elapsedMin>=prosesFreq) ? Math.min(Math.floor(_elapsedMin/prosesFreq),100) : 0;   // şu ana kadar GEREKEN proses sayısı (üst sınır 100)
   const _seriDone = existing.some(r=>r.stage==='seri_basi');
   const _prosesDoneN = existing.filter(r=>r.stage==='proses').length;
@@ -2651,7 +2654,7 @@ async function openControl(p, forceStage, suggestTime){
   function lastProsesInfo(){
     const ps=existing.filter(r=>r.stage==='proses'||r.stage==='seri_basi').sort((a,b)=>new Date(b.checked_at)-new Date(a.checked_at));
     if(!ps.length)return'';
-    const mins=Math.round((Date.now()-new Date(ps[0].checked_at))/60000);
+    const mins=Math.round((nowWallMs()-new Date(ps[0].checked_at))/60000);
     const warn=mins>=prosesFreq;
     return `<span class="pill ${warn?'ret':'gray'}">Son kontrolden ${mins} dk geçti (plan: her ${prosesFreq} dk) ${warn?'— proses zamanı! ⏰':''}</span>`;
   }
@@ -3082,7 +3085,7 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
       if(durMin<=0 && Number(p.duration_min)>0){ durMin=Number(p.duration_min); end=new Date(start.getTime()+durMin*60000); }  // bitiş=başlama ama süre bilgisi varsa onu kullan
     } else if(Number(p.duration_min)>0){ durMin=Number(p.duration_min); end=new Date(start.getTime()+durMin*60000); finished=true; }  // bitiş yok ama süre var
     else { // DEVAM EDEN (bitmemiş) üretim → ŞU ANA KADAR GEÇEN süre kadar SB + proses üret; SON ÜRETME (henüz bitmedi). Kalan proses/son kuyrukta vadesi geldikçe gelir.
-      const _nowMs=Date.now();
+      const _nowMs=nowWallMs();
       if(_nowMs<=start.getTime()){ skipped++; continue; }                       // başlama gelecekte → atla
       if((_nowMs-start.getTime())>3*24*60*60000){ skipped++; continue; }        // 3 günden eski AÇIK üretim = unutulmuş/kapanmamış → atla
       ongoing=true; durMin=Math.max(0,Math.round((_nowMs-start.getTime())/60000)); end=new Date(_nowMs); finished=false;
