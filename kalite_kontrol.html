@@ -370,6 +370,7 @@ function toggleAdminLock(){
 applyTheme((function(){try{return localStorage.getItem('kk_theme')}catch(e){return null}})()||'dark');
 document.addEventListener('click',e=>{ if(e.target&&(e.target.id==='themeBtnTop'||e.target.id==='themeBtnAuth')) toggleTheme(); });
 document.addEventListener('click',()=>document.querySelectorAll('.autozone.open').forEach(z=>z.classList.remove('open')));  // dışına tıklayınca kapat
+document.addEventListener('click',()=>document.querySelectorAll('.ucol-menu').forEach(m=>{ if(m.style.display!=='none') m.style.display='none'; }));  // sütun menüsünü kapat
 
 // ====================== HELPERS ======================
 const $ = s => document.querySelector(s);
@@ -1358,11 +1359,13 @@ async function renderUretimler(){
           PROFILE.is_admin?el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteAllProds();}},'🧨 TÜMÜNÜ Sil (bütün üretimler)'):''
         )
       ):'',
-      el('input',{class:'inp',id:'prodSearch',placeholder:'🔍 ara…',style:'max-width:220px',oninput:filterProdRows})
+      el('input',{class:'inp',id:'prodSearch',placeholder:'🔍 ara…',style:'max-width:220px',oninput:filterProdRows}),
+      uColPicker()
     ),
     el('div',{class:'tbl-wrap'},buildProdTable(filtered))
   );
   root.append(filt);
+  applyUColHide(); // kalıcı gizli sütunları uygula
   // Filtre yokken ilk 500 gelir; daha fazlasını EKLEYEREK yükle (kaydırma/seçim sıfırlanmaz)
   if(!_active && data.length>=500){
     const moreWrap=el('div',{style:'text-align:center;padding:12px'});
@@ -1388,11 +1391,25 @@ async function renderUretimler(){
     filt.append(moreWrap);
   }
 }
+/* ---- Üretimler sütun göster/gizle (kalıcı, localStorage) ---- */
+const UCOLS=[{k:'tarih',l:'Tarih'},{k:'makine',l:'Makine'},{k:'grup',l:'Grup'},{k:'cari',l:'Cari'},{k:'urun',l:'Ürün'},{k:'isemri',l:'İş Emri'},{k:'miktar',l:'Miktar'},{k:'baslama',l:'Başlama'},{k:'bitis',l:'Bitiş'},{k:'operator',l:'Operatör'},{k:'op',l:'Op'},{k:'kontroller',l:'Kontroller'}];
+let _ucHidden=new Set(JSON.parse(localStorage.getItem('kk_uretim_hidecols')||'[]'));
+function applyUColHide(){ let st=document.getElementById('ucolHideStyle'); if(!st){ st=document.createElement('style'); st.id='ucolHideStyle'; document.head.append(st); } st.textContent=[..._ucHidden].map(k=>`.prod-table [data-col="${k}"]{display:none}`).join('\n'); }
+function uColPicker(){
+  const menu=el('div',{class:'ucol-menu',style:'position:absolute;right:0;top:110%;z-index:60;background:#fff;color:#1d2939;border:1px solid #d0d5dd;border-radius:8px;padding:8px 10px;box-shadow:0 8px 24px rgba(0,0,0,.16);min-width:185px;display:none;max-height:340px;overflow:auto',onclick:e=>e.stopPropagation()},
+    el('div',{style:'font-weight:700;font-size:12px;margin-bottom:5px;color:#475467'},'Sütunları göster/gizle'),
+    ...UCOLS.map(c=>{ const cb=el('input',{type:'checkbox'}); cb.checked=!_ucHidden.has(c.k);
+      cb.onchange=()=>{ if(cb.checked)_ucHidden.delete(c.k); else _ucHidden.add(c.k); localStorage.setItem('kk_uretim_hidecols',JSON.stringify([..._ucHidden])); applyUColHide(); };
+      return el('label',{style:'display:flex;gap:7px;align-items:center;font-size:13px;padding:3px 0;cursor:pointer'},cb,c.l); })
+  );
+  const btn=el('button',{class:'btn sm sec',style:'flex:0',title:'Tablo sütunlarını göster/gizle',onclick:e=>{e.stopPropagation();const open=menu.style.display!=='none';document.querySelectorAll('.ucol-menu').forEach(m=>m.style.display='none');menu.style.display=open?'none':'block';}},'🗂 Sütunlar');
+  return el('div',{style:'position:relative;flex:0'},btn,menu);
+}
 function buildProdTable(rows){
-  const tb=el('table');
+  const tb=el('table',{class:'prod-table'});
   tb.append(el('thead',{},el('tr',{},
     el('th',{},el('input',{type:'checkbox',title:'Görünenleri seç',onchange:e=>{document.querySelectorAll('#prodBody .prodChk').forEach(c=>{const tr=c.closest('tr'); if(tr.style.display!=='none')c.checked=e.target.checked;});}})),
-    ...['Tarih','Makine','Grup','Cari','Ürün','İş Emri','Miktar','Başlama','Bitiş','Operatör','Op','Kontroller'].map(h=>el('th',{},h))
+    ...UCOLS.map(c=>el('th',{'data-col':c.k},c.l))
   )));
   const body=el('tbody',{id:'prodBody'});
   if(!rows.length) body.append(el('tr',{},el('td',{colspan:14},el('div',{class:'empty'},'Henüz üretim yok. Yukarıdan Excel içe aktar.'))));
@@ -1403,18 +1420,18 @@ function prodRow(p){
   const _grp=machineGroupOf(p.machine_code);
   return el('tr',{'data-s':(`${p.machine_name} ${p.stock_code} ${p.stock_name} ${p.operator} ${p.customer||''} ${p.work_order||''} ${_grp}`).toLowerCase()},
     el('td',{},el('input',{type:'checkbox',class:'prodChk','data-id':p.id})),
-    el('td',{},fmtDate(p.prod_date)),
-    el('td',{},el('div',{},p.machine_name||''),el('div',{class:'det',style:'color:var(--muted);font-size:11px'},p.machine_code||'')),
-    el('td',{style:'font-size:12px'},_grp||el('span',{style:'color:var(--muted)'},'—')),
-    el('td',{style:'font-size:12px'},p.customer||''),
-    el('td',{},el('div',{},p.stock_code||''),el('div',{class:'det',style:'color:var(--muted);font-size:11px'},(p.stock_name||'').slice(0,32))),
-    el('td',{style:'font-size:12px'},p.work_order||''),
-    el('td',{},`${p.quantity??''} ${p.unit||''}`),
-    el('td',{},fmtTimeWall(p.start_time)),
-    el('td',{},fmtTimeWall(p.end_time)),
-    el('td',{},p.operator||''),
-    el('td',{},String(p.op_no??'')),
-    el('td',{id:'cc-'+p.id,style:'white-space:nowrap'},'…')
+    el('td',{'data-col':'tarih'},fmtDate(p.prod_date)),
+    el('td',{'data-col':'makine'},el('div',{},p.machine_name||''),el('div',{class:'det',style:'color:var(--muted);font-size:11px'},p.machine_code||'')),
+    el('td',{'data-col':'grup',style:'font-size:12px'},_grp||el('span',{style:'color:var(--muted)'},'—')),
+    el('td',{'data-col':'cari',style:'font-size:12px'},p.customer||''),
+    el('td',{'data-col':'urun'},el('div',{},p.stock_code||''),el('div',{class:'det',style:'color:var(--muted);font-size:11px'},(p.stock_name||'').slice(0,32))),
+    el('td',{'data-col':'isemri',style:'font-size:12px'},p.work_order||''),
+    el('td',{'data-col':'miktar'},`${p.quantity??''} ${p.unit||''}`),
+    el('td',{'data-col':'baslama'},fmtTimeWall(p.start_time)),
+    el('td',{'data-col':'bitis'},fmtTimeWall(p.end_time)),
+    el('td',{'data-col':'operator'},p.operator||''),
+    el('td',{'data-col':'op'},String(p.op_no??'')),
+    el('td',{'data-col':'kontroller',id:'cc-'+p.id,style:'white-space:nowrap'},'…')
   );
 }
 function filterProdRows(){
