@@ -1402,7 +1402,7 @@ function uColPicker(){
       cb.onchange=()=>{ if(cb.checked)_ucHidden.delete(c.k); else _ucHidden.add(c.k); localStorage.setItem('kk_uretim_hidecols',JSON.stringify([..._ucHidden])); applyUColHide(); };
       return el('label',{style:'display:flex;gap:7px;align-items:center;font-size:13px;padding:3px 0;cursor:pointer'},cb,c.l); })
   );
-  const btn=el('button',{class:'btn sm sec',style:'flex:0',title:'Tablo sütunlarını göster/gizle',onclick:e=>{e.stopPropagation();const open=menu.style.display!=='none';document.querySelectorAll('.ucol-menu').forEach(m=>m.style.display='none');menu.style.display=open?'none':'block';}},'🗂 Sütunlar');
+  const btn=el('button',{class:'btn sm sec',style:'flex:0;display:inline-flex;align-items:center;gap:6px',title:'Tablo sütunlarını göster/gizle',html:'<svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" style="flex:0 0 auto"><rect x="1" y="2.5" width="3.3" height="11" rx="1"/><rect x="6.35" y="2.5" width="3.3" height="11" rx="1"/><rect x="11.7" y="2.5" width="3.3" height="11" rx="1"/></svg><span>Sütunlar</span>',onclick:e=>{e.stopPropagation();const open=menu.style.display!=='none';document.querySelectorAll('.ucol-menu').forEach(m=>m.style.display='none');menu.style.display=open?'none':'block';}});
   return el('div',{style:'position:relative;flex:0'},btn,menu);
 }
 function buildProdTable(rows){
