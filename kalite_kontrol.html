@@ -3007,7 +3007,9 @@ function buildAutoRec(p,stage,when,items,priorMap){
 async function openBulkAuto(){
   const root=$('#modalRoot');
   root.innerHTML='<div class="modal-bg"><div class="modal"><div class="empty">Yükleniyor…</div></div></div>';
-  const {data:planAll}=await sb.from('control_plan_items').select('*').eq('active',true);
+  // TÜM aktif plan maddelerini SAYFALI çek (Supabase 1000 satır kapağı → aksi halde >1000. maddeden sonraki kodların planı "yok" sanılır)
+  let planAll=[];
+  for(let from=0; from<500000; from+=1000){ const r=await sb.from('control_plan_items').select('*').eq('active',true).range(from,from+999); if(r.error)break; planAll.push(...(r.data||[])); if(!r.data||r.data.length<1000)break; }
   const plan=planAll||[]; const planStocks=new Set(plan.map(x=>x.stock_code));
   // seçili üretimler; yoksa o anki FİLTRE (tarih/stok) kapsamı; o da yoksa planı olan tümü
   const selIds=new Set([...document.querySelectorAll('#prodBody .prodChk:checked')].map(c=>Number(c.dataset.id)));
