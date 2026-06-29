@@ -3124,8 +3124,8 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
       if((_nowMs-start.getTime()) > 16*60*60000){ skipped++; continue; }
       ongoing=true; durMin=Math.max(0,Math.round((_nowMs-start.getTime())/60000)); end=new Date(_nowMs); finished=false;
     }
-    // BİTMİŞ ama miktar 0 veya boş → kontrol olmamalı; varsa eski (hatalı) kayıtları temizle, atla
-    if(finished && !(_qty>0)){
+    // ADET (miktar) boş ya da 0 → kontrol OLMAMALI (bitmiş VE devam eden fark etmez); varsa eski (hatalı) kayıtları temizle, atla
+    if(!(_qty>0)){
       if(have[p.id] && have[p.id].size){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); if(recMap[p.id])recMap[p.id]={}; cleaned++; }
       skipped++; continue;
     }
