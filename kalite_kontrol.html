@@ -1360,6 +1360,8 @@ async function renderUretimler(){
         )
       ):'',
       el('input',{class:'inp',id:'prodSearch',placeholder:'🔍 ara…',style:'max-width:220px',oninput:filterProdRows}),
+      (()=>{ const s=el('select',{class:'inp',id:'prodCtrlSel',style:'max-width:170px;flex:0',title:'Kontrolü olan / olmayan üretimleri filtrele',onchange:e=>{_ctrlFilter=e.target.value;filterProdRows();}});
+        [['all','Kontrol: Tümü'],['dolu','Kontrolü olan (dolu)'],['bos','Kontrolü olmayan (boş)']].forEach(([v,t])=>{ const o=el('option',{value:v},t); if(v===_ctrlFilter)o.selected=true; s.append(o); }); return s; })(),
       uColPicker()
     ),
     el('div',{class:'tbl-wrap'},buildProdTable(filtered))
@@ -1394,6 +1396,8 @@ async function renderUretimler(){
 /* ---- Üretimler sütun göster/gizle (kalıcı, localStorage) ---- */
 const UCOLS=[{k:'tarih',l:'Tarih'},{k:'makine',l:'Makine'},{k:'grup',l:'Grup'},{k:'cari',l:'Cari'},{k:'urun',l:'Ürün'},{k:'isemri',l:'İş Emri'},{k:'miktar',l:'Miktar'},{k:'baslama',l:'Başlama'},{k:'bitis',l:'Bitiş'},{k:'operator',l:'Operatör'},{k:'op',l:'Op'},{k:'kontroller',l:'Kontroller'}];
 let _ucHidden=new Set(JSON.parse(localStorage.getItem('kk_uretim_hidecols')||'[]'));
+let _ctrlFilter='all';            // Kontroller filtresi: all | dolu | bos
+let _ctrlHas=new Set();           // kontrolü olan üretim id'leri (loadControlCounts doldurur)
 function applyUColHide(){ let st=document.getElementById('ucolHideStyle'); if(!st){ st=document.createElement('style'); st.id='ucolHideStyle'; document.head.append(st); } st.textContent=[..._ucHidden].map(k=>`.prod-table [data-col="${k}"]{display:none}`).join('\n'); }
 function uColPicker(){
   const menu=el('div',{class:'ucol-menu',style:'position:absolute;right:0;top:110%;z-index:60;background:#fff;color:#1d2939;border:1px solid #d0d5dd;border-radius:8px;padding:8px 10px;box-shadow:0 8px 24px rgba(0,0,0,.16);min-width:185px;display:none;max-height:340px;overflow:auto',onclick:e=>e.stopPropagation()},
@@ -1435,9 +1439,15 @@ function prodRow(p){
   );
 }
 function filterProdRows(){
-  const q=$('#prodSearch').value.toLowerCase();
+  const qel=$('#prodSearch'); const q=qel?qel.value.toLowerCase():'';
   document.querySelectorAll('#prodBody tr').forEach(tr=>{
-    tr.style.display=(!q||(tr.dataset.s||'').includes(q))?'':'none';
+    let show=(!q||(tr.dataset.s||'').includes(q));
+    if(show && _ctrlFilter!=='all'){
+      const chk=tr.querySelector('.prodChk'); const id=chk?chk.getAttribute('data-id'):null;
+      const has=id?_ctrlHas.has(id):false;
+      show = (_ctrlFilter==='dolu') ? has : !has;
+    }
+    tr.style.display=show?'':'none';
   });
 }
 // kontrol sayıları (üretim başına kaç kontrol var)
@@ -1467,6 +1477,8 @@ async function loadControlCounts(){
     if(pr)cell.append(mk('proses','P×'+pr,'proses'));
     if(so)cell.append(mk('son','SON','son'));
   });
+  _ctrlHas=new Set(Object.keys(map).filter(k=>(map[k]||[]).length).map(String)); // kontrolü olan üretim id'leri
+  try{ filterProdRows(); }catch(e){}   // boş/dolu filtresini güncel veriyle uygula
 }
 function gotoRecords(prodId,stage){ KAYIT_PROD=prodId; KAYIT_PRODS=null; KAYIT_IRS=null; KAYIT_STAGE=stage; KAYIT_FILT={start:'',end:'',stock:''}; switchTab('kayitlar'); }
 
