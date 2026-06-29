@@ -3121,6 +3121,11 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
     if(!p.start_time){skipped++;continue;}   // başlama şart
     const cs=cyc[(p.machine_code||'?')+'||'+(p.stock_code||'?')], start=new Date(p.start_time);
     const _qty=Number(p.quantity);
+    // ADET (miktar) yok ya da 0 → kontrol OLMAMALI; varsa eski (hatalı) kayıtları temizle, atla. (En başta: bitmiş/devam eden/eski 16saat+ fark etmez.)
+    if(!(_qty>0)){
+      if(have[p.id] && have[p.id].size){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); if(recMap[p.id])recMap[p.id]={}; cleaned++; }
+      skipped++; continue;
+    }
     let end, durMin, recomputed=false, finished=false, ongoing=false;
     if(cs>0 && _qty>0){ const durSec=_qty*cs; end=new Date(start.getTime()+durSec*1000); durMin=durSec/60; recomputed=true; finished=true;  // BİTİŞ = başlama + adet × çevrim (DB'ye yazılır)
       const {error:upErr}=await sb.from('productions').update({end_time:end.toISOString(),duration_min:Math.round(durMin)}).eq('id',p.id);
@@ -3135,11 +3140,6 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
       // en fazla SON 16 SAAT içinde başlayan devam-eden üretim canlı proses üretir; daha eski açık üretimleri atla (bitişi kaçmış)
       if((_nowMs-start.getTime()) > 16*60*60000){ skipped++; continue; }
       ongoing=true; durMin=Math.max(0,Math.round((_nowMs-start.getTime())/60000)); end=new Date(_nowMs); finished=false;
-    }
-    // ADET (miktar) boş ya da 0 → kontrol OLMAMALI (bitmiş VE devam eden fark etmez); varsa eski (hatalı) kayıtları temizle, atla
-    if(!(_qty>0)){
-      if(have[p.id] && have[p.id].size){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); if(recMap[p.id])recMap[p.id]={}; cleaned++; }
-      skipped++; continue;
     }
     // çevrim girildiyse BİTİŞ değişti → o üretimin TÜM kontrolleri yeni zaman çizelgesine göre baştan üretilsin (eski/tutarsız kontroller silinir)
     if(recomputed && !regen){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); recMap[p.id]={}; }
