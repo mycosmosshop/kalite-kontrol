@@ -1362,6 +1362,8 @@ async function renderUretimler(){
       el('input',{class:'inp',id:'prodSearch',placeholder:'🔍 ara…',style:'max-width:220px',oninput:filterProdRows}),
       (()=>{ const s=el('select',{class:'inp',id:'prodCtrlSel',style:'max-width:170px;flex:0',title:'Kontrolü olan / olmayan üretimleri filtrele',onchange:e=>{_ctrlFilter=e.target.value;filterProdRows();}});
         [['all','Kontrol: Tümü'],['dolu','Kontrolü olan (dolu)'],['bos','Kontrolü olmayan (boş)']].forEach(([v,t])=>{ const o=el('option',{value:v},t); if(v===_ctrlFilter)o.selected=true; s.append(o); }); return s; })(),
+      (()=>{ const s=el('select',{class:'inp',id:'prodQtySel',style:'max-width:160px;flex:0',title:'Adedi olan / adetsiz (boş veya 0) üretimleri filtrele',onchange:e=>{_qtyFilter=e.target.value;filterProdRows();}});
+        [['all','Miktar: Tümü'],['dolu','Adetli (>0)'],['bos','Adetsiz (boş/0)']].forEach(([v,t])=>{ const o=el('option',{value:v},t); if(v===_qtyFilter)o.selected=true; s.append(o); }); return s; })(),
       uColPicker()
     ),
     el('div',{class:'tbl-wrap'},buildProdTable(filtered))
@@ -1398,6 +1400,7 @@ const UCOLS=[{k:'tarih',l:'Tarih'},{k:'makine',l:'Makine'},{k:'grup',l:'Grup'},{
 let _ucHidden=new Set(JSON.parse(localStorage.getItem('kk_uretim_hidecols')||'[]'));
 let _ctrlFilter='all';            // Kontroller filtresi: all | dolu | bos
 let _ctrlHas=new Set();           // kontrolü olan üretim id'leri (loadControlCounts doldurur)
+let _qtyFilter='all';             // Miktar filtresi: all | dolu (adetli >0) | bos (adetsiz/0)
 function applyUColHide(){ let st=document.getElementById('ucolHideStyle'); if(!st){ st=document.createElement('style'); st.id='ucolHideStyle'; document.head.append(st); } st.textContent=[..._ucHidden].map(k=>`.prod-table [data-col="${k}"]{display:none}`).join('\n'); }
 function uColPicker(){
   const menu=el('div',{class:'ucol-menu',style:'position:absolute;right:0;top:110%;z-index:60;background:#fff;color:#1d2939;border:1px solid #d0d5dd;border-radius:8px;padding:8px 10px;box-shadow:0 8px 24px rgba(0,0,0,.16);min-width:185px;display:none;max-height:340px;overflow:auto',onclick:e=>e.stopPropagation()},
@@ -1422,7 +1425,7 @@ function buildProdTable(rows){
 }
 function prodRow(p){
   const _grp=machineGroupOf(p.machine_code);
-  return el('tr',{'data-s':(`${p.machine_name} ${p.stock_code} ${p.stock_name} ${p.operator} ${p.customer||''} ${p.work_order||''} ${_grp}`).toLowerCase()},
+  return el('tr',{'data-s':(`${p.machine_name} ${p.stock_code} ${p.stock_name} ${p.operator} ${p.customer||''} ${p.work_order||''} ${_grp}`).toLowerCase(),'data-qty':(Number(p.quantity)>0?'1':'0')},
     el('td',{},el('input',{type:'checkbox',class:'prodChk','data-id':p.id})),
     el('td',{'data-col':'tarih'},fmtDate(p.prod_date)),
     el('td',{'data-col':'makine'},el('div',{},p.machine_name||''),el('div',{class:'det',style:'color:var(--muted);font-size:11px'},p.machine_code||'')),
@@ -1446,6 +1449,10 @@ function filterProdRows(){
       const chk=tr.querySelector('.prodChk'); const id=chk?chk.getAttribute('data-id'):null;
       const has=id?_ctrlHas.has(id):false;
       show = (_ctrlFilter==='dolu') ? has : !has;
+    }
+    if(show && _qtyFilter!=='all'){
+      const hasQty=tr.getAttribute('data-qty')==='1';
+      show = (_qtyFilter==='dolu') ? hasQty : !hasQty;
     }
     tr.style.display=show?'':'none';
   });
