@@ -4862,7 +4862,15 @@ async function renderKayitlar(){
     if(KAYIT_FILT.start) q2=q2.gte('checked_at',KAYIT_FILT.start); if(KAYIT_FILT.end) q2=q2.lte('checked_at',KAYIT_FILT.end+'T23:59:59');
     const {data:r2}=await q2; if(r2&&r2.length){ recs=r2; KAYIT_IRS=null; }
   }
-  const pmap={}; (prodsD||[]).forEach(p=>pmap[p.id]=p);
+  // ÜRETİM EŞLEME (pmap): productions 1000+ satır olduğundan TÜMÜNÜ çekmek Supabase'in 1000-satır
+  // limitine takılıp gösterilen kayıtların çoğunu eşleşmesiz (Cari/Makine/Üretim Mik. BOŞ) bırakıyordu.
+  // Çözüm: yalnız GÖRÜNTÜLENEN kayıtların production_id'leri için hedefli çek (parça parça).
+  const pmap={};
+  const _pids=[...new Set(recs.map(r=>r.production_id).filter(x=>x!=null))];
+  for(let i=0;i<_pids.length;i+=200){
+    const {data:_pc}=await sb.from('productions').select('id,customer,start_time,end_time,quantity,unit,machine_name,machine_code,shift,stock_code,stock_name,prod_date,work_order,op_no,operator').in('id',_pids.slice(i,i+200));
+    (_pc||[]).forEach(p=>pmap[p.id]=p);
+  }
   // Giriş kayıtları: İrsaliye Tarihi mal_kabul'dan (checked_at artık kontrol anı olabilir, irsaliye günü değil)
   const mkTarih={};
   if(KAYIT_STAGE==='giris'){
