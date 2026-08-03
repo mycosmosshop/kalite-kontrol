@@ -3247,8 +3247,10 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
     const cur=have[p.id]||new Set();
     const _cand=opsByMachine[(p.stock_code||'')+'|'+(p.machine_code||'')];            // makinenin rotadaki op adım(lar)ı
     const _planP=plan.filter(x=>x.stock_code===p.stock_code);
-    const _auto=(_cand&&_cand.length) ? (_cand.includes(Number(p.op_no))?Number(p.op_no):_cand[0])
-              : (opItemsFor(_planP,p.op_no,false).length ? null : opByMachineName(_planP,p.machine_name||p.machine_code));   // rota yok + plan op'u da yoksa makine adından tahmin
+    const _planOps=new Set(_planP.map(x=>Number(x.op_no)).filter(o=>o>0));
+    const _c=(_cand||[]).filter(o=>_planOps.has(o));   // rota adımlarından planda KARŞILIĞI OLANLAR (rota 5 adım, plan 4 op olabilir)
+    const _auto=_c.length ? (_c.includes(Number(p.op_no))?Number(p.op_no):_c[0])
+              : (opItemsFor(_planP,p.op_no,false).length ? null : opByMachineName(_planP,p.machine_name||p.machine_code));   // rota eşleşmedi + plan op'u da yoksa makine adından tahmin
     const _sel=opMap&&opMap[(p.stock_code||'')+'|'+(p.op_no??'')+'|'+(p.machine_code||'')];
     const _op=(_sel!=null)?_sel:(_auto!=null?_auto:p.op_no);   // seçilen eşleme > makineden otomatik (rota) > üretimin op'u
     const items=opItemsFor(plan.filter(x=>x.stock_code===p.stock_code),_op,useAllOps);
