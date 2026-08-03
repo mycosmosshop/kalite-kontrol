@@ -3059,7 +3059,10 @@ async function openBulkAuto(){
   const noPlan = scopeBase.filter(p=>!planStocks.has(p.stock_code));
   const noPlanStocks=[...new Set(noPlan.map(p=>p.stock_code).filter(Boolean))];
   root.innerHTML='';
-  if(!prods.length){ toast(secili?'Seçili üretimlerin planı yok.':'Bu kapsamda planı tanımlı üretim yok.','err'); return; }
+  if(!prods.length){   // kapsamdaki hiçbir stokun BURADA planı yok → hangi kodlar eksik + ne yapılacağını söyle
+    const k=noPlanStocks.slice(0,8).join(', ')+(noPlanStocks.length>8?(' +'+(noPlanStocks.length-8)+' kod'):'');
+    toast('Kontrol planı yok: '+(k||'—')+'. Kontrol Planı sekmesi → «🔄 LeanSys’ten Güncelle + Çek» ile bu kodların planını çek, sonra tekrar dene.','err');
+    return; }
   const combos={}; prods.forEach(p=>{ const mc=p.machine_code||'?', sc=p.stock_code||'?'; const k=mc+'||'+sc;
     if(!combos[k])combos[k]={key:k,machine_code:mc,machine_name:p.machine_name,stock_code:sc,stock_name:p.stock_name,unit:p.unit,count:0}; combos[k].count++; });
   let savedCyc={}; try{ savedCyc=JSON.parse(localStorage.getItem('kk_cyc')||'{}'); }catch(e){}   // KOD+MAKİNE bazlı kayıtlı çevrim süreleri
