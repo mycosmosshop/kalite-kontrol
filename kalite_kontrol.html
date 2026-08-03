@@ -3154,7 +3154,7 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who){
   const priorMap={};
   if(stocks.length){ const {data:hist}=await sb.from('control_records').select('stock_code,checked_at,vals').in('stock_code',stocks).order('checked_at',{ascending:true});
     (hist||[]).forEach(rc=>{ (rc.vals||[]).forEach(v=>{ if(/yanma/.test(deTr(v.measure_name||''))){ const k=rc.stock_code+'|'+v.measure_name; if(!priorMap[k]&&Array.isArray(v.samples)&&v.samples.length) priorMap[k]=v.samples; } }); }); }
-  let made=0,prodN=0,skipped=0,cleaned=0,recalcN=0;
+  let made=0,prodN=0,skipped=0,cleaned=0,recalcN=0; const noOp={};   // op eşleşmeyen üretimler: 'kod op N' -> adet
   for(const p of prods){
     if(!p.start_time){skipped++;continue;}   // başlama şart
     const cs=cyc[(p.machine_code||'?')+'||'+(p.stock_code||'?')], start=new Date(p.start_time);
@@ -3184,6 +3184,7 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who){
     if(regen){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); recMap[p.id]={}; }
     const cur=have[p.id]||new Set();
     const items=opItemsFor(plan.filter(x=>x.stock_code===p.stock_code),p.op_no);
+    if(!items.length){ const k=(p.stock_code||'?')+' op'+(p.op_no??'-'); noOp[k]=(noOp[k]||0)+1; skipped++; continue; }   // planda bu operasyon yok → sessiz atlama YERİNE raporla
     // proses sıklığı: proses maddelerinin EN KISA pozitif örnekleme sıklığı (aylık vb. uzun değerlere takılmasın); en çok 1 günle sınırla
     const freq=prosesCycleFreq(stageItems(items,'proses'));
     // kısa üretim (seri başından sonra 1 freq geçmemiş) → proses olmamalı; varsa otomatik temizle (kuralı uygula)
@@ -3212,7 +3213,8 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who){
     if(did)prodN++; else skipped++;
     status.textContent=`İşleniyor… ${prodN} üretim, ${made} kayıt`;
   }
-  status.textContent=`Bitti ✓ ${prodN} üretim, ${made} yeni kontrol kaydı. ${recalcN?`${recalcN} bitiş çevrime göre hesaplandı. `:''}${skipped} atlandı/zaten tamdı.${cleaned?` ${cleaned} kısa üretimde fazla proses temizlendi.`:''}`;
+  const noOpTxt=Object.keys(noOp).length?(' ⚠ Planda operasyonu olmayan '+Object.values(noOp).reduce((a,b)=>a+b,0)+' üretim atlandı: '+Object.entries(noOp).slice(0,6).map(([k,v])=>k+' ×'+v).join(', ')+(Object.keys(noOp).length>6?' …':'')+' — kontrol planında bu op numaraları tanımlı değil.'):'';
+  status.textContent=`Bitti ✓ ${prodN} üretim, ${made} yeni kontrol kaydı. ${recalcN?`${recalcN} bitiş çevrime göre hesaplandı. `:''}${skipped} atlandı/zaten tamdı.${cleaned?` ${cleaned} kısa üretimde fazla proses temizlendi.`:''}`+noOpTxt;
   toast(`${made} kontrol kaydı oluşturuldu (${prodN} üretim).${recalcN?` ${recalcN} üretimin bitişi çevrime göre yeniden yazıldı.`:''}`,'ok');
   go.disabled=false; loadControlCounts && loadControlCounts();
   renderUretimler();   // üretim listesini yenile → hesaplanan bitişler hemen görünür
