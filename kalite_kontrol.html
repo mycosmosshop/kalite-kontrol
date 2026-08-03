@@ -3169,11 +3169,19 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
   // ROTA EŞLEMESİ (otomatik): üretimin MAKİNESİ, LeanSys rotasında hangi op adımıysa plan o op'tan seçilir.
   // Geçmiş üretimler eski rota no'suyla kayıtlı olabilir (ör. KP5 op5) — makineden güncel op (op2) bulunur.
   const opsByMachine={};
-  { const _codes=[...new Set(prods.map(p=>p.stock_code).filter(Boolean))];
-    for(let i=0;i<_codes.length;i+=100){
-      const {data:oc}=await sb.from('operasyon_kartlari').select('stok_kodu,op_no,makine_kodu').in('stok_kodu',_codes.slice(i,i+100));
+  const _loadRota=async codes=>{ for(let i=0;i<codes.length;i+=100){
+      const {data:oc}=await sb.from('operasyon_kartlari').select('stok_kodu,op_no,makine_kodu').in('stok_kodu',codes.slice(i,i+100));
       (oc||[]).forEach(o=>{ if(!o.makine_kodu||o.op_no==null)return; const k=(o.stok_kodu||'')+'|'+o.makine_kodu;
-        (opsByMachine[k]=opsByMachine[k]||[]).push(Number(o.op_no)); }); } }
+        (opsByMachine[k]=opsByMachine[k]||[]).push(Number(o.op_no)); }); } };
+  const _codes=[...new Set(prods.map(p=>p.stock_code).filter(Boolean))];
+  await _loadRota(_codes);
+  // rota verisi olmayan stoklar → LeanSys'ten OTOMATİK çek (ajan açıksa) ve tekrar oku; kapalıysa sessiz geç
+  { const eksik=[...new Set(prods.filter(p=>!(opsByMachine[(p.stock_code||'')+'|'+(p.machine_code||'')]||[]).length).map(p=>p.stock_code).filter(Boolean))];
+    if(eksik.length){ try{
+      status.textContent='Rota (operasyon kartları) LeanSys’ten çekiliyor… ('+eksik.length+' stok)';
+      await fetch('http://127.0.0.1:17777/refreshop?codes='+encodeURIComponent(eksik.slice(0,80).join(',')),{mode:'cors'});
+      await _loadRota(eksik);
+    }catch(e){ /* ajan kapalı → mevcut veriyle devam */ } } }
   let made=0,prodN=0,skipped=0,cleaned=0,recalcN=0; const noOp={};   // op eşleşmeyen üretimler: 'kod op N' -> adet
   for(const p of prods){
     if(!p.start_time){skipped++;continue;}   // başlama şart
@@ -3236,7 +3244,7 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
     if(did)prodN++; else skipped++;
     status.textContent=`İşleniyor… ${prodN} üretim, ${made} kayıt`;
   }
-  const noOpTxt=Object.keys(noOp).length?(' ⚠ Planda operasyonu olmayan '+Object.values(noOp).reduce((a,b)=>a+b,0)+' üretim atlandı: '+Object.entries(noOp).slice(0,6).map(([k,v])=>k+' ×'+v).join(', ')+(Object.keys(noOp).length>6?' …':'')+' — kontrol planında bu op numaraları tanımlı değil.'):'';
+  const noOpTxt=Object.keys(noOp).length?(' ⚠ '+Object.values(noOp).reduce((a,b)=>a+b,0)+' üretim atlandı: '+Object.entries(noOp).slice(0,6).map(([k,v])=>k+' ×'+v).join(', ')+(Object.keys(noOp).length>6?' …':'')+' — makinesi LeanSys rotasında bulunamadı ve plan bu op no’yu içermiyor. (Operasyon Kartları’nı çek ya da elle eşleme yaz.)'):'';
   status.textContent=`Bitti ✓ ${prodN} üretim, ${made} yeni kontrol kaydı. ${recalcN?`${recalcN} bitiş çevrime göre hesaplandı. `:''}${skipped} atlandı/zaten tamdı.${cleaned?` ${cleaned} kısa üretimde fazla proses temizlendi.`:''}`+noOpTxt;
   toast(`${made} kontrol kaydı oluşturuldu (${prodN} üretim).${recalcN?` ${recalcN} üretimin bitişi çevrime göre yeniden yazıldı.`:''}`,'ok');
   go.disabled=false; loadControlCounts && loadControlCounts();
