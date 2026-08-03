@@ -3109,7 +3109,30 @@ async function openBulkAuto(){
       toast(n+' satır çevrim süresi Excel’den yüklendi.', n?'ok':'err');
     }catch(e){ toast('Excel okunamadı: '+e.message,'err'); }
   }
+  // LeanSys operasyon kartındaki Std. Zaman (DAKİKA) → çevrim süresi (SANİYE). İsteğe bağlı: butona basınca doldurur, sonra elle düzenlenebilir.
+  async function pullStdTime(btn){
+    const _t=btn.textContent; btn.disabled=true; btn.textContent='⏳ Çekiliyor…';
+    try{
+      const scs=[...new Set(Object.values(combos).map(c=>c.stock_code).filter(Boolean))];
+      const map={};
+      for(let i=0;i<scs.length;i+=100){
+        const {data:oc}=await sb.from('operasyon_kartlari').select('stok_kodu,makine_kodu,std_zaman,op_no').in('stok_kodu',scs.slice(i,i+100)).order('op_no');
+        (oc||[]).forEach(o=>{ const v=Number(o.std_zaman); if(!(v>0)||!o.makine_kodu)return;
+          const k=(o.stok_kodu||'')+'|'+o.makine_kodu; if(map[k]==null)map[k]=v; });   // aynı makine birden çok adımdaysa en küçük op_no'nunki
+      }
+      let n=0,yok=[];
+      Object.values(combos).forEach(c=>{ const dk=map[c.stock_code+'|'+c.machine_code];
+        if(!(dk>0)){ yok.push(c.machine_code); return; }
+        const sn=Math.round(dk*60*1000)/1000;                                          // dk → sn
+        cyc[c.key]=sn; if(cycInputs[c.key])cycInputs[c.key].value=sn;
+        try{ const st=JSON.parse(localStorage.getItem('kk_cyc')||'{}'); st[c.key]=sn; localStorage.setItem('kk_cyc',JSON.stringify(st)); }catch(_){}
+        n++; });
+      toast(n?(n+' satıra LeanSys std. zamanı yazıldı (dk×60 = sn).'+(yok.length?(' '+yok.length+' makine için kayıt yok: '+[...new Set(yok)].slice(0,3).join(', ')):'')):'LeanSys operasyon kartı bulunamadı (önce rota çekilmeli).', n?'ok':'err');
+    }catch(e){ toast('Std. zaman çekilemedi: '+e.message,'err'); }
+    btn.disabled=false; btn.textContent=_t;
+  }
   m.append(el('div',{style:'display:flex;gap:8px;margin:0 0 8px;flex-wrap:wrap'},
+    el('button',{class:'btn sm',title:'LeanSys operasyon kartındaki Std. Zaman (dk) değerlerini çevrim süresi olarak yazar (dakika×60 = saniye). Yazdıktan sonra elle değiştirebilirsin.',onclick:e=>pullStdTime(e.currentTarget)},'⏱ LeanSys std. zamanını çek (dk→sn)'),
     el('button',{class:'btn sm sec',onclick:exportCyc},'⬇ Excel’e Aktar'),
     (()=>{ const fi=el('input',{type:'file',accept:'.xlsx,.xls',style:'display:none'}); fi.onchange=e=>{ if(e.target.files[0]){ importCyc(e.target.files[0]); e.target.value=''; } };
       return el('span',{},el('button',{class:'btn sm sec',onclick:()=>fi.click()},'⬆ Excel’den Yükle'),fi); })()
