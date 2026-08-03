@@ -2955,13 +2955,22 @@ function genMeasure(it){
   if(isFinite(hi)&&val>hi)val=Math.floor((hi+1e-9)/res)*res;
   return (val).toFixed(d);
 }
-const AUTO_MEASURER='Burak Silahlı';   // otomatik üretimlerde ölçümcü (kalite operatörü) — varsayılan
-// KONUMA GÖRE KONTROLÖR (otomatik/türetilmiş kontrollerde): Veliköy → Kazım Karışan, Bursa → Mustafa Uğur Koyakbaşı, diğer → varsayılan
-function measurerFor(p){
-  const loc=((machineGroupOf(p&&p.machine_code)||'')+' '+((p&&p.machine_name)||'')).toLocaleUpperCase('tr');
-  if(/VEL[İI]K[ÖO]Y/.test(loc)) return 'Kazım Karışan';
-  if(/BURSA/.test(loc)) return 'Mustafa Uğur Koyakbaşı';
-  return AUTO_MEASURER;
+const AUTO_MEASURER='Burak Silahlı';   // otomatik üretimlerde ölçümcü (kalite operatörü) — varsayılan (Çerkezköy)
+// LOKASYON → KALİTECİ(LER). Birden çok isim varsa üretim bazında dağıtılır (her üretimi bir kişi kontrol eder).
+const QC_BY_LOC=[
+  {label:'Çerkezköy',  re:/ÇERKEZK[ÖO]Y/,        people:[AUTO_MEASURER]},
+  {label:'Eskişehir',  re:/ESK[İI]SEH[İI]R/,     people:['Mehmet Fatih Aydın','Nursena Şen','Buse Ülker']},
+  {label:'Veliköy',    re:/VEL[İI]K[ÖO]Y/,       people:['Kazım Karışan']},
+  {label:'Bursa',      re:/BURSA/,               people:['Mustafa Uğur Koyakbaşı']},
+];
+function locOf(p){ return ((machineGroupOf(p&&p.machine_code)||'')+' '+((p&&p.machine_name)||'')).toLocaleUpperCase('tr'); }
+// KONUMA GÖRE KONTROLÖR. who = elle seçilen kaliteci listesi (varsa lokasyon haritasını ezer).
+function measurerFor(p,who){
+  const list=(who&&who.length)?who:(QC_BY_LOC.find(x=>x.re.test(locOf(p)))||{}).people;
+  if(!list||!list.length) return AUTO_MEASURER;
+  if(list.length===1) return list[0];
+  const id=Math.abs(Number(p&&p.id)||0);                 // üretim bazında dağıt (aynı üretim hep aynı kişi)
+  return list[id%list.length];
 }
 // saate göre vardiya (3 vardiya: 1=08–16, 2=16–24, 3=00–08)
 function shiftForTime(d){ const dt=(d instanceof Date)?d:new Date(d); if(isNaN(dt))return null; const h=dt.getHours(); return (h>=8&&h<20)?1:2; }  // 08:00–20:00 → 1. vardiya, 20:00–08:00 → 2. vardiya
@@ -3003,9 +3012,9 @@ function prosesCycleFreq(items){
   return best;
 }
 function sampleCount(it,s){ const v=(s==='son'&&it.son_kontrol_ornekleme)?it.son_kontrol_ornekleme:it.sample_size; const n=Number(v); return n>0?n:1; }
-function buildAutoRec(p,stage,when,items,priorMap){
+function buildAutoRec(p,stage,when,items,priorMap,who){
   const its=stageItems(items,stage); if(!its.length)return null;
-  const measurer=measurerFor(p);   // konuma göre kontrolör (Veliköy=Kazım Karışan, Bursa=Mustafa Uğur Koyakbaşı)
+  const measurer=measurerFor(p,who);   // konuma göre kontrolör; who verilirse (modalde seçilen kaliteciler) o kullanılır
   const vals=its.map(it=>{ const n=sampleCount(it,stage);
     it._prod=p.stock_name||'';   // genMeasure ürün adından PE/kompozit (yanma) tespiti yapabilsin
     // yanma gibi periyodik ölçümlerde ilk yapılan kaydın değerini taşı
@@ -3090,16 +3099,32 @@ async function openBulkAuto(){
     m.append(el('div',{class:'row',style:'margin-bottom:8px'},
       el('div',{class:'field grow'},el('label',{class:'lab'},`📦 ${esc(c.stock_code)}${c.stock_name?(' — '+esc(c.stock_name)):''} · 🛠 ${esc(c.machine_code)} ${esc(c.machine_name||'')} · ${c.count} üretim · birim: ${esc(c.unit||'-')}`), inp)));
   });
+  // LOKASYON + KALİTECİ: lokasyon seçilirse kapsam o lokasyona daralır; kaliteci(ler) kayıtlara ölçümcü olarak yazılır
+  const locSel=el('select',{class:'inp'});
+  locSel.append(el('option',{value:''},'Otomatik (makineye göre)'));
+  QC_BY_LOC.forEach(x=>locSel.append(el('option',{value:x.label},x.label)));
+  const qcInp=el('input',{class:'inp',placeholder:'Kaliteci ad(lar)ı — virgülle ayır',value:''});
+  locSel.onchange=()=>{ const x=QC_BY_LOC.find(y=>y.label===locSel.value); qcInp.value=x?x.people.join(', '):''; };
+  m.append(el('div',{class:'row',style:'margin:4px 0 2px'},
+    el('div',{class:'field',style:'flex:0;min-width:190px'},el('label',{class:'lab'},'Lokasyon'),locSel),
+    el('div',{class:'field grow'},el('label',{class:'lab'},'Kaliteci(ler)'),qcInp)));
+  m.append(el('div',{style:'font-size:11px;color:var(--muted);margin:0 0 10px'},'Lokasyon seçersen yalnız o lokasyonun üretimleri işlenir ve kayıtlara bu kaliteciler yazılır. Birden çok isim yazarsan üretimlere dağıtılır. Boş bırakırsan makineye göre otomatik atanır.'));
   const regenCb=el('input',{type:'checkbox'});
   m.append(el('label',{style:'display:flex;align-items:center;gap:6px;margin:6px 0 6px;cursor:pointer'},regenCb,'Var olan kayıtları silip yeniden üret (kapalıysa sadece eksik aşamalar tamamlanır)'));
   const fillEmptyCb=el('input',{type:'checkbox'}); fillEmptyCb.checked=true;
   m.append(el('label',{style:'display:flex;align-items:center;gap:6px;margin:0 0 12px;cursor:pointer'},fillEmptyCb,'Boş (ölçüm girilmemiş) mevcut kayıtları da otomatik doldur'));
   const status=el('div',{style:'margin-top:6px;color:var(--muted);font-size:13px'});
-  const go=el('button',{class:'btn',onclick:()=>runBulkAuto(prods,plan,cyc,regenCb.checked,fillEmptyCb.checked,status,go)},'🎲 Üret');
+  const go=el('button',{class:'btn',onclick:()=>{
+    const who=qcInp.value.split(',').map(s=>s.trim()).filter(Boolean);
+    const lx=QC_BY_LOC.find(y=>y.label===locSel.value);
+    const scope=lx?prods.filter(p=>lx.re.test(locOf(p))):prods;      // lokasyon seçiliyse kapsamı daralt
+    if(!scope.length){ toast(lx?(lx.label+' lokasyonunda planı olan üretim yok.'):'Kapsamda üretim yok.','err'); return; }
+    runBulkAuto(scope,plan,cyc,regenCb.checked,fillEmptyCb.checked,status,go,who);
+  }},'🎲 Üret');
   m.append(el('div',{},go),status);
   bg.append(m); root.innerHTML=''; root.append(bg);   // yükleniyor placeholder'ını temizle
 }
-async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
+async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who){
   // çevrim girilmediyse: mevcut başlama–bitiş sürelerine göre üret (proses dahil)
   if(!Object.values(cyc).some(v=>v>0)){
     if(!confirm('Hiç çevrim süresi girmedin.\n\nMevcut başlama–bitiş sürelerine göre eksik kontroller (Seri Başı / Proses / Son) üretilsin mi?\n(Bitmemiş = DEVAM EDEN üretimlerde kontrol ÜRETİLMEZ; üretim bitince tekrar çalıştır.)')) { return; }
@@ -3157,17 +3182,17 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go){
     // seri başı / giriş kontrolü üretim başından 1–5 dk SONRA (başlangıçla aynı olmasın); bitişi geçmesin
     const endMs=(end&&end.getTime()>start.getTime())?end.getTime():(start.getTime()+6*60000);
     const offWhen=()=>new Date(Math.min(start.getTime()+Math.round((1+Math.random()*4)*60000), endMs-30000));
-    if(!cur.has('seri_basi')){ const r=buildAutoRec(p,'seri_basi',offWhen(),items,priorMap); if(r)recs.push(r); }       // seri üretim başından birkaç dk sonra
+    if(!cur.has('seri_basi')){ const r=buildAutoRec(p,'seri_basi',offWhen(),items,priorMap,who); if(r)recs.push(r); }       // seri üretim başından birkaç dk sonra
     // proses: plana göre saatlik (freq). Seri başından sonra 1 freq (ör. 1 saat) GEÇMEDİYSE proses üretilmez (kısa üretim → sadece Seri Başı + Son)
     if(!cur.has('proses')){ for(let t=freq,_pn=0;t<durMin&&_pn<100;t+=freq,_pn++){ const jit=Math.round((Math.random()*10-5)*60000); // ±5 dk sapma — hep tam saat olmasın (üst sınır 100)
       let tm=start.getTime()+t*60000+jit; tm=Math.min(Math.max(tm,start.getTime()+60000),end.getTime()-60000); // aralıkta kal
-      const r=buildAutoRec(p,'proses',new Date(tm),items,priorMap); if(r)recs.push(r); } }
-    if(finished && !cur.has('son')){ const r=buildAutoRec(p,'son',end,items,priorMap); if(r)recs.push(r); }          // son: yalnız BİTMİŞ üretimde (devam edende üretilmez)
-    if(!cur.has('giris')){ const r=buildAutoRec(p,'giris',offWhen(),items,priorMap); if(r)recs.push(r); }
+      const r=buildAutoRec(p,'proses',new Date(tm),items,priorMap,who); if(r)recs.push(r); } }
+    if(finished && !cur.has('son')){ const r=buildAutoRec(p,'son',end,items,priorMap,who); if(r)recs.push(r); }          // son: yalnız BİTMİŞ üretimde (devam edende üretilmez)
+    if(!cur.has('giris')){ const r=buildAutoRec(p,'giris',offWhen(),items,priorMap,who); if(r)recs.push(r); }
     // boş (ölçüm girilmemiş) mevcut kayıtları otomatik doldur
     const updates=[];
     if(fillEmpty && recMap[p.id]){ Object.values(recMap[p.id]).forEach(arr=>arr.forEach(ex=>{
-      if(recEmpty(ex)){ const r=buildAutoRec(p,ex.stage,new Date(ex.checked_at||end),items,priorMap); if(r&&(r.vals||[]).length) updates.push({id:ex.id,vals:r.vals,overall_result:r.overall_result}); } })); }
+      if(recEmpty(ex)){ const r=buildAutoRec(p,ex.stage,new Date(ex.checked_at||end),items,priorMap,who); if(r&&(r.vals||[]).length) updates.push({id:ex.id,vals:r.vals,overall_result:r.overall_result}); } })); }
     let did=false;
     if(recs.length){ const {error}=await sb.from('control_records').insert(recs); if(error){console.warn(error.message);} else {made+=recs.length;did=true;} }
     for(const u of updates){ const {error}=await sb.from('control_records').update({vals:u.vals,overall_result:u.overall_result}).eq('id',u.id); if(!error){made++;did=true;} }
