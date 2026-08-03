@@ -2954,6 +2954,8 @@ function genMeasure(it){
     if(/kompozit|pe\+pp|pp\+pe|\bpp\b|\beva\b/.test(ctx)) return (50).toFixed(d);
     if(/\bpe\b|p\.e|polietilen/.test(ctx)) return (0).toFixed(d);
   }
+  // SAYIM/ADET ölçümü (ambalaj içi adet, koli adedi…): sapma olmaz → hedef TAM yazılır
+  if(isFinite(t) && /ade[dt]|sayarak|sayim|koli|paket/.test(nm+' '+deTr(it.method||''))) return t.toFixed(d);   // adet/adedi
   let mean=isFinite(t)?t:(isFinite(lo)&&isFinite(hi)?(lo+hi)/2:(isFinite(lo)?lo:(isFinite(hi)?hi:0)));
   let std=(isFinite(lo)&&isFinite(hi))?(hi-lo)/6:Math.max(res,Math.abs(mean)*0.01);
   if(!(std>0))std=0;                                   // tolerans 0 → sabit (hedef)
