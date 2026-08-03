@@ -3407,9 +3407,10 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
           stock_code:sc, stock_name:base.stock_name||null, customer:base.customer||null,
           work_order:base.work_order||null, quantity:base.quantity??null, unit:base.unit||null,
           start_time:base.start_time||null, end_time:base.end_time||null, operator:base.operator||null,
-          fingerprint:(mkod||st.equip)+'|'+(base.start_time||'')+'|'+sc+'|'+st.op+'|V' });
+          fingerprint:(mkod||'')+'|'+(base.start_time||'')+'|'+sc+'|'+st.op+'|'+deTr(st.equip).replace(/[^a-z0-9]/g,'').slice(0,18)+'|V' });   // ekipman da anahtarda: aynı op'ta farklı makineler çakışmasın
       });
     });
+    { const _seen=new Set(); for(let i=yeni.length-1;i>=0;i--){ if(_seen.has(yeni[i].fingerprint)) yeni.splice(i,1); else _seen.add(yeni[i].fingerprint); } }   // aynı fingerprint iki kez gitmesin
     if(!yeni.length){ toast('Sanal adım gerekmedi: plandaki tüm operasyonların üretim kaydı zaten var.','ok'); }
     else if(confirm(yeni.length + " adet SANAL uretim adimi eklenecek (planda var, uretim kaydi yok). Sadece yoneticiye ◇ isareti ile gorunur. Devam?")){
       let vErr='';
