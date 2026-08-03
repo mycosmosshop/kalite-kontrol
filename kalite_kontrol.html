@@ -3023,6 +3023,31 @@ function opByMachineName(items,machineName){
     if(r>bestR || (r===bestR && hit[o]>bestH)){ bestR=r; bestH=hit[o]; best=o; } });
   return best;
 }
+// ---- ROTA/EKİPMAN EŞLEŞTİRİCİ (ortak) --------------------------------------------------------
+// LeanSys ham kontrol planı (leansys_kontrol_plani) her ölçüm maddesinde ROTA (operasyon_id),
+// ADIM (op_no) ve ÜRETİM EKİPMANI taşır. Üretimin makinesini ekipmanla eşleştirip doğru adımı buluruz.
+const _kkWords=x=>[...new Set(deTr(String(x||'')).split(/[^a-z0-9]+/).filter(w=>w.length>=4))];
+function equipScore(a,b){                      // makine adı ↔ plan ekipmanı benzerliği (yazım farklarına dayanıklı)
+  const A=_kkWords(a), B=_kkWords(b); if(!A.length||!B.length) return 0;
+  let n=0; A.forEach(x=>{ if(B.some(y=>y.startsWith(x.slice(0,5))||x.startsWith(y.slice(0,5)))) n++; });
+  return n;
+}
+// rawRows: leansys_kontrol_plani satırları (tek stok). Dönüş: {hid,op,names:Set,equip} | null
+function routeStepFor(rawRows,machineName,machineCode,opNo,defHid){
+  const groups={};
+  (rawRows||[]).forEach(x=>{ if(x.operasyon_id==null||x.op_no==null||!x.olculecek)return;
+    const k=x.operasyon_id+'|'+Number(x.op_no);
+    const g=groups[k]||(groups[k]={hid:x.operasyon_id,op:Number(x.op_no),names:new Set(),equip:x.uretim_ekipman||''});
+    g.names.add(deTr(String(x.olculecek).trim())); if(!g.equip&&x.uretim_ekipman)g.equip=x.uretim_ekipman; });
+  const list=Object.values(groups); if(!list.length) return null;
+  const mn=machineName||machineCode||'';
+  let best=null,bestS=0;
+  list.forEach(g=>{ let sc=equipScore(mn,g.equip); if(!sc)return;
+    if(defHid!=null && g.hid===defHid) sc+=0.5;            // varsayılan rota önce
+    if(opNo!=null && Number(opNo)===g.op) sc+=0.25;        // üretimin op'u da tutuyorsa
+    if(sc>bestS){ bestS=sc; best=g; } });
+  return best;
+}
 // Üretim için OTOMATİK plan operasyonu: rota adımı → (planda karşılığı olanlar) → makine adı benzerliği. null = üretimin kendi op'u kullanılır.
 function autoPlanOp(p,planForStock,opsByMachine){
   const cand=(opsByMachine&&opsByMachine[(p.stock_code||'')+'|'+(p.machine_code||'')])||[];
@@ -3269,6 +3294,7 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
   const rotaSteps={};   // stok|makine -> [{hid,op,def}]  (LeanSys rota adımları)
   const defRota={};     // stok -> varsayılan rota id
   const rawPlan={};     // stok|rota|op -> Set(ölçüm adı)  (ham kontrol planı, rota bazlı)
+  const rawRows={};     // stok -> ham plan satırları (ekipman eşleşmesi için)
   const _nm=x=>deTr(String(x||'').trim());
   const _loadRota=async codes=>{ for(let i=0;i<codes.length;i+=100){
       const {data:oc}=await sb.from('operasyon_kartlari').select('stok_kodu,op_no,makine_kodu,header_id,varsayilan').in('stok_kodu',codes.slice(i,i+100));
@@ -3277,16 +3303,20 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
         (rotaSteps[k]=rotaSteps[k]||[]).push({hid:o.header_id,op:Number(o.op_no),def:o.varsayilan===true});
         if(o.varsayilan===true && defRota[o.stok_kodu]==null) defRota[o.stok_kodu]=o.header_id; });
       // HAM kontrol planı (rota bazlı): hangi rotanın hangi adımında hangi ölçümler yapılır
-      const {data:lp}=await sb.from('leansys_kontrol_plani').select('stok_kodu,operasyon_id,op_no,olculecek').in('stok_kodu',codes.slice(i,i+100));
+      const {data:lp}=await sb.from('leansys_kontrol_plani').select('stok_kodu,operasyon_id,op_no,olculecek,uretim_ekipman').in('stok_kodu',codes.slice(i,i+100));
       (lp||[]).forEach(x=>{ if(x.operasyon_id==null||x.op_no==null||!x.olculecek)return;
         const k=(x.stok_kodu||'')+'|'+x.operasyon_id+'|'+Number(x.op_no);
-        (rawPlan[k]=rawPlan[k]||new Set()).add(_nm(x.olculecek)); });
+        (rawPlan[k]=rawPlan[k]||new Set()).add(_nm(x.olculecek));
+        (rawRows[x.stok_kodu]=rawRows[x.stok_kodu]||[]).push(x); });
     } };
   // Üretimin MAKİNESİ hangi rota adımıysa, O ADIMDA ölçülen ölçüm adları (rota+ham plandan; tahmin yok).
   // Makine rotada yoksa: varsayılan rotanın adımları içinde makine adına en çok uyan adım (oran).
   const planNamesFor=p=>{
-    const st=(rotaSteps[(p.stock_code||'')+'|'+(p.machine_code||'')]||[]).slice();
     const def=defRota[p.stock_code];
+    // 1) PLANIN KENDİ EKİPMAN BİLGİSİ (en güvenilir): madde hangi makinede ölçülüyor?
+    const eq=routeStepFor(rawRows[p.stock_code],p.machine_name,p.machine_code,p.op_no,def);
+    if(eq&&eq.names&&eq.names.size) return {op:eq.op,names:eq.names,hid:eq.hid,equip:eq.equip};
+    const st=(rotaSteps[(p.stock_code||'')+'|'+(p.machine_code||'')]||[]).slice();
     st.sort((a,b)=>((b.def?1:0)-(a.def?1:0)) || ((b.hid===def?1:0)-(a.hid===def?1:0)) || (a.op-b.op));
     let pick=st.find(x=>Number(p.op_no)===x.op) || st[0];
     if(pick){ const set=rawPlan[(p.stock_code||'')+'|'+pick.hid+'|'+pick.op]; if(set&&set.size) return {op:pick.op,names:set,hid:pick.hid}; }
@@ -5284,10 +5314,18 @@ async function editRecord(r,prod){
     vals.sort((a,b)=> (OLCU[a.plan_item_id]||9999)-(OLCU[b.plan_item_id]||9999)); }   // Ölçü No sırası
   // ROTA bilgisi (antette göster): üretimin makinesi LeanSys rotasında hangi adım
   let rotaTxt='';
-  try{ const _mc=r.machine_code||(prod&&prod.machine_code)||'';
-    if(_mc){ const {data:oc}=await sb.from('operasyon_kartlari').select('rota_adi,op_no,header_id,varsayilan').eq('stok_kodu',r.stock_code).eq('makine_kodu',_mc);
-      if(oc&&oc.length){ const _po=(prod&&prod.op_no); const d=oc.find(x=>Number(x.op_no)===Number(_po))||oc.find(x=>x.varsayilan===true)||oc[0];
-        rotaTxt=(d.rota_adi||('Rota '+d.header_id))+' · adım op'+d.op_no; } }
+  try{
+    const _mc=r.machine_code||(prod&&prod.machine_code)||'', _mn=(prod&&prod.machine_name)||'';
+    const {data:oc}=await sb.from('operasyon_kartlari').select('rota_adi,op_no,header_id,varsayilan,makine_kodu').eq('stok_kodu',r.stock_code);
+    const _def=(oc||[]).find(x=>x.varsayilan===true);
+    const _adi=hid=>{ const h=(oc||[]).find(x=>x.header_id===hid); return h&&h.rota_adi?h.rota_adi:('Rota '+hid); };
+    // 1) plan ekipmanından (rotada olmayan makineler de bulunur — ör. ambalajlama)
+    const {data:lp}=await sb.from('leansys_kontrol_plani').select('operasyon_id,op_no,olculecek,uretim_ekipman').eq('stok_kodu',r.stock_code);
+    const st=routeStepFor(lp,_mn,_mc,(prod&&prod.op_no),_def?_def.header_id:null);
+    if(st) rotaTxt=_adi(st.hid)+' · adım op'+st.op+(st.equip?(' · '+st.equip):'');
+    else if(oc&&oc.length&&_mc){ const d=(oc||[]).filter(x=>x.makine_kodu===_mc);
+      const dd=d.find(x=>Number(x.op_no)===Number(prod&&prod.op_no))||d.find(x=>x.varsayilan===true)||d[0];
+      if(dd) rotaTxt=_adi(dd.header_id)+' · adım op'+dd.op_no; }
   }catch(e){}
   const canEdit = can('edit');                                     // kullanıcı bazlı: kayıt düzenleme yetkisi
   const canDelete = can('delete') || r.created_by===(ME&&ME.id);
