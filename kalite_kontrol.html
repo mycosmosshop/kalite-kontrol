@@ -1444,7 +1444,9 @@ function prodRow(p){
   return el('tr',{'data-s':(`${p.machine_name} ${p.stock_code} ${p.stock_name} ${p.operator} ${p.customer||''} ${p.work_order||''} ${_grp}`).toLowerCase(),'data-qty':(Number(p.quantity)>0?'1':'0')},
     el('td',{},el('input',{type:'checkbox',class:'prodChk','data-id':p.id})),
     el('td',{'data-col':'tarih'},fmtDate(p.prod_date)),
-    el('td',{'data-col':'makine'},el('div',{},p.machine_name||''),el('div',{class:'det',style:'color:var(--muted);font-size:11px'},p.machine_code||'')),
+    el('td',{'data-col':'makine'},el('div',{},p.machine_name||'',
+        ((PROFILE&&PROFILE.is_admin&&/\|V$/.test(p.fingerprint||''))?el('span',{style:'margin-left:6px;font-size:9.5px;color:#94a3b8;border:1px solid #cbd5e1;border-radius:4px;padding:0 4px',title:'Plandan türetilmiş adım (yalnız yöneticiye görünür)'},'◇'):'')),
+      el('div',{class:'det',style:'color:var(--muted);font-size:11px'},p.machine_code||'')),
     el('td',{'data-col':'grup',style:'font-size:12px'},_grp||el('span',{style:'color:var(--muted)'},'—')),
     el('td',{'data-col':'cari',style:'font-size:12px'},p.customer||''),
     el('td',{'data-col':'urun'},el('div',{},p.stock_code||''),el('div',{class:'det',style:'color:var(--muted);font-size:11px'},(p.stock_name||'').slice(0,32))),
@@ -3263,8 +3265,8 @@ async function openBulkAuto(){
     b.disabled=true; b.textContent='⏳ Siliniyor…';
     let n=0;
     for(let i=0;i<scs.length;i+=50){
-      const {data:vs}=await sb.from('productions').select('id').in('stock_code',scs.slice(i,i+50)).like('machine_name','%(sanal)%');
-      const ids=(vs||[]).map(x=>x.id);
+      const {data:vs}=await sb.from('productions').select('id,fingerprint,machine_name').in('stock_code',scs.slice(i,i+50));
+      const ids=(vs||[]).filter(x=>/\|V$/.test(x.fingerprint||'')||/\(sanal\)/i.test(x.machine_name||'')).map(x=>x.id);
       for(let j=0;j<ids.length;j+=100){ const part=ids.slice(j,j+100);
         await sb.from('control_records').delete().in('production_id',part);
         const {error}=await sb.from('productions').delete().in('id',part); if(!error)n+=part.length; }
@@ -3401,7 +3403,7 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
         _makinaKatalog.forEach(([code,nm])=>{ const sc2=equipScore(nm,st.equip); if(sc2>mks){ mks=sc2; mkod=code; } });
         if(!mkod) mkod=base.machine_code||null;
         yeni.push({ prod_date:base.prod_date||null, shift:base.shift??null, op_no:st.op,
-          machine_code:mkod, machine_name:st.equip+' (sanal)',
+          machine_code:mkod, machine_name:st.equip,
           stock_code:sc, stock_name:base.stock_name||null, customer:base.customer||null,
           work_order:base.work_order||null, quantity:base.quantity??null, unit:base.unit||null,
           start_time:base.start_time||null, end_time:base.end_time||null, operator:base.operator||null,
