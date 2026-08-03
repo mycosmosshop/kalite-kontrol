@@ -3289,15 +3289,15 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
     const def=defRota[p.stock_code];
     st.sort((a,b)=>((b.def?1:0)-(a.def?1:0)) || ((b.hid===def?1:0)-(a.hid===def?1:0)) || (a.op-b.op));
     let pick=st.find(x=>Number(p.op_no)===x.op) || st[0];
-    if(pick){ const set=rawPlan[(p.stock_code||'')+'|'+pick.hid+'|'+pick.op]; if(set&&set.size) return set; }
+    if(pick){ const set=rawPlan[(p.stock_code||'')+'|'+pick.hid+'|'+pick.op]; if(set&&set.size) return {op:pick.op,names:set,hid:pick.hid}; }
     // rotada yok → varsayılan (yoksa herhangi) rotanın adımlarından makine adına en uygun olan
     const ws=[...new Set(_nm(p.machine_name||p.machine_code).split(/[^a-z0-9]+/).filter(x=>x.length>=6).map(x=>x.slice(0,6)))];
     if(!ws.length) return null;
     let best=null,bestR=-1;
-    Object.keys(rawPlan).forEach(k=>{ const [sc,hid]=k.split('|'); if(sc!==p.stock_code)return;
+    Object.keys(rawPlan).forEach(k=>{ const [sc,hid,op]=k.split('|'); if(sc!==p.stock_code)return;
       if(def!=null && String(hid)!==String(def)) return;                       // varsayılan rota ile sınırla
       const set=rawPlan[k]; let hit=0; set.forEach(n=>{ if(ws.some(w=>n.includes(w)))hit++; });
-      const r=hit/set.size; if(hit>0 && r>bestR){ bestR=r; best=set; } });
+      const r=hit/set.size; if(hit>0 && r>bestR){ bestR=r; best={op:Number(op),names:set,hid:Number(hid)}; } });
     return best;
   };
   const _codes=[...new Set(prods.map(p=>p.stock_code).filter(Boolean))];
@@ -3352,8 +3352,11 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
     const _sel=opMap&&opMap[(p.stock_code||'')+'|'+(p.op_no??'')+'|'+(p.machine_code||'')];
     let items;
     if(_sel!=null){ items=opItemsFor(_planP,_sel,useAllOps); }                 // 1) kullanıcının elle seçimi
-    else { const _names=planNamesFor(p);                                        // 2) rota adımının ÖLÇÜMLERİ (deterministik)
-      items=(_names&&_names.size)?_planP.filter(it=>_names.has(_nm(it.measure_name))):[];
+    else { const _rs=planNamesFor(p);                                           // 2) rota adımının OP'u + ÖLÇÜM ADLARI (deterministik)
+      items=(_rs&&_rs.names&&_rs.names.size)
+        ? _planP.filter(it=>Number(it.op_no)===_rs.op && _rs.names.has(_nm(it.measure_name)))   // aynı op + aynı ad → iki rota karışmaz
+        : [];
+      if(!items.length && _rs&&_rs.names&&_rs.names.size) items=_planP.filter(it=>_rs.names.has(_nm(it.measure_name)));  // op no tutmuyorsa yalnız ad
       if(!items.length) items=opItemsFor(_planP,(_auto!=null?_auto:p.op_no),useAllOps); }   // 3) eski otomatik (yedek)
     if(!items.length){ const k=(p.stock_code||'?')+' op'+(p.op_no??'-'); noOp[k]=(noOp[k]||0)+1; skipped++; continue; }   // planda bu operasyon yok → sessiz atlama YERİNE raporla
     // proses sıklığı: proses maddelerinin EN KISA pozitif örnekleme sıklığı (aylık vb. uzun değerlere takılmasın); en çok 1 günle sınırla
@@ -5279,6 +5282,13 @@ async function editRecord(r,prod){
     (pl||[]).forEach(it=>{ if(it.periodic_start) startMap[it.id]=it.periodic_start; if(it.periodic_days!=null) perDaysMap[it.id]=it.periodic_days; });
     OLCU=olcuNoMap(pl||[]);
     vals.sort((a,b)=> (OLCU[a.plan_item_id]||9999)-(OLCU[b.plan_item_id]||9999)); }   // Ölçü No sırası
+  // ROTA bilgisi (antette göster): üretimin makinesi LeanSys rotasında hangi adım
+  let rotaTxt='';
+  try{ const _mc=r.machine_code||(prod&&prod.machine_code)||'';
+    if(_mc){ const {data:oc}=await sb.from('operasyon_kartlari').select('rota_adi,op_no,header_id,varsayilan').eq('stok_kodu',r.stock_code).eq('makine_kodu',_mc);
+      if(oc&&oc.length){ const _po=(prod&&prod.op_no); const d=oc.find(x=>Number(x.op_no)===Number(_po))||oc.find(x=>x.varsayilan===true)||oc[0];
+        rotaTxt=(d.rota_adi||('Rota '+d.header_id))+' · adım op'+d.op_no; } }
+  }catch(e){}
   const canEdit = can('edit');                                     // kullanıcı bazlı: kayıt düzenleme yetkisi
   const canDelete = can('delete') || r.created_by===(ME&&ME.id);
   function render(){
@@ -5314,6 +5324,7 @@ async function editRecord(r,prod){
         ['Makine Kodu', r.machine_code||P.machine_code],
         ['Miktar', P.quantity!=null?(P.quantity+' '+(P.unit||'')):''],
         ['Op No', P.op_no!=null?String(P.op_no):''],
+        ['Rota', rotaTxt],
         ['İş Emri', wo],
         ['Vardiya', P.shift!=null?String(P.shift):''],
         ['Üretim Zamanı', dtTxt],
