@@ -1370,6 +1370,8 @@ async function renderUretimler(){
           can('import')?el('button',{class:'btn sm',onclick:()=>{closeAutozones();editSelectedProd();}},'✏️ Seçileni Düzenle'):'',
           can('auto')?el('button',{class:'btn sm',onclick:()=>{closeAutozones();finishSelectedProds();}},'🏁 Seçilenleri Bitir + Kontrol Üret'):'',
           (can('delete')||PROFILE.is_admin)?el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteSelectedRecs();}},'🧹 Seçilenlerin Kontrollerini Sil'):'',
+          (PROFILE&&PROFILE.is_admin)?el('button',{class:'btn sm danger',title:'Plandan türetilmiş (◇) üretimlerin KONTROLLERİNİ sil; üretimler kalır',onclick:()=>{closeAutozones();deleteVirtual(false);}},'◇ Sanal Kontrolleri Sil'):'',
+          (PROFILE&&PROFILE.is_admin)?el('button',{class:'btn sm danger',title:'Plandan türetilmiş (◇) üretimleri kontrolleriyle birlikte sil',onclick:()=>{closeAutozones();deleteVirtual(true);}},'◇ Sanal Üretimleri Sil'):'',
           PROFILE.is_admin?el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteSelectedProds();}},'🗑 Seçilenleri Sil (üretim+kontrol)'):'',
           PROFILE.is_admin?el('button',{class:'btn sm danger',onclick:()=>{closeAutozones();deleteAllProds();}},'🧨 TÜMÜNÜ Sil (bütün üretimler)'):''
         )
@@ -3094,6 +3096,22 @@ function buildAutoRec(p,stage,when,items,priorMap,who){
   return {production_id:p.id,stock_code:p.stock_code,stock_name:p.stock_name,machine_code:p.machine_code,work_order:p.work_order,
     stage,operator:measurer,shift:shiftForTime(when)??p.shift,checked_at:when.toISOString(),vals,overall_result:'OK'};
 }
+// ◇ SANAL (plandan türetilmiş) üretimler: kapsamda seçili varsa onlar, yoksa filtre kapsamı.
+// prodsToo=false → yalnız kontrol kayıtları silinir (üretimler kalır), true → üretimler de silinir.
+async function deleteVirtual(prodsToo){
+  if(!(PROFILE&&PROFILE.is_admin)){ toast('Bu işlem yalnız yönetici içindir.','err'); return; }
+  const selIds=new Set([...document.querySelectorAll('#prodBody .prodChk:checked')].map(c=>Number(c.dataset.id)));
+  const kapsam=(selIds.size?PRODS.filter(p=>selIds.has(p.id)):PRODS.filter(matchesUF)).filter(p=>/\|V$/.test(p.fingerprint||''));
+  if(!kapsam.length){ toast('Kapsamda sanal (◇) üretim yok.','err'); return; }
+  if(!confirm(kapsam.length+' sanal üretim'+(prodsToo?' ve kontrolleri':'in kontrolleri')+' silinecek. Gerçek üretimlere dokunulmaz. Devam?')) return;
+  const ids=kapsam.map(p=>p.id); let n=0;
+  for(let i=0;i<ids.length;i+=100){ const part=ids.slice(i,i+100);
+    await sb.from('control_records').delete().in('production_id',part);
+    if(prodsToo){ const {error}=await sb.from('productions').delete().in('id',part); if(!error)n+=part.length; }
+    else n+=part.length; }
+  toast(n+(prodsToo?' sanal üretim (ve kontrolleri) silindi.':' sanal üretimin kontrolleri silindi.'),'ok');
+  renderUretimler();
+}
 async function openBulkAuto(){
   const root=$('#modalRoot');
   root.innerHTML='<div class="modal-bg"><div class="modal"><div class="empty">Yükleniyor…</div></div></div>';
@@ -3258,24 +3276,6 @@ async function openBulkAuto(){
     }
   }
   // sanal kayıtları geri alma (yanlış/eksik üretildiyse)
-  const virtDel=el('button',{class:'btn sm danger',style:'flex:0;margin:0 0 8px',onclick:async e=>{
-    const b=e.currentTarget, _t=b.textContent;
-    const scs=[...new Set(prods.map(x=>x.stock_code).filter(Boolean))];
-    if(!confirm('Bu kapsamdaki SANAL üretimler ve onlara ait kontrol kayıtları silinecek. Gerçek üretimlere dokunulmaz. Devam?')) return;
-    b.disabled=true; b.textContent='⏳ Siliniyor…';
-    let n=0;
-    for(let i=0;i<scs.length;i+=50){
-      const {data:vs}=await sb.from('productions').select('id,fingerprint,machine_name').in('stock_code',scs.slice(i,i+50));
-      const ids=(vs||[]).filter(x=>/\|V$/.test(x.fingerprint||'')||/\(sanal\)/i.test(x.machine_name||'')).map(x=>x.id);
-      for(let j=0;j<ids.length;j+=100){ const part=ids.slice(j,j+100);
-        await sb.from('control_records').delete().in('production_id',part);
-        const {error}=await sb.from('productions').delete().in('id',part); if(!error)n+=part.length; }
-    }
-    b.disabled=false; b.textContent=_t;
-    toast(n+' sanal üretim (ve kontrolleri) silindi.', n?'ok':'err');
-    try{ await renderUretimler(); }catch(_){}
-  }},'🧹 Sanal üretimleri sil');
-  m.append(virtDel);
   const virtCb=el('input',{type:'checkbox'});
   m.append(el('label',{style:'display:flex;align-items:center;gap:6px;margin:0 0 6px;cursor:pointer'},virtCb,'Planda olup ÜRETİM KAYDI OLMAYAN operasyonlar için SANAL üretim ekle (aynı iş emri/miktar/tarih; makine adı “(sanal)” işaretli)'));
   const allOpsCb=el('input',{type:'checkbox'});
