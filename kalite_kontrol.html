@@ -1935,6 +1935,49 @@ async function renderPlan(){
       el('button',{class:'btn sm',style:'flex:0',onclick:importPlan},'İçe Aktar')
     )
   ));
+  // ---- Plan ↔ Rota (operasyon kartı) makine eşleşmesi — teşhis (katlanır) ----
+  if(PLAN_SEL){
+    const eşBox=el('div',{},el('div',{class:'empty',style:'padding:10px'},'Yükleniyor…'));
+    root.append(collapseBar('🔗 Plan ↔ Operasyon Kartı — makine eşleşmesi ('+esc(PLAN_SEL)+')',
+      el('div',{style:'font-size:12px;color:var(--muted);margin:0 0 8px'},'Kontrol planındaki her adımın “üretim ekipmanı” ile operasyon kartındaki (rota) makinenin aynı olup olmadığını gösterir. Eşleşmeyen adımlarda otomatik kontrol üretimi ekipman adına göre tahmin yapar.'),
+      eşBox));
+    (async()=>{
+      try{
+        const [{data:lp},{data:oc}]=await Promise.all([
+          sb.from('leansys_kontrol_plani').select('operasyon_id,op_no,olculecek,uretim_ekipman').eq('stok_kodu',PLAN_SEL),
+          sb.from('operasyon_kartlari').select('header_id,op_no,makine_kodu,makine_adi,rota_adi,varsayilan').eq('stok_kodu',PLAN_SEL)
+        ]);
+        const rota={}; (oc||[]).forEach(o=>{ rota[o.header_id+'|'+Number(o.op_no)]={mc:o.makine_kodu,mn:o.makine_adi||'',ad:o.rota_adi||('Rota '+o.header_id),def:o.varsayilan===true}; });
+        const plan={}; (lp||[]).forEach(x=>{ if(x.operasyon_id==null||x.op_no==null)return; const k=x.operasyon_id+'|'+Number(x.op_no);
+          const g=plan[k]||(plan[k]={hid:x.operasyon_id,op:Number(x.op_no),eq:new Set(),ol:new Set()});
+          if(x.uretim_ekipman)g.eq.add(x.uretim_ekipman); if(x.olculecek)g.ol.add(x.olculecek); });
+        const keys=[...new Set([...Object.keys(plan),...Object.keys(rota)])].sort((a,b)=>{
+          const [h1,o1]=a.split('|').map(Number), [h2,o2]=b.split('|').map(Number); return h1-h2||o1-o2; });
+        if(!keys.length){ eşBox.innerHTML='<div class="empty" style="padding:10px">LeanSys ham planı/operasyon kartı bulunamadı — önce “LeanSys’ten Güncelle + Çek” yap.</div>'; return; }
+        const tb=el('table'); tb.append(el('thead',{},el('tr',{},...['Rota','Op','Operasyon kartı makinesi','Kontrol planı ekipmanı','Ölçümler','Durum'].map(h=>el('th',{},h)))));
+        const body=el('tbody');
+        keys.forEach(k=>{ const r=rota[k]||null, pl=plan[k]||null;
+          const eqs=pl?[...pl.eq]:[]; const rmn=r?r.mn:'';
+          let dur,st;
+          if(!pl){ dur='Planda ölçüm yok'; st='#94a3b8'; }
+          else if(!r){ dur='Rotada bu adım yok'; st='#f59e0b'; }
+          else if(!eqs.length){ dur='Planda ekipman boş'; st='#f59e0b'; }
+          else { const en=Math.max(...eqs.map(e=>equipScore(rmn,e)));
+            if(en>=0.6){ dur=(eqs.length>1?'Eşleşiyor (+'+(eqs.length-1)+' ekipman daha)':'Eşleşiyor'); st='#16a34a'; }
+            else if(en>=0.3){ dur='Kısmen benzer (%'+Math.round(en*100)+')'; st='#f59e0b'; }
+            else { dur='FARKLI (%'+Math.round(en*100)+')'; st='#dc2626'; } }
+          body.append(el('tr',{},
+            el('td',{style:'white-space:nowrap;font-size:12px'},(r?r.ad:'—')+(r&&r.def?' ★':'')),
+            el('td',{},String((pl||r).op)),
+            el('td',{style:'font-size:12px'},rmn||'—',r&&r.mc?el('div',{style:'color:var(--muted);font-size:10.5px'},r.mc):''),
+            el('td',{style:'font-size:12px'},eqs.length?eqs.join(' · '):'—'),
+            el('td',{style:'font-size:11px;color:var(--muted);max-width:280px'},pl?[...pl.ol].slice(0,4).join(', ')+([...pl.ol].length>4?' …':''):'—'),
+            el('td',{style:'font-weight:600;font-size:12px;color:'+st},dur)));
+        });
+        tb.append(body); eşBox.innerHTML=''; eşBox.append(el('div',{class:'tbl-wrap'},tb));
+      }catch(e){ eşBox.innerHTML='<div class="empty" style="padding:10px">Okunamadı: '+esc(e.message)+'</div>'; }
+    })();
+  }
   // ---- LeanSys'ten kontrol planı çek (katlanır) ----
   root.append(collapseBar('🏭 LeanSys’ten Kontrol Planı Çek',
     el('p',{style:'color:var(--muted);margin:0 0 6px;font-size:13px',html:'LeanSys’teki kontrol planını bu sayfadaki yapıya kopyalar. <b>Stok kodu yaz</b> → sadece o planı; <b>boş bırak</b> → <b>TÜM</b> planlar. İlgili stokların buradaki planının üzerine yazılır. <b>LeanSys’e hiçbir şey yazılmaz</b> (salt-okuma).'}),
@@ -3031,10 +3074,13 @@ function opByMachineName(items,machineName){
 // LeanSys ham kontrol planı (leansys_kontrol_plani) her ölçüm maddesinde ROTA (operasyon_id),
 // ADIM (op_no) ve ÜRETİM EKİPMANI taşır. Üretimin makinesini ekipmanla eşleştirip doğru adımı buluruz.
 const _kkWords=x=>[...new Set(deTr(String(x||'')).split(/[^a-z0-9]+/).filter(w=>w.length>=4))];
-function equipScore(a,b){                      // makine adı ↔ plan ekipmanı benzerliği (yazım farklarına dayanıklı)
-  const A=_kkWords(a), B=_kkWords(b); if(!A.length||!B.length) return 0;
-  let n=0; A.forEach(x=>{ if(B.some(y=>y.startsWith(x.slice(0,5))||x.startsWith(y.slice(0,5)))) n++; });
-  return n;
+// ORAN (0..1): kelime köklerinin kesişimi / birleşimi. Yazım farkına dayanıklı (ambalajlama↔ambaljlama),
+// ortak genel kelimeler (eskisehir/isciligi) tek başına eşleşme saydırmaz.
+function equipScore(a,b){
+  const A=new Set(_kkWords(a).map(w=>w.slice(0,5))), B=new Set(_kkWords(b).map(w=>w.slice(0,5)));
+  if(!A.size||!B.size) return 0;
+  let kes=0; A.forEach(x=>{ if(B.has(x)) kes++; });
+  return kes/(A.size+B.size-kes);
 }
 // rawRows: leansys_kontrol_plani satırları (tek stok). Dönüş: {hid,op,names:Set,equip} | null
 function routeStepFor(rawRows,machineName,machineCode,opNo,defHid){
@@ -3047,8 +3093,8 @@ function routeStepFor(rawRows,machineName,machineCode,opNo,defHid){
   const mn=machineName||machineCode||'';
   let best=null,bestS=0;
   list.forEach(g=>{ let sc=equipScore(mn,g.equip); if(!sc)return;
-    if(defHid!=null && g.hid===defHid) sc+=0.5;            // varsayılan rota önce
-    if(opNo!=null && Number(opNo)===g.op) sc+=0.25;        // üretimin op'u da tutuyorsa
+    if(defHid!=null && g.hid===defHid) sc+=0.10;           // varsayılan rota önce
+    if(opNo!=null && Number(opNo)===g.op) sc+=0.05;        // üretimin op'u da tutuyorsa
     if(sc>bestS){ bestS=sc; best=g; } });
   return best;
 }
@@ -3396,7 +3442,7 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
       g.forEach(pr=>{
         let bi=null,bs=0;
         adimlar.forEach(st=>{ const sc2=(pr.machine_code&&st.mc&&pr.machine_code===st.mc)?99:equipScore(pr.machine_name||pr.machine_code,st.mn);
-          const bonus=(Number(pr.op_no)===st.op?0.5:0);
+          const bonus=(Number(pr.op_no)===st.op?0.05:0);
           if(sc2+bonus>bs){ bs=sc2+bonus; bi=st; } });
         if(bi&&bs>0) kapsanan.add(bi.op+'|'+(bi.mc||bi.mn));
       });
