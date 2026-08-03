@@ -3255,6 +3255,8 @@ async function openBulkAuto(){
       m.append(el('div',{style:'font-size:11px;color:var(--muted);margin:0 0 8px'},'⚙ Otomatik: üretimin makinesi LeanSys rotasında hangi adımsa plan oradan seçilir (rota yoksa otomatik çekilir). Rotada olmayan makinelerde (ör. ambalajlama) doğru plan operasyonunu buradan seç — seçimin hatırlanır.'));
     }
   }
+  const virtCb=el('input',{type:'checkbox'});
+  m.append(el('label',{style:'display:flex;align-items:center;gap:6px;margin:0 0 6px;cursor:pointer'},virtCb,'Planda olup ÜRETİM KAYDI OLMAYAN operasyonlar için SANAL üretim ekle (aynı iş emri/miktar/tarih; makine adı “(sanal)” işaretli)'));
   const allOpsCb=el('input',{type:'checkbox'});
   m.append(el('label',{style:'display:flex;align-items:center;gap:6px;margin:0 0 6px;cursor:pointer'},allOpsCb,'Eşleme de yoksa TÜM plan maddelerini kullan (⚠ ambalajlamaya kesim ölçüsü de yazılır — normalde KAPALI bırak)'));
   const fillEmptyCb=el('input',{type:'checkbox'}); fillEmptyCb.checked=true;
@@ -3266,12 +3268,12 @@ async function openBulkAuto(){
     const scope=lx?prods.filter(p=>lx.re.test(locOf(p))):prods;      // lokasyon seçiliyse kapsamı daralt
     if(!scope.length){ toast(lx?(lx.label+' lokasyonunda planı olan üretim yok.'):'Kapsamda üretim yok.','err'); return; }
     const opMap={}; Object.entries(opSelects).forEach(([k,sel])=>{ if(sel.value)opMap[k]=Number(sel.value); });
-    runBulkAuto(scope,plan,cyc,regenCb.checked,fillEmptyCb.checked,status,go,who,allOpsCb.checked,opMap);
+    runBulkAuto(scope,plan,cyc,regenCb.checked,fillEmptyCb.checked,status,go,who,allOpsCb.checked,opMap,virtCb.checked);
   }},'🎲 Üret');
   m.append(el('div',{},go),status);
   bg.append(m); root.innerHTML=''; root.append(bg);   // yükleniyor placeholder'ını temizle
 }
-async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOps,opMap){
+async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOps,opMap,addVirtual){
   // çevrim girilmediyse: mevcut başlama–bitiş sürelerine göre üret (proses dahil)
   if(!Object.values(cyc).some(v=>v>0)){
     if(!confirm('Hiç çevrim süresi girmedin.\n\nMevcut başlama–bitiş sürelerine göre eksik kontroller (Seri Başı / Proses / Son) üretilsin mi?\n(Bitmemiş = DEVAM EDEN üretimlerde kontrol ÜRETİLMEZ; üretim bitince tekrar çalıştır.)')) { return; }
@@ -3347,6 +3349,49 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
   const pgSet=(i,extra)=>{ pgBar.value=String(i); const pc=Math.round(i*100/(prods.length||1));
     pgTxt.textContent='⏳ %'+pc+' · '+i+'/'+prods.length+' üretim'+(extra||''); };
   pgSet(0,'');
+  // ➕ SANAL ÜRETİM ADIMLARI: planda tanımlı ama o iş emrinde üretim kaydı olmayan operasyonlar
+  // (ör. laminasyon/el işçiliği) aynı iş emri-miktar-tarihle sanal üretim olarak eklenir; kontrolleri normal akışta üretilir.
+  let virtN=0;
+  if(addVirtual){
+    const mkKod={};   // stok|ekipman → makine kodu (rota adımlarından)
+    Object.entries(rotaSteps).forEach(([k,arr])=>{ const [sc,mc]=k.split('|'); (arr||[]).forEach(()=>{ mkKod[sc+'|'+mc]=mc; }); });
+    const yeni=[];
+    const gruplar={};   // stok|iş emri → üretimler
+    prods.forEach(p=>{ const g=(p.stock_code||'')+'|'+(p.work_order||''); (gruplar[g]=gruplar[g]||[]).push(p); });
+    Object.values(gruplar).forEach(g=>{
+      const base=g[0], sc=base.stock_code, def=defRota[sc];
+      const rows=(rawRows[sc]||[]).filter(x=>def==null||x.operasyon_id===def);      // varsayılan rota adımları
+      const adim={}; rows.forEach(x=>{ if(x.op_no==null)return; const k=Number(x.op_no);
+        adim[k]=adim[k]||{op:k,equip:x.uretim_ekipman||''}; if(!adim[k].equip&&x.uretim_ekipman)adim[k].equip=x.uretim_ekipman; });
+      // Kapsanan adımlar: her GERÇEK üretim, ekipmanına EN ÇOK benzeyen adımı kapsar (sabit eşik yerine en-yakın)
+      const kapsanan=new Set();
+      g.forEach(pr=>{ let bi=null,bs=0;
+        Object.values(adim).forEach(st=>{ if(!st.equip)return; const sc2=equipScore(pr.machine_name||pr.machine_code,st.equip);
+          if(sc2>bs){ bs=sc2; bi=st; } });
+        if(bi) kapsanan.add(bi.op+'|'+bi.equip); });
+      Object.values(adim).forEach(st=>{
+        if(!st.equip) return;
+        if(kapsanan.has(st.op+'|'+st.equip)) return;                                 // bu adımda zaten üretim var
+        const mkod=Object.keys(mkKod).filter(k=>k.startsWith(sc+'|')).map(k=>k.split('|')[1])
+          .find(code=>{ const nm=(PRODS.find(x=>x.machine_code===code)||{}).machine_name||code; return equipScore(nm,st.equip)>=2; }) || null;
+        yeni.push({ prod_date:base.prod_date||null, shift:base.shift??null, op_no:st.op,
+          machine_code:mkod, machine_name:st.equip+' (sanal)',
+          stock_code:sc, stock_name:base.stock_name||null, customer:base.customer||null,
+          work_order:base.work_order||null, quantity:base.quantity??null, unit:base.unit||null,
+          start_time:base.start_time||null, end_time:base.end_time||null, operator:base.operator||null,
+          fingerprint:(mkod||st.equip)+'|'+(base.start_time||'')+'|'+sc+'|'+st.op+'|V' });
+      });
+    });
+    if(yeni.length){
+      if(confirm(yeni.length + " SANAL uretim adimi eklenecek (planda var, uretim kaydi yok). Makine adi '(sanal)' isaretli olacak; istersen sonra silebilirsin. Devam?")){
+        for(let i=0;i<yeni.length;i+=200){
+          const {data:ins,error}=await sb.from('productions').upsert(yeni.slice(i,i+200),{onConflict:'fingerprint'}).select();
+          if(error){ console.warn(error.message); continue; }
+          (ins||[]).forEach(x=>{ prods.push(x); PRODS.push(x); virtN++; });
+        }
+      }
+    }
+  }
   let made=0,prodN=0,skipped=0,cleaned=0,recalcN=0,doneN=0; const noOp={};   // op eşleşmeyen üretimler: 'kod op N' -> adet
   for(const p of prods){
     pgSet(++doneN,' · '+made+' kayıt');
@@ -3419,7 +3464,7 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
   }
   const noOpTxt=Object.keys(noOp).length?(' ⚠ '+Object.values(noOp).reduce((a,b)=>a+b,0)+' üretim atlandı: '+Object.entries(noOp).slice(0,6).map(([k,v])=>k+' ×'+v).join(', ')+(Object.keys(noOp).length>6?' …':'')+' — makinesi LeanSys rotasında bulunamadı ve plan bu op no’yu içermiyor. (Operasyon Kartları’nı çek ya da elle eşleme yaz.)'):'';
   pgBar.value=String(prods.length); pgBar.style.accentColor='#16a34a';
-  pgTxt.textContent=`Bitti ✓ ${prodN} üretim, ${made} yeni kontrol kaydı. ${recalcN?`${recalcN} bitiş çevrime göre hesaplandı. `:''}${skipped} atlandı/zaten tamdı.${cleaned?` ${cleaned} kısa üretimde fazla proses temizlendi.`:''}`+noOpTxt;
+  pgTxt.textContent=`Bitti ✓ ${prodN} üretim, ${made} yeni kontrol kaydı.${virtN?` ${virtN} sanal üretim adımı eklendi.`:''} ${recalcN?`${recalcN} bitiş çevrime göre hesaplandı. `:''}${skipped} atlandı/zaten tamdı.${cleaned?` ${cleaned} kısa üretimde fazla proses temizlendi.`:''}`+noOpTxt;
   toast(`${made} kontrol kaydı oluşturuldu (${prodN} üretim).${recalcN?` ${recalcN} üretimin bitişi çevrime göre yeniden yazıldı.`:''}`,'ok');
   go.disabled=false; loadControlCounts && loadControlCounts();
   renderUretimler();   // üretim listesini yenile → hesaplanan bitişler hemen görünür
