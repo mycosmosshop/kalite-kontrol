@@ -3120,12 +3120,17 @@ async function openBulkAuto(){
     try{
       const scs=[...new Set(Object.values(combos).map(c=>c.stock_code).filter(Boolean))];
       const map={}, byStock={};
-      for(let i=0;i<scs.length;i+=100){
-        const {data:oc}=await sb.from('operasyon_kartlari').select('stok_kodu,makine_kodu,makine_adi,std_zaman,op_no').in('stok_kodu',scs.slice(i,i+100)).order('op_no');
+      const _read=async codes=>{ for(let i=0;i<codes.length;i+=100){
+        const {data:oc}=await sb.from('operasyon_kartlari').select('stok_kodu,makine_kodu,makine_adi,std_zaman,op_no').in('stok_kodu',codes.slice(i,i+100)).order('op_no');
         (oc||[]).forEach(o=>{ const v=Number(o.std_zaman); if(!(v>0)||!o.makine_kodu)return;
           const k=(o.stok_kodu||'')+'|'+o.makine_kodu; if(map[k]==null)map[k]=v;        // aynı makine birden çok adımdaysa en küçük op_no'nunki
-          (byStock[o.stok_kodu]=byStock[o.stok_kodu]||[]).push({mn:o.makine_adi||'',dk:v}); });
-      }
+          (byStock[o.stok_kodu]=byStock[o.stok_kodu]||[]).push({mn:o.makine_adi||'',dk:v}); }); } };
+      await _read(scs);
+      // operasyon kartı yoksa LeanSys'ten OTOMATİK çek (ajan) ve tekrar oku — kullanıcı ayrıca rota çekmek zorunda kalmasın
+      const eksikSc=scs.filter(c=>!byStock[c]);
+      if(eksikSc.length){ btn.textContent='⏳ Rota çekiliyor…';
+        try{ await fetch('http://127.0.0.1:17777/refreshop?codes='+encodeURIComponent(eksikSc.slice(0,80).join(',')),{mode:'cors'}); await _read(eksikSc); }catch(e){}
+        btn.textContent='⏳ Çekiliyor…'; }
       // rotada BULUNMAYAN makine (ör. AMBALAJLAMA) → makine ADI benzerliğiyle karşılık gelen adımın süresi
       const nameMatch=(sc,mn)=>{ const list=byStock[sc]||[]; if(!list.length)return null;
         const ws=[...new Set(deTr(mn||'').split(/[^a-z0-9]+/).filter(x=>x.length>=6).map(x=>x.slice(0,6)))];
@@ -3139,7 +3144,7 @@ async function openBulkAuto(){
         cyc[c.key]=sn; if(cycInputs[c.key])cycInputs[c.key].value=sn;
         try{ const st=JSON.parse(localStorage.getItem('kk_cyc')||'{}'); st[c.key]=sn; localStorage.setItem('kk_cyc',JSON.stringify(st)); }catch(_){}
         n++; });
-      toast(n?(n+' satıra LeanSys std. zamanı yazıldı (dk×60 = sn).'+(yok.length?(' '+yok.length+' makine için kayıt yok: '+[...new Set(yok)].slice(0,3).join(', ')):'')):'LeanSys operasyon kartı bulunamadı (önce rota çekilmeli).', n?'ok':'err');
+      toast(n?(n+' satıra LeanSys std. zamanı yazıldı (dk×60 = sn).'+(yok.length?(' '+yok.length+' makine için kayıt yok: '+[...new Set(yok)].slice(0,3).join(', ')):'')):'LeanSys operasyon kartında std. zaman bulunamadı (rota çekildi ama bu kod/makine için süre tanımsız).', n?'ok':'err');
     }catch(e){ toast('Std. zaman çekilemedi: '+e.message,'err'); }
     btn.disabled=false; btn.textContent=_t;
   }
