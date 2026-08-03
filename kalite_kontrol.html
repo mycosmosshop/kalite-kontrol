@@ -3012,11 +3012,16 @@ function genSamples(it,n,override,by){
 function opByMachineName(items,machineName){
   const ws=[...new Set(deTr(machineName||'').split(/[^a-z0-9]+/).filter(x=>x.length>=6).map(x=>x.slice(0,6)))];
   if(!ws.length) return null;
-  const score={};
-  (items||[]).forEach(it=>{ const o=Number(it.op_no)||0; if(!o)return; const t=deTr(it.measure_name||'')+' '+deTr(it.nitel_hedef||'');
-    ws.forEach(w=>{ if(t.includes(w)) score[o]=(score[o]||0)+1; }); });
-  const best=Object.entries(score).sort((a,b)=>b[1]-a[1])[0];
-  return best?Number(best[0]):null;
+  // ORAN bazlı: op'un maddelerinin ne kadarı makine adıyla örtüşüyor. (op3'te 2/8 ambalaj maddesi varken
+  // op4'te 2/2 ise AMBALAJLAMA makinesi op4'e eşleşmeli — yoksa alakasız ölçümler de kayda giriyor.)
+  const tot={},hit={};
+  (items||[]).forEach(it=>{ const o=Number(it.op_no)||0; if(!o)return; tot[o]=(tot[o]||0)+1;
+    const t=deTr(it.measure_name||'')+' '+deTr(it.nitel_hedef||'');
+    if(ws.some(w=>t.includes(w))) hit[o]=(hit[o]||0)+1; });
+  let best=null,bestR=-1,bestH=0;
+  Object.keys(hit).forEach(k=>{ const o=Number(k), r=hit[o]/(tot[o]||1);
+    if(r>bestR || (r===bestR && hit[o]>bestH)){ bestR=r; bestH=hit[o]; best=o; } });
+  return best;
 }
 // Üretim için OTOMATİK plan operasyonu: rota adımı → (planda karşılığı olanlar) → makine adı benzerliği. null = üretimin kendi op'u kullanılır.
 function autoPlanOp(p,planForStock,opsByMachine){
