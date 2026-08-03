@@ -3127,8 +3127,14 @@ async function openBulkAuto(){
   m.append(el('div',{style:'font-size:11px;color:var(--muted);margin:0 0 10px'},'Lokasyon seçersen yalnız o lokasyonun üretimleri işlenir ve kayıtlara bu kaliteciler yazılır. Birden çok isim yazarsan üretimlere dağıtılır. Boş bırakırsan makineye göre otomatik atanır.'));
   const regenCb=el('input',{type:'checkbox'});
   m.append(el('label',{style:'display:flex;align-items:center;gap:6px;margin:6px 0 6px;cursor:pointer'},regenCb,'Var olan kayıtları silip yeniden üret (kapalıysa sadece eksik aşamalar tamamlanır)'));
-  const allOpsCb=el('input',{type:'checkbox'}); allOpsCb.checked=true;
-  m.append(el('label',{style:'display:flex;align-items:center;gap:6px;margin:0 0 6px;cursor:pointer'},allOpsCb,'Üretimin operasyonu planda tanımlı değilse TÜM plan maddelerini kullan (kapalıysa o üretimler atlanır)'));
+  // OP EŞLEME: LeanSys planındaki op numaraları rota op numaralarından farklı olabilir (ör. plan op4 = ambalaj, üretim op8 = ambalajlama)
+  let savedMap=''; try{ savedMap=localStorage.getItem('kk_opmap')||''; }catch(e){}
+  const opMapInp=el('input',{class:'inp',placeholder:'örn: 5>2, 8>4, 6>4, 7>3',value:savedMap,
+    oninput:e=>{ try{ localStorage.setItem('kk_opmap',e.target.value); }catch(_){} }});
+  m.append(el('div',{class:'field',style:'margin:2px 0 2px'},el('label',{class:'lab'},'Operasyon eşleme (üretim op ▸ plan op)'),opMapInp));
+  m.append(el('div',{style:'font-size:11px;color:var(--muted);margin:0 0 8px'},'Üretimin operasyon no’su kontrol planında yoksa hangi plan operasyonunun maddeleriyle kontrol üretileceğini yaz. Boş bırakılırsa eşleşmeyen üretimler atlanır.'));
+  const allOpsCb=el('input',{type:'checkbox'});
+  m.append(el('label',{style:'display:flex;align-items:center;gap:6px;margin:0 0 6px;cursor:pointer'},allOpsCb,'Eşleme de yoksa TÜM plan maddelerini kullan (⚠ ambalajlamaya kesim ölçüsü de yazılır — normalde KAPALI bırak)'));
   const fillEmptyCb=el('input',{type:'checkbox'}); fillEmptyCb.checked=true;
   m.append(el('label',{style:'display:flex;align-items:center;gap:6px;margin:0 0 12px;cursor:pointer'},fillEmptyCb,'Boş (ölçüm girilmemiş) mevcut kayıtları da otomatik doldur'));
   const status=el('div',{style:'margin-top:6px;color:var(--muted);font-size:13px'});
@@ -3137,12 +3143,13 @@ async function openBulkAuto(){
     const lx=QC_BY_LOC.find(y=>y.label===locSel.value);
     const scope=lx?prods.filter(p=>lx.re.test(locOf(p))):prods;      // lokasyon seçiliyse kapsamı daralt
     if(!scope.length){ toast(lx?(lx.label+' lokasyonunda planı olan üretim yok.'):'Kapsamda üretim yok.','err'); return; }
-    runBulkAuto(scope,plan,cyc,regenCb.checked,fillEmptyCb.checked,status,go,who,allOpsCb.checked);
+    const opMap={}; (opMapInp.value||'').split(',').forEach(t=>{ const mm=t.match(/(-?\d+)\s*(?:>|→|:|-|=)\s*(-?\d+)/); if(mm)opMap[mm[1]]=Number(mm[2]); });
+    runBulkAuto(scope,plan,cyc,regenCb.checked,fillEmptyCb.checked,status,go,who,allOpsCb.checked,opMap);
   }},'🎲 Üret');
   m.append(el('div',{},go),status);
   bg.append(m); root.innerHTML=''; root.append(bg);   // yükleniyor placeholder'ını temizle
 }
-async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOps){
+async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOps,opMap){
   // çevrim girilmediyse: mevcut başlama–bitiş sürelerine göre üret (proses dahil)
   if(!Object.values(cyc).some(v=>v>0)){
     if(!confirm('Hiç çevrim süresi girmedin.\n\nMevcut başlama–bitiş sürelerine göre eksik kontroller (Seri Başı / Proses / Son) üretilsin mi?\n(Bitmemiş = DEVAM EDEN üretimlerde kontrol ÜRETİLMEZ; üretim bitince tekrar çalıştır.)')) { return; }
@@ -3188,7 +3195,8 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
     if(recomputed && !regen){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); recMap[p.id]={}; }
     if(regen){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); recMap[p.id]={}; }
     const cur=have[p.id]||new Set();
-    const items=opItemsFor(plan.filter(x=>x.stock_code===p.stock_code),p.op_no,useAllOps);
+    const _op=(opMap&&opMap[String(p.op_no)]!=null)?opMap[String(p.op_no)]:p.op_no;   // üretim op'u → plan op'u (eşleme varsa)
+    const items=opItemsFor(plan.filter(x=>x.stock_code===p.stock_code),_op,useAllOps);
     if(!items.length){ const k=(p.stock_code||'?')+' op'+(p.op_no??'-'); noOp[k]=(noOp[k]||0)+1; skipped++; continue; }   // planda bu operasyon yok → sessiz atlama YERİNE raporla
     // proses sıklığı: proses maddelerinin EN KISA pozitif örnekleme sıklığı (aylık vb. uzun değerlere takılmasın); en çok 1 günle sınırla
     const freq=prosesCycleFreq(stageItems(items,'proses'));
