@@ -292,7 +292,7 @@
     <button data-tab="urunagaci">🌳 Ürün Ağaçları</button>
     <button data-tab="izleme">🔎 İzlenebilirlik</button>
     <button data-tab="plan">📐 Kontrol Planı</button>
-    <button data-tab="istatistik">📊 İstatistik</button>
+    <button data-tab="istatistik">📊 İstatistik (SPC)</button>
     <button data-tab="dashboard" id="dashTab">📈 Dashboard</button>
     <button data-tab="ncr" id="ncrTab">🚫 Uygunsuzluk</button>
     <button data-tab="eightd" id="eightdTab">🔧 8D</button>
@@ -5588,7 +5588,11 @@ async function renderIstatistik(){
   ));
   fcard.append(el('p',{style:'color:var(--muted);font-size:13px;margin:0 0 14px'},'Ölçüm sonuçlarını kontrol grafiği, histogram ve yeterlilik indeksleriyle (Cp, Cpk, Pp, Ppk) takip et. Limitler kontrol planından (alt/üst limit, hedef) alınır. 💡 Grafik noktalarının üzerine gelince tarih ve değer görünür.'));
   fcard.append(el('div',{class:'row',style:'align-items:flex-end;gap:10px'},
-    mkSel('Stok Kodu',STAT_FILT.stock,stocks.map(s=>[s,s]),v=>{STAT_FILT.stock=v;STAT_FILT.measure='';STAT_FILT.machine='';reload();}),
+    (()=>{ const dl=el('datalist',{id:'statStokDL'}); stocks.forEach(k=>dl.append(el('option',{value:k})));
+      const inp=el('input',{class:'inp',list:'statStokDL',placeholder:'kod yaz/ara',value:STAT_FILT.stock||'',
+        onchange:e=>{ const v=(e.target.value||'').trim(); if(!v||!stocks.includes(v)){ e.target.value=STAT_FILT.stock||''; return; }
+          STAT_FILT.stock=v; STAT_FILT.measure=''; STAT_FILT.machine=''; reload(); }});
+      return el('div',{class:'field',style:'flex:0;min-width:170px'},el('label',{class:'lab'},'Stok Kodu'),inp,dl); })(),
     mkSel('Ölçülecek Değer',STAT_FILT.measure,measures.length?measures.map(m=>[m,measLabel(m)]):[['','— sayısal ölçüm yok —']],v=>{STAT_FILT.measure=v;reload();},true),
     mkSel('Aşama',STAT_FILT.stage,[['','Tümü'],['seri_basi','Seri Başı'],['proses','Proses'],['son','Son Kontrol'],['giris','Giriş Kalite']],v=>{STAT_FILT.stage=v;reload();}),
     mkSel('Makine',STAT_FILT.machine,[['','Tümü'],...machines.map(m=>[m,m])],v=>{STAT_FILT.machine=v;reload();}),
