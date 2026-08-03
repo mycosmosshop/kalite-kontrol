@@ -3410,14 +3410,16 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
           fingerprint:(mkod||st.equip)+'|'+(base.start_time||'')+'|'+sc+'|'+st.op+'|V' });
       });
     });
-    if(yeni.length){
-      if(confirm(yeni.length + " SANAL uretim adimi eklenecek (planda var, uretim kaydi yok). Makine adi '(sanal)' isaretli olacak; istersen sonra silebilirsin. Devam?")){
-        for(let i=0;i<yeni.length;i+=200){
-          const {data:ins,error}=await sb.from('productions').upsert(yeni.slice(i,i+200),{onConflict:'fingerprint'}).select();
-          if(error){ console.warn(error.message); continue; }
-          (ins||[]).forEach(x=>{ prods.push(x); PRODS.push(x); virtN++; });
-        }
+    if(!yeni.length){ toast('Sanal adım gerekmedi: plandaki tüm operasyonların üretim kaydı zaten var.','ok'); }
+    else if(confirm(yeni.length + " adet SANAL uretim adimi eklenecek (planda var, uretim kaydi yok). Sadece yoneticiye ◇ isareti ile gorunur. Devam?")){
+      let vErr='';
+      for(let i=0;i<yeni.length;i+=200){
+        const {data:ins,error}=await sb.from('productions').upsert(yeni.slice(i,i+200),{onConflict:'fingerprint'}).select();
+        if(error){ vErr=error.message||String(error); console.warn('sanal üretim:',error); continue; }
+        (ins||[]).forEach(x=>{ prods.push(x); PRODS.push(x); virtN++; });
       }
+      if(vErr) toast('Sanal üretim eklenemedi: '+esc(vErr),'err');
+      else toast(virtN+' sanal üretim adımı eklendi.','ok');
     }
   }
   let made=0,prodN=0,skipped=0,cleaned=0,recalcN=0,doneN=0; const noOp={};   // op eşleşmeyen üretimler: 'kod op N' -> adet
