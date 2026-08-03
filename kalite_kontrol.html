@@ -3132,7 +3132,7 @@ async function openBulkAuto(){
   const opMapInp=el('input',{class:'inp',placeholder:'örn: 5>2, 8>4, 6>4, 7>3',value:savedMap,
     oninput:e=>{ try{ localStorage.setItem('kk_opmap',e.target.value); }catch(_){} }});
   m.append(el('div',{class:'field',style:'margin:2px 0 2px'},el('label',{class:'lab'},'Operasyon eşleme (üretim op ▸ plan op)'),opMapInp));
-  m.append(el('div',{style:'font-size:11px;color:var(--muted);margin:0 0 8px'},'Üretimin operasyon no’su kontrol planında yoksa hangi plan operasyonunun maddeleriyle kontrol üretileceğini yaz. Boş bırakılırsa eşleşmeyen üretimler atlanır.'));
+  m.append(el('div',{style:'font-size:11px;color:var(--muted);margin:0 0 8px'},'Genelde BOŞ bırak: üretimin makinesi LeanSys rotasında hangi operasyon adımıysa plan otomatik oradan seçilir (eski op no’lu üretimler dahil). Yalnız rotada olmayan makineler için elle eşleme yaz.'));
   const allOpsCb=el('input',{type:'checkbox'});
   m.append(el('label',{style:'display:flex;align-items:center;gap:6px;margin:0 0 6px;cursor:pointer'},allOpsCb,'Eşleme de yoksa TÜM plan maddelerini kullan (⚠ ambalajlamaya kesim ölçüsü de yazılır — normalde KAPALI bırak)'));
   const fillEmptyCb=el('input',{type:'checkbox'}); fillEmptyCb.checked=true;
@@ -3166,6 +3166,14 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
   const priorMap={};
   if(stocks.length){ const {data:hist}=await sb.from('control_records').select('stock_code,checked_at,vals').in('stock_code',stocks).order('checked_at',{ascending:true});
     (hist||[]).forEach(rc=>{ (rc.vals||[]).forEach(v=>{ if(/yanma/.test(deTr(v.measure_name||''))){ const k=rc.stock_code+'|'+v.measure_name; if(!priorMap[k]&&Array.isArray(v.samples)&&v.samples.length) priorMap[k]=v.samples; } }); }); }
+  // ROTA EŞLEMESİ (otomatik): üretimin MAKİNESİ, LeanSys rotasında hangi op adımıysa plan o op'tan seçilir.
+  // Geçmiş üretimler eski rota no'suyla kayıtlı olabilir (ör. KP5 op5) — makineden güncel op (op2) bulunur.
+  const opsByMachine={};
+  { const _codes=[...new Set(prods.map(p=>p.stock_code).filter(Boolean))];
+    for(let i=0;i<_codes.length;i+=100){
+      const {data:oc}=await sb.from('operasyon_kartlari').select('stok_kodu,op_no,makine_kodu').in('stok_kodu',_codes.slice(i,i+100));
+      (oc||[]).forEach(o=>{ if(!o.makine_kodu||o.op_no==null)return; const k=(o.stok_kodu||'')+'|'+o.makine_kodu;
+        (opsByMachine[k]=opsByMachine[k]||[]).push(Number(o.op_no)); }); } }
   let made=0,prodN=0,skipped=0,cleaned=0,recalcN=0; const noOp={};   // op eşleşmeyen üretimler: 'kod op N' -> adet
   for(const p of prods){
     if(!p.start_time){skipped++;continue;}   // başlama şart
@@ -3195,7 +3203,9 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
     if(recomputed && !regen){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); recMap[p.id]={}; }
     if(regen){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); recMap[p.id]={}; }
     const cur=have[p.id]||new Set();
-    const _op=(opMap&&opMap[String(p.op_no)]!=null)?opMap[String(p.op_no)]:p.op_no;   // üretim op'u → plan op'u (eşleme varsa)
+    const _cand=opsByMachine[(p.stock_code||'')+'|'+(p.machine_code||'')];            // makinenin rotadaki op adım(lar)ı
+    const _auto=_cand&&_cand.length ? (_cand.includes(Number(p.op_no))?Number(p.op_no):_cand[0]) : null;
+    const _op=(opMap&&opMap[String(p.op_no)]!=null)?opMap[String(p.op_no)]:(_auto!=null?_auto:p.op_no);   // elle eşleme > makineden otomatik > üretimin op'u
     const items=opItemsFor(plan.filter(x=>x.stock_code===p.stock_code),_op,useAllOps);
     if(!items.length){ const k=(p.stock_code||'?')+' op'+(p.op_no??'-'); noOp[k]=(noOp[k]||0)+1; skipped++; continue; }   // planda bu operasyon yok → sessiz atlama YERİNE raporla
     // proses sıklığı: proses maddelerinin EN KISA pozitif örnekleme sıklığı (aylık vb. uzun değerlere takılmasın); en çok 1 günle sınırla
