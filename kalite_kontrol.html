@@ -3274,8 +3274,17 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
       await fetch('http://127.0.0.1:17777/refreshop?codes='+encodeURIComponent(eksik.slice(0,80).join(',')),{mode:'cors'});
       await _loadRota(eksik);
     }catch(e){ /* ajan kapalı → mevcut veriyle devam */ } } }
-  let made=0,prodN=0,skipped=0,cleaned=0,recalcN=0; const noOp={};   // op eşleşmeyen üretimler: 'kod op N' -> adet
+  // ⏳ İLERLEME ÇUBUĞU (native <progress>) — kaç üretim işlendi, canlı görünür
+  status.innerHTML='';
+  const pgBar=el('progress',{max:String(prods.length||1),value:'0',style:'width:100%;height:16px;display:block'});
+  const pgTxt=el('div',{style:'font-size:12.5px;font-weight:600;color:var(--text);margin-top:4px'});
+  status.append(pgBar,pgTxt);
+  const pgSet=(i,extra)=>{ pgBar.value=String(i); const pc=Math.round(i*100/(prods.length||1));
+    pgTxt.textContent='⏳ %'+pc+' · '+i+'/'+prods.length+' üretim'+(extra||''); };
+  pgSet(0,'');
+  let made=0,prodN=0,skipped=0,cleaned=0,recalcN=0,doneN=0; const noOp={};   // op eşleşmeyen üretimler: 'kod op N' -> adet
   for(const p of prods){
+    pgSet(++doneN,' · '+made+' kayıt');
     if(!p.start_time){skipped++;continue;}   // başlama şart
     const cs=cyc[(p.machine_code||'?')+'||'+(p.stock_code||'?')], start=new Date(p.start_time);
     const _qty=Number(p.quantity);
@@ -3335,10 +3344,11 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
     if(recs.length){ const {error}=await sb.from('control_records').insert(recs); if(error){console.warn(error.message);} else {made+=recs.length;did=true;} }
     for(const u of updates){ const {error}=await sb.from('control_records').update({vals:u.vals,overall_result:u.overall_result}).eq('id',u.id); if(!error){made++;did=true;} }
     if(did)prodN++; else skipped++;
-    status.textContent=`İşleniyor… ${prodN} üretim, ${made} kayıt`;
+    pgSet(doneN,' · '+made+' kayıt');
   }
   const noOpTxt=Object.keys(noOp).length?(' ⚠ '+Object.values(noOp).reduce((a,b)=>a+b,0)+' üretim atlandı: '+Object.entries(noOp).slice(0,6).map(([k,v])=>k+' ×'+v).join(', ')+(Object.keys(noOp).length>6?' …':'')+' — makinesi LeanSys rotasında bulunamadı ve plan bu op no’yu içermiyor. (Operasyon Kartları’nı çek ya da elle eşleme yaz.)'):'';
-  status.textContent=`Bitti ✓ ${prodN} üretim, ${made} yeni kontrol kaydı. ${recalcN?`${recalcN} bitiş çevrime göre hesaplandı. `:''}${skipped} atlandı/zaten tamdı.${cleaned?` ${cleaned} kısa üretimde fazla proses temizlendi.`:''}`+noOpTxt;
+  pgBar.value=String(prods.length); pgBar.style.accentColor='#16a34a';
+  pgTxt.textContent=`Bitti ✓ ${prodN} üretim, ${made} yeni kontrol kaydı. ${recalcN?`${recalcN} bitiş çevrime göre hesaplandı. `:''}${skipped} atlandı/zaten tamdı.${cleaned?` ${cleaned} kısa üretimde fazla proses temizlendi.`:''}`+noOpTxt;
   toast(`${made} kontrol kaydı oluşturuldu (${prodN} üretim).${recalcN?` ${recalcN} üretimin bitişi çevrime göre yeniden yazıldı.`:''}`,'ok');
   go.disabled=false; loadControlCounts && loadControlCounts();
   renderUretimler();   // üretim listesini yenile → hesaplanan bitişler hemen görünür
