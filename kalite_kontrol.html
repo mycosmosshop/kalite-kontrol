@@ -1078,14 +1078,24 @@ async function openMalKabulAuto(){
   m.append(el('h3',{},'🎲 Mal Kabul — Otomatik Giriş Kontrolü'));
   m.append(el('p',{class:'meta',html:`Listede görünen <b>${withPlan.length}</b> mal kabul kaydına, stoğun <b>giriş kalite planına</b> göre otomatik kontrol üretilir (kontrol saati irsaliye gününde rastgele iş saati; yanma vb. değerler ilk yapılan kayıttan taşınır). Zaten giriş kontrolü olan kayıtlar atlanır.`}));
   if(noPlanStocks.length) m.append(el('div',{class:'msg err',style:'margin:0 0 10px',html:`⚠ Giriş planı OLMAYAN stoklar atlanır: <b>${noPlanStocks.map(esc).join(', ')}</b>`}));
+  // LOKASYON + KALİTECİ (mal kabulde makine yok → lokasyon yalnız kaliteciyi belirler, kapsamı daraltmaz)
+  const locSel=el('select',{class:'inp'});
+  locSel.append(el('option',{value:''},'Varsayılan ('+AUTO_MEASURER+')'));
+  QC_BY_LOC.forEach(x=>locSel.append(el('option',{value:x.label},x.label)));
+  const qcInp=el('input',{class:'inp',placeholder:'Kaliteci ad(lar)ı — virgülle ayır',value:''});
+  locSel.onchange=()=>{ const x=QC_BY_LOC.find(y=>y.label===locSel.value); qcInp.value=x?x.people.join(', '):''; };
+  m.append(el('div',{class:'row',style:'margin:4px 0 2px'},
+    el('div',{class:'field',style:'flex:0;min-width:190px'},el('label',{class:'lab'},'Lokasyon'),locSel),
+    el('div',{class:'field grow'},el('label',{class:'lab'},'Kaliteci(ler)'),qcInp)));
+  m.append(el('div',{style:'font-size:11px;color:var(--muted);margin:0 0 10px'},'Seçilen kaliteci(ler) kayıtlara ölçümcü olarak yazılır; birden çok isim mal kabul satırlarına dağıtılır.'));
   const regenCb=el('input',{type:'checkbox'});
   m.append(el('label',{style:'display:flex;align-items:center;gap:6px;margin:6px 0 12px;cursor:pointer'},regenCb,'Var olan giriş kontrolünü silip yeniden üret'));
   const status=el('div',{style:'margin-top:6px;color:var(--muted);font-size:13px'});
-  const go=el('button',{class:'btn',onclick:()=>runBulkAutoGiris(withPlan,plan,regenCb.checked,status,go)},'🎲 Üret');
+  const go=el('button',{class:'btn',onclick:()=>runBulkAutoGiris(withPlan,plan,regenCb.checked,status,go,qcInp.value.split(',').map(s=>s.trim()).filter(Boolean))},'🎲 Üret');
   m.append(el('div',{},go),status);
   bg.append(m); root.append(bg);
 }
-async function runBulkAutoGiris(rows,plan,regen,status,go){
+async function runBulkAutoGiris(rows,plan,regen,status,go,who){
   go.disabled=true;
   const recIds=rows.map(r=>r.rec_id).filter(x=>x!=null);
   const have=new Set();
@@ -1098,7 +1108,7 @@ async function runBulkAutoGiris(rows,plan,regen,status,go){
       if(regen){ await sb.from('control_records').delete().eq('mal_kabul_rec_id',r.rec_id); cleaned++; }
       else { skipped++; continue; }
     }
-    const rec=buildAutoGirisRec(r,items);
+    const rec=buildAutoGirisRec(r,items,who);
     if(!rec){ skipped++; continue; }
     const {error}=await sb.from('control_records').insert(rec);
     if(error){ console.warn(error.message); skipped++; } else made++;
@@ -1118,9 +1128,9 @@ function girisCheckedAt(dateStr){
   base.setHours(0,mins,Math.floor(Math.random()*60),0); return base;
 }
 // mal kabul kaydından otomatik giriş kontrol kaydı (buildAutoRec'in giriş eşdeğeri)
-function buildAutoGirisRec(mk,items){
+function buildAutoGirisRec(mk,items,who){
   if(!items.length) return null;
-  const when=girisCheckedAt(mk.tarih); const measurer=AUTO_MEASURER||'';
+  const when=girisCheckedAt(mk.tarih); const measurer=measurerFor({id:mk.rec_id},who);   // who: modalde seçilen kaliteci(ler); yoksa varsayılan
   const vals=items.map(it=>{ const n=sampleCount(it,'giris'); it._prod=mk.stok_adi||'';
     const isYanma=/yanma/.test(deTr(it.measure_name||''));
     const samples = isYanma
