@@ -1962,17 +1962,16 @@ async function renderPlan(){
           if(!pl){ dur='Planda ölçüm yok'; st='#94a3b8'; }
           else if(!r){ dur='Rotada bu adım yok'; st='#f59e0b'; }
           else if(!eqs.length){ dur='Planda ekipman boş'; st='#f59e0b'; }
-          else { const en=Math.max(...eqs.map(e=>equipScore(rmn,e)));
-            if(en>=0.6){ dur=(eqs.length>1?'Eşleşiyor (+'+(eqs.length-1)+' ekipman daha)':'Eşleşiyor'); st='#16a34a'; }
-            else if(en>=0.3){ dur='Kısmen benzer (%'+Math.round(en*100)+')'; st='#f59e0b'; }
-            else { dur='FARKLI (%'+Math.round(en*100)+')'; st='#dc2626'; } }
+          else { const en=Math.max(...eqs.map(e=>equipScore(rmn,e)));      // aynı makine mi: evet/hayır (yazım farkı tolere edilir)
+            if(en>=0.6){ dur='✔ Eşleşiyor'+(eqs.length>1?' (+'+(eqs.length-1)+' ekipman)':''); st='#16a34a'; }
+            else { dur='✘ Eşleşmiyor'; st='#dc2626'; } }
           body.append(el('tr',{},
             el('td',{style:'white-space:nowrap;font-size:12px'},(r?r.ad:'—')+(r&&r.def?' ★':'')),
             el('td',{},String((pl||r).op)),
             el('td',{style:'font-size:12px'},rmn||'—',r&&r.mc?el('div',{style:'color:var(--muted);font-size:10.5px'},r.mc):''),
             el('td',{style:'font-size:12px'},eqs.length?eqs.join(' · '):'—'),
             el('td',{style:'font-size:11px;color:var(--muted);max-width:280px'},pl?[...pl.ol].slice(0,4).join(', ')+([...pl.ol].length>4?' …':''):'—'),
-            el('td',{style:'font-weight:600;font-size:12px;color:'+st},dur)));
+            el('td',{style:'font-weight:600;font-size:12px;color:'+st,title:(pl&&r&&eqs.length)?('ad benzerliği: %'+Math.round(Math.max(...eqs.map(e=>equipScore(rmn,e)))*100)):''},dur)));
         });
         tb.append(body); eşBox.innerHTML=''; eşBox.append(el('div',{class:'tbl-wrap'},tb));
       }catch(e){ eşBox.innerHTML='<div class="empty" style="padding:10px">Okunamadı: '+esc(e.message)+'</div>'; }
