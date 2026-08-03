@@ -3003,6 +3003,16 @@ function genSamples(it,n,override,by){
   return out;
 }
 // op + aşama filtreleri (toplu üretim için modül seviyesinde)
+// Rota yoksa: MAKİNE ADI ↔ plan ölçüm adları kelime eşlemesi (ör. "…AMBALAJLAMA…" → "Ambalaj Tipi/İçi adet" maddelerinin op'u)
+function opByMachineName(items,machineName){
+  const ws=[...new Set(deTr(machineName||'').split(/[^a-z0-9]+/).filter(x=>x.length>=6).map(x=>x.slice(0,6)))];
+  if(!ws.length) return null;
+  const score={};
+  (items||[]).forEach(it=>{ const o=Number(it.op_no)||0; if(!o)return; const t=deTr(it.measure_name||'')+' '+deTr(it.nitel_hedef||'');
+    ws.forEach(w=>{ if(t.includes(w)) score[o]=(score[o]||0)+1; }); });
+  const best=Object.entries(score).sort((a,b)=>b[1]-a[1])[0];
+  return best?Number(best[0]):null;
+}
 function opItemsFor(items,op_no,fallbackAll){
   const isGen=it=>(it.op_no==null||Number(it.op_no)===0);        // op 0 = GENEL (operasyona bağlı değil) — her op'a uygulanır
   if(op_no==null||Number(op_no)===0) return items;               // üretimin op'u yok/genel → tüm maddeler
@@ -3236,7 +3246,9 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
     if(regen){ await sb.from('control_records').delete().eq('production_id',p.id); have[p.id]=new Set(); recMap[p.id]={}; }
     const cur=have[p.id]||new Set();
     const _cand=opsByMachine[(p.stock_code||'')+'|'+(p.machine_code||'')];            // makinenin rotadaki op adım(lar)ı
-    const _auto=_cand&&_cand.length ? (_cand.includes(Number(p.op_no))?Number(p.op_no):_cand[0]) : null;
+    const _planP=plan.filter(x=>x.stock_code===p.stock_code);
+    const _auto=(_cand&&_cand.length) ? (_cand.includes(Number(p.op_no))?Number(p.op_no):_cand[0])
+              : (opItemsFor(_planP,p.op_no,false).length ? null : opByMachineName(_planP,p.machine_name||p.machine_code));   // rota yok + plan op'u da yoksa makine adından tahmin
     const _sel=opMap&&opMap[(p.stock_code||'')+'|'+(p.op_no??'')+'|'+(p.machine_code||'')];
     const _op=(_sel!=null)?_sel:(_auto!=null?_auto:p.op_no);   // seçilen eşleme > makineden otomatik (rota) > üretimin op'u
     const items=opItemsFor(plan.filter(x=>x.stock_code===p.stock_code),_op,useAllOps);
