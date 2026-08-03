@@ -3266,10 +3266,40 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
   // ROTA EŞLEMESİ (otomatik): üretimin MAKİNESİ, LeanSys rotasında hangi op adımıysa plan o op'tan seçilir.
   // Geçmiş üretimler eski rota no'suyla kayıtlı olabilir (ör. KP5 op5) — makineden güncel op (op2) bulunur.
   const opsByMachine={};
+  const rotaSteps={};   // stok|makine -> [{hid,op,def}]  (LeanSys rota adımları)
+  const defRota={};     // stok -> varsayılan rota id
+  const rawPlan={};     // stok|rota|op -> Set(ölçüm adı)  (ham kontrol planı, rota bazlı)
+  const _nm=x=>deTr(String(x||'').trim());
   const _loadRota=async codes=>{ for(let i=0;i<codes.length;i+=100){
-      const {data:oc}=await sb.from('operasyon_kartlari').select('stok_kodu,op_no,makine_kodu').in('stok_kodu',codes.slice(i,i+100));
+      const {data:oc}=await sb.from('operasyon_kartlari').select('stok_kodu,op_no,makine_kodu,header_id,varsayilan').in('stok_kodu',codes.slice(i,i+100));
       (oc||[]).forEach(o=>{ if(!o.makine_kodu||o.op_no==null)return; const k=(o.stok_kodu||'')+'|'+o.makine_kodu;
-        (opsByMachine[k]=opsByMachine[k]||[]).push(Number(o.op_no)); }); } };
+        (opsByMachine[k]=opsByMachine[k]||[]).push(Number(o.op_no));
+        (rotaSteps[k]=rotaSteps[k]||[]).push({hid:o.header_id,op:Number(o.op_no),def:o.varsayilan===true});
+        if(o.varsayilan===true && defRota[o.stok_kodu]==null) defRota[o.stok_kodu]=o.header_id; });
+      // HAM kontrol planı (rota bazlı): hangi rotanın hangi adımında hangi ölçümler yapılır
+      const {data:lp}=await sb.from('leansys_kontrol_plani').select('stok_kodu,operasyon_id,op_no,olculecek').in('stok_kodu',codes.slice(i,i+100));
+      (lp||[]).forEach(x=>{ if(x.operasyon_id==null||x.op_no==null||!x.olculecek)return;
+        const k=(x.stok_kodu||'')+'|'+x.operasyon_id+'|'+Number(x.op_no);
+        (rawPlan[k]=rawPlan[k]||new Set()).add(_nm(x.olculecek)); });
+    } };
+  // Üretimin MAKİNESİ hangi rota adımıysa, O ADIMDA ölçülen ölçüm adları (rota+ham plandan; tahmin yok).
+  // Makine rotada yoksa: varsayılan rotanın adımları içinde makine adına en çok uyan adım (oran).
+  const planNamesFor=p=>{
+    const st=(rotaSteps[(p.stock_code||'')+'|'+(p.machine_code||'')]||[]).slice();
+    const def=defRota[p.stock_code];
+    st.sort((a,b)=>((b.def?1:0)-(a.def?1:0)) || ((b.hid===def?1:0)-(a.hid===def?1:0)) || (a.op-b.op));
+    let pick=st.find(x=>Number(p.op_no)===x.op) || st[0];
+    if(pick){ const set=rawPlan[(p.stock_code||'')+'|'+pick.hid+'|'+pick.op]; if(set&&set.size) return set; }
+    // rotada yok → varsayılan (yoksa herhangi) rotanın adımlarından makine adına en uygun olan
+    const ws=[...new Set(_nm(p.machine_name||p.machine_code).split(/[^a-z0-9]+/).filter(x=>x.length>=6).map(x=>x.slice(0,6)))];
+    if(!ws.length) return null;
+    let best=null,bestR=-1;
+    Object.keys(rawPlan).forEach(k=>{ const [sc,hid]=k.split('|'); if(sc!==p.stock_code)return;
+      if(def!=null && String(hid)!==String(def)) return;                       // varsayılan rota ile sınırla
+      const set=rawPlan[k]; let hit=0; set.forEach(n=>{ if(ws.some(w=>n.includes(w)))hit++; });
+      const r=hit/set.size; if(hit>0 && r>bestR){ bestR=r; best=set; } });
+    return best;
+  };
   const _codes=[...new Set(prods.map(p=>p.stock_code).filter(Boolean))];
   await _loadRota(_codes);
   // rota verisi olmayan stoklar → LeanSys'ten OTOMATİK çek (ajan açıksa) ve tekrar oku; kapalıysa sessiz geç
@@ -3320,8 +3350,11 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
     const _planP=plan.filter(x=>x.stock_code===p.stock_code);
     const _auto=autoPlanOp(p,_planP,opsByMachine);
     const _sel=opMap&&opMap[(p.stock_code||'')+'|'+(p.op_no??'')+'|'+(p.machine_code||'')];
-    const _op=(_sel!=null)?_sel:(_auto!=null?_auto:p.op_no);   // seçilen eşleme > makineden otomatik (rota) > üretimin op'u
-    const items=opItemsFor(plan.filter(x=>x.stock_code===p.stock_code),_op,useAllOps);
+    let items;
+    if(_sel!=null){ items=opItemsFor(_planP,_sel,useAllOps); }                 // 1) kullanıcının elle seçimi
+    else { const _names=planNamesFor(p);                                        // 2) rota adımının ÖLÇÜMLERİ (deterministik)
+      items=(_names&&_names.size)?_planP.filter(it=>_names.has(_nm(it.measure_name))):[];
+      if(!items.length) items=opItemsFor(_planP,(_auto!=null?_auto:p.op_no),useAllOps); }   // 3) eski otomatik (yedek)
     if(!items.length){ const k=(p.stock_code||'?')+' op'+(p.op_no??'-'); noOp[k]=(noOp[k]||0)+1; skipped++; continue; }   // planda bu operasyon yok → sessiz atlama YERİNE raporla
     // proses sıklığı: proses maddelerinin EN KISA pozitif örnekleme sıklığı (aylık vb. uzun değerlere takılmasın); en çok 1 günle sınırla
     const freq=prosesCycleFreq(stageItems(items,'proses'));
