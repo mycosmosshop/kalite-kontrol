@@ -3127,12 +3127,36 @@ async function openBulkAuto(){
   m.append(el('div',{style:'font-size:11px;color:var(--muted);margin:0 0 10px'},'Lokasyon seçersen yalnız o lokasyonun üretimleri işlenir ve kayıtlara bu kaliteciler yazılır. Birden çok isim yazarsan üretimlere dağıtılır. Boş bırakırsan makineye göre otomatik atanır.'));
   const regenCb=el('input',{type:'checkbox'});
   m.append(el('label',{style:'display:flex;align-items:center;gap:6px;margin:6px 0 6px;cursor:pointer'},regenCb,'Var olan kayıtları silip yeniden üret (kapalıysa sadece eksik aşamalar tamamlanır)'));
-  // OP EŞLEME: LeanSys planındaki op numaraları rota op numaralarından farklı olabilir (ör. plan op4 = ambalaj, üretim op8 = ambalajlama)
-  let savedMap=''; try{ savedMap=localStorage.getItem('kk_opmap')||''; }catch(e){}
-  const opMapInp=el('input',{class:'inp',placeholder:'örn: 5>2, 8>4, 6>4, 7>3',value:savedMap,
-    oninput:e=>{ try{ localStorage.setItem('kk_opmap',e.target.value); }catch(_){} }});
-  m.append(el('div',{class:'field',style:'margin:2px 0 2px'},el('label',{class:'lab'},'Operasyon eşleme (üretim op ▸ plan op)'),opMapInp));
-  m.append(el('div',{style:'font-size:11px;color:var(--muted);margin:0 0 8px'},'Genelde BOŞ bırak: üretimin makinesi LeanSys rotasında hangi operasyon adımıysa plan otomatik oradan seçilir (eski op no’lu üretimler dahil). Yalnız rotada olmayan makineler için elle eşleme yaz.'));
+  // OP EŞLEME: kapsamdaki üretim op×makine kombinasyonları listelenir; her biri için plan operasyonu SEÇİLİR (varsayılan: otomatik)
+  let savedMap={}; try{ savedMap=JSON.parse(localStorage.getItem('kk_opmap2')||'{}'); }catch(e){}
+  const opSelects={};
+  {
+    const scStocks=new Set(prods.map(p=>p.stock_code));
+    const planOpLabel={};                                   // plan op → ölçüm adları (seçenek etiketi)
+    plan.filter(x=>scStocks.has(x.stock_code)).forEach(x=>{ const o=Number(x.op_no)||0; if(!o)return;
+      (planOpLabel[o]=planOpLabel[o]||[]).push(x.measure_name||''); });
+    const planOps=Object.keys(planOpLabel).map(Number).sort((a,b)=>a-b);
+    const prodOps={};                                       // üretim op×makine → adet
+    prods.forEach(p=>{ const k=(p.op_no??'')+'|'+(p.machine_code||'');
+      if(!prodOps[k])prodOps[k]={op:(p.op_no??''),mc:p.machine_code||'',mn:p.machine_name||'',sc:p.stock_code||'',n:0}; prodOps[k].n++; });
+    const rows=Object.values(prodOps).sort((a,b)=>String(a.op).localeCompare(String(b.op)));
+    if(planOps.length && rows.length){
+      m.append(el('div',{style:'font-weight:600;font-size:12.5px;margin:6px 0 2px'},'Operasyon eşleme (üretim ▸ plan) — varsayılan otomatik, gerekirse değiştir'));
+      rows.forEach(r=>{
+        const key=r.sc+'|'+r.op+'|'+r.mc;
+        const sel=el('select',{class:'inp',style:'max-width:280px',onchange:e=>{
+          if(e.target.value)savedMap[key]=Number(e.target.value); else delete savedMap[key];
+          try{ localStorage.setItem('kk_opmap2',JSON.stringify(savedMap)); }catch(_){} }});
+        sel.append(el('option',{value:''},'⚙ Otomatik (rotadan bul)'));
+        planOps.forEach(o=>{ const lbl='plan op'+o+' — '+[...new Set(planOpLabel[o])].slice(0,3).join(', ');
+          const opt=el('option',{value:String(o)},lbl); if(savedMap[key]===o)opt.selected=true; sel.append(opt); });
+        opSelects[key]=sel;
+        m.append(el('div',{class:'row',style:'align-items:center;margin-bottom:4px'},
+          el('div',{class:'field grow'},el('label',{class:'lab'},'op'+(r.op===''?'-':r.op)+' · '+esc(r.mn||r.mc)+' · '+r.n+' üretim'),sel)));
+      });
+      m.append(el('div',{style:'font-size:11px;color:var(--muted);margin:0 0 8px'},'⚙ Otomatik: üretimin makinesi LeanSys rotasında hangi adımsa plan oradan seçilir (rota yoksa otomatik çekilir). Rotada olmayan makinelerde (ör. ambalajlama) doğru plan operasyonunu buradan seç — seçimin hatırlanır.'));
+    }
+  }
   const allOpsCb=el('input',{type:'checkbox'});
   m.append(el('label',{style:'display:flex;align-items:center;gap:6px;margin:0 0 6px;cursor:pointer'},allOpsCb,'Eşleme de yoksa TÜM plan maddelerini kullan (⚠ ambalajlamaya kesim ölçüsü de yazılır — normalde KAPALI bırak)'));
   const fillEmptyCb=el('input',{type:'checkbox'}); fillEmptyCb.checked=true;
@@ -3143,7 +3167,7 @@ async function openBulkAuto(){
     const lx=QC_BY_LOC.find(y=>y.label===locSel.value);
     const scope=lx?prods.filter(p=>lx.re.test(locOf(p))):prods;      // lokasyon seçiliyse kapsamı daralt
     if(!scope.length){ toast(lx?(lx.label+' lokasyonunda planı olan üretim yok.'):'Kapsamda üretim yok.','err'); return; }
-    const opMap={}; (opMapInp.value||'').split(',').forEach(t=>{ const mm=t.match(/(-?\d+)\s*(?:>|→|:|-|=)\s*(-?\d+)/); if(mm)opMap[mm[1]]=Number(mm[2]); });
+    const opMap={}; Object.entries(opSelects).forEach(([k,sel])=>{ if(sel.value)opMap[k]=Number(sel.value); });
     runBulkAuto(scope,plan,cyc,regenCb.checked,fillEmptyCb.checked,status,go,who,allOpsCb.checked,opMap);
   }},'🎲 Üret');
   m.append(el('div',{},go),status);
@@ -3213,7 +3237,8 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
     const cur=have[p.id]||new Set();
     const _cand=opsByMachine[(p.stock_code||'')+'|'+(p.machine_code||'')];            // makinenin rotadaki op adım(lar)ı
     const _auto=_cand&&_cand.length ? (_cand.includes(Number(p.op_no))?Number(p.op_no):_cand[0]) : null;
-    const _op=(opMap&&opMap[String(p.op_no)]!=null)?opMap[String(p.op_no)]:(_auto!=null?_auto:p.op_no);   // elle eşleme > makineden otomatik > üretimin op'u
+    const _sel=opMap&&opMap[(p.stock_code||'')+'|'+(p.op_no??'')+'|'+(p.machine_code||'')];
+    const _op=(_sel!=null)?_sel:(_auto!=null?_auto:p.op_no);   // seçilen eşleme > makineden otomatik (rota) > üretimin op'u
     const items=opItemsFor(plan.filter(x=>x.stock_code===p.stock_code),_op,useAllOps);
     if(!items.length){ const k=(p.stock_code||'?')+' op'+(p.op_no??'-'); noOp[k]=(noOp[k]||0)+1; skipped++; continue; }   // planda bu operasyon yok → sessiz atlama YERİNE raporla
     // proses sıklığı: proses maddelerinin EN KISA pozitif örnekleme sıklığı (aylık vb. uzun değerlere takılmasın); en çok 1 günle sınırla
