@@ -3318,12 +3318,14 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
   const defRota={};     // stok -> varsayılan rota id
   const rawPlan={};     // stok|rota|op -> Set(ölçüm adı)  (ham kontrol planı, rota bazlı)
   const rawRows={};     // stok -> ham plan satırları (ekipman eşleşmesi için)
+  const rotaByStock={}; // stok -> rota adımları [{hid,op,mc,mn,def}]
   const _nm=x=>deTr(String(x||'').trim());
   const _loadRota=async codes=>{ for(let i=0;i<codes.length;i+=100){
-      const {data:oc}=await sb.from('operasyon_kartlari').select('stok_kodu,op_no,makine_kodu,header_id,varsayilan').in('stok_kodu',codes.slice(i,i+100));
+      const {data:oc}=await sb.from('operasyon_kartlari').select('stok_kodu,op_no,makine_kodu,makine_adi,header_id,varsayilan').in('stok_kodu',codes.slice(i,i+100));
       (oc||[]).forEach(o=>{ if(!o.makine_kodu||o.op_no==null)return; const k=(o.stok_kodu||'')+'|'+o.makine_kodu;
         (opsByMachine[k]=opsByMachine[k]||[]).push(Number(o.op_no));
         (rotaSteps[k]=rotaSteps[k]||[]).push({hid:o.header_id,op:Number(o.op_no),def:o.varsayilan===true});
+        (rotaByStock[o.stok_kodu]=rotaByStock[o.stok_kodu]||[]).push({hid:o.header_id,op:Number(o.op_no),mc:o.makine_kodu,mn:o.makine_adi||o.makine_kodu,def:o.varsayilan===true});
         if(o.varsayilan===true && defRota[o.stok_kodu]==null) defRota[o.stok_kodu]=o.header_id; });
       // HAM kontrol planı (rota bazlı): hangi rotanın hangi adımında hangi ölçümler yapılır
       const {data:lp}=await sb.from('leansys_kontrol_plani').select('stok_kodu,operasyon_id,op_no,olculecek,uretim_ekipman').in('stok_kodu',codes.slice(i,i+100));
@@ -3385,29 +3387,30 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
     prods.forEach(p=>{ const g=(p.stock_code||'')+'|'+(p.work_order||''); (gruplar[g]=gruplar[g]||[]).push(p); });
     Object.values(gruplar).forEach(g=>{
       const base=g[0], sc=base.stock_code, def=defRota[sc];
-      const rows=(rawRows[sc]||[]).filter(x=>def==null||x.operasyon_id===def);      // varsayılan rota adımları
-      const adim={}; rows.forEach(x=>{ if(x.op_no==null||!x.uretim_ekipman)return;   // anahtar: op + EKİPMAN (aynı op'ta birden çok makine olabilir)
-        const k=Number(x.op_no)+'|'+x.uretim_ekipman; adim[k]=adim[k]||{op:Number(x.op_no),equip:x.uretim_ekipman}; });
-      // Kapsanan adımlar: her GERÇEK üretim, ekipmanına EN ÇOK benzeyen adımı kapsar (sabit eşik yerine en-yakın)
+      // ADIMLAR = LeanSys ROTASI (üretim rotanın adımında yapılır; plan ekipmanı yalnız ölçüm eşleşmesinde kullanılır)
+      let adimlar=(rotaByStock[sc]||[]).filter(x=>def==null||x.hid===def);
+      if(!adimlar.length) adimlar=(rotaByStock[sc]||[]);
+      if(!adimlar.length) return;
+      // Kapsanan adımlar: gerçek üretim, makinesi aynı olan adımı kapsar (kod eşitse kesin, değilse ad benzerliği)
       const kapsanan=new Set();
-      g.forEach(pr=>{ let bi=null,bs=0;
-        Object.values(adim).forEach(st=>{ if(!st.equip)return; const sc2=equipScore(pr.machine_name||pr.machine_code,st.equip);
-          if(sc2>bs){ bs=sc2; bi=st; } });
-        if(bi) kapsanan.add(bi.op+'|'+bi.equip); });
-      Object.values(adim).forEach(st=>{
-        if(!st.equip) return;
-        if(kapsanan.has(st.op+'|'+st.equip)) return;                                 // bu adımda zaten üretim var
-        // makine kodu: bilinen makineler içinde ekipmana EN ÇOK benzeyen; bulunamazsa baz üretimin kodu
-        // (kod boş kalırsa üretim listesinde makine grubu filtresi bu satırı gizler)
-        let mkod=null,mks=0;
-        _makinaKatalog.forEach(([code,nm])=>{ const sc2=equipScore(nm,st.equip); if(sc2>mks){ mks=sc2; mkod=code; } });
-        if(!mkod) mkod=base.machine_code||null;
+      g.forEach(pr=>{
+        let bi=null,bs=0;
+        adimlar.forEach(st=>{ const sc2=(pr.machine_code&&st.mc&&pr.machine_code===st.mc)?99:equipScore(pr.machine_name||pr.machine_code,st.mn);
+          const bonus=(Number(pr.op_no)===st.op?0.5:0);
+          if(sc2+bonus>bs){ bs=sc2+bonus; bi=st; } });
+        if(bi&&bs>0) kapsanan.add(bi.op+'|'+(bi.mc||bi.mn));
+      });
+      adimlar.forEach(st=>{
+        const key=st.op+'|'+(st.mc||st.mn);
+        if(kapsanan.has(key)) return;                                       // bu adımda zaten üretim var
+        const _ps=rawPlan[sc+'|'+st.hid+'|'+st.op];
+        if(!_ps||!_ps.size) return;                                         // planda bu adımın ölçümü yok → kontrol üretilemez, sanal üretme
         yeni.push({ prod_date:base.prod_date||null, shift:base.shift??null, op_no:st.op,
-          machine_code:mkod, machine_name:st.equip,
+          machine_code:st.mc||base.machine_code||null, machine_name:st.mn||'',
           stock_code:sc, stock_name:base.stock_name||null, customer:base.customer||null,
           work_order:base.work_order||null, quantity:base.quantity??null, unit:base.unit||null,
           start_time:base.start_time||null, end_time:base.end_time||null, operator:base.operator||null,
-          fingerprint:(mkod||'')+'|'+(base.start_time||'')+'|'+sc+'|'+st.op+'|'+deTr(st.equip).replace(/[^a-z0-9]/g,'').slice(0,18)+'|V' });   // ekipman da anahtarda: aynı op'ta farklı makineler çakışmasın
+          fingerprint:(st.mc||'')+'|'+(base.start_time||'')+'|'+sc+'|'+st.op+'|V' });
       });
     });
     { const _seen=new Set(); for(let i=yeni.length-1;i>=0;i--){ if(_seen.has(yeni[i].fingerprint)) yeni.splice(i,1); else _seen.add(yeni[i].fingerprint); } }   // aynı fingerprint iki kez gitmesin
