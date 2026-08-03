@@ -5507,11 +5507,10 @@ function mrow(lab,val,calc,cls){
 async function renderIstatistik(){
   const root=$('#tab-istatistik'); _statPrint=null;
   root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
-  const [{data:planD},{data:prodD}]=await Promise.all([
-    sb.from('control_plan_items').select('*'),
-    sb.from('productions').select('id,customer')
-  ]);
-  const plan=planD||[];
+  // PLAN: SAYFALI çek — Supabase 1000 satır kapağı; aksi halde 1000. maddeden sonraki stok kodları listeye HİÇ gelmez
+  let plan=[];
+  for(let from=0; from<500000; from+=1000){ const r=await sb.from('control_plan_items').select('*').range(from,from+999);
+    if(r.error)break; plan.push(...(r.data||[])); if(!r.data||r.data.length<1000)break; }
   // stok seçenekleri — plandaki stoklar (SPC limitleri plandan gelir)
   const stockSet=new Set(); plan.forEach(p=>p.stock_code&&stockSet.add(p.stock_code));
   const stocks=[...stockSet].sort();
@@ -5519,7 +5518,11 @@ async function renderIstatistik(){
   // SEÇİLİ stok'un TÜM kontrol kayıtları — sayfalı (eski 8000 kapağı kalktı; yeni/çok veri de gelir)
   let recs=[];
   if(STAT_FILT.stock){ for(let from=0;;from+=1000){ const {data}=await sb.from('control_records').select('stock_code,machine_code,stage,checked_at,vals,production_id').eq('stock_code',STAT_FILT.stock).order('checked_at',{ascending:true}).range(from,from+999); recs.push(...(data||[])); if(!data||data.length<1000)break; } }
-  const prodCari={}; (prodD||[]).forEach(p=>prodCari[p.id]=p.customer||''); recs.forEach(r=>{ r._cari=prodCari[r.production_id]||''; });
+  const prodCari={};   // cari eşlemesi: yalnız bu kayıtların üretimleri (tüm tabloyu çekince 1000 kapağına takılıyordu)
+  { const pids=[...new Set(recs.map(r=>r.production_id).filter(x=>x!=null))];
+    for(let i=0;i<pids.length;i+=200){ const {data:pd}=await sb.from('productions').select('id,customer').in('id',pids.slice(i,i+200));
+      (pd||[]).forEach(p=>prodCari[p.id]=p.customer||''); } }
+  recs.forEach(r=>{ r._cari=prodCari[r.production_id]||''; });
   root.innerHTML='';
 
   // sayısal ölçüm kataloğu (plan + kayıt) seçili stok için
