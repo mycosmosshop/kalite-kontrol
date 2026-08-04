@@ -3082,16 +3082,23 @@ function opByMachineName(items,machineName){
     if(r>bestR || (r===bestR && hit[o]>bestH)){ bestR=r; bestH=hit[o]; best=o; } });
   return best;
 }
-// 1 birim 'from' parçası için kaç 'to' gerekir (ürün ağacı zinciri; ör. 1 adet mamul = 0.0833 plaka → 1 plaka = 12 adet)
-function agacKatsayi(from,to,tree){
+// 1 birim 'from' için kaç 'to' gerekir = LeanSys "Ürün Ağacı Toplam Tüketim".
+// LeanSys fn_UrunAgaciDefaultByStokRecId ile BİREBİR: her seviyede Miktar×(1+Fire/100) çarpılır,
+// aynı malzemeye giden TÜM yollar toplanır (fn ...ToplamTuketim... GROUP BY + SUM).
+// Ör. 351.0.181: 1 Adet = 1 Plaka (gerçekten 1:1); 351.0.562: 1 Plaka = 12,05 Adet.
+// ponytail: memosuz özyineleme + derinlik 20 (BOM'lar sığ); yavaşlarsa memo ekle.
+function agacKatsayi(from,to,tree,_d){
   if(!from||!to) return null;
   if(from===to) return 1;
-  const q=[[from,1]], seen=new Set([from]);
-  while(q.length){ const [k,f]=q.shift(); const kids=tree[k]||{};
-    for(const c in kids){ const nf=f*kids[c];
-      if(c===to) return nf;
-      if(!seen.has(c)){ seen.add(c); q.push([c,nf]); } } }
-  return null;
+  if((_d=_d||0)>20) return null;                       // döngü emniyeti
+  const kids=tree[from]; if(!kids) return null;
+  let sum=0, bulundu=false;
+  for(const c in kids){
+    if(c===to){ sum+=kids[c]; bulundu=true; continue; }
+    const alt=agacKatsayi(c,to,tree,_d+1);
+    if(alt!=null){ sum+=kids[c]*alt; bulundu=true; }
+  }
+  return bulundu?sum:null;
 }
 // ---- ROTA/EKİPMAN EŞLEŞTİRİCİ (ortak) --------------------------------------------------------
 // LeanSys ham kontrol planı (leansys_kontrol_plani) her ölçüm maddesinde ROTA (operasyon_id),
@@ -3463,9 +3470,13 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
       const anaKodlar=[...new Set(Object.keys(rotaByStock).filter(Boolean))];
       const parcaKodlari=[...new Set(Object.values(rotaByStock).flat().map(x=>x.pk).filter(Boolean))];
       const yukle=async ks=>{ for(let i=0;i<ks.length;i+=80){ try{
-          const {data:ua}=await sb.from('urun_agaclari').select('urun_kodu,tuketim_kodu,miktar').in('urun_kodu',ks.slice(i,i+80));
+          const {data:ua}=await sb.from('urun_agaclari').select('urun_kodu,tuketim_kodu,miktar,fire_orani,varsayilan').in('urun_kodu',ks.slice(i,i+80));
           (ua||[]).forEach(x=>{ if(!x.urun_kodu||!x.tuketim_kodu||!(Number(x.miktar)>0))return;
-            (_agac[x.urun_kodu]=_agac[x.urun_kodu]||{})[x.tuketim_kodu]=Number(x.miktar); }); }catch(e){} } };
+            if(x.varsayilan===false) return;                                  // LeanSys yalnız VARSAYILAN ağacı hesaplar
+            const tk=Number(x.miktar)*(1+(Number(x.fire_orani)||0)/100);      // LeanSys ToplamTuketim = Miktar×(1+Fire/100)
+            const m=(_agac[x.urun_kodu]=_agac[x.urun_kodu]||{});
+            m[x.tuketim_kodu]=(m[x.tuketim_kodu]||0)+tk;                      // aynı malzeme iki satırdaysa toplanır
+          }); }catch(e){} } };
       await yukle([...anaKodlar,...parcaKodlari]);
       const eksikA=anaKodlar.filter(k=>!_agac[k]);
       let denenmis=[]; try{ denenmis=JSON.parse(sessionStorage.getItem('kk_bom_try')||'[]'); }catch(e){}
@@ -3517,8 +3528,10 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
           if(_qty!=null && _bazAdim && _bazAdim.pk && st.pk && _bazAdim.pk!==st.pk){
             const ileri=agacKatsayi(_bazAdim.pk,st.pk,_agac);            // 1 baz = ileri × hedef
             const geri =ileri==null?agacKatsayi(st.pk,_bazAdim.pk,_agac):null;   // 1 hedef = geri × baz
-            if(ileri>0) _qty=Math.max(1,Math.round(_qty*ileri));
-            else if(geri>0) _qty=Math.max(1,Math.round(_qty/geri));
+            const _tam=/adet|plaka|paket|koli|rulo|top/i.test(String((st.pk&&_birim[st.pk])||''));   // Kg/m2/m3 ondalık kalsın
+            const _yuv=v=>_tam?Math.max(1,Math.round(v)):Math.round(v*1e4)/1e4;
+            if(ileri>0) _qty=_yuv(_qty*ileri);
+            else if(geri>0) _qty=_yuv(_qty/geri);
           }
           yeni.push({ prod_date:bz.prod_date||null, shift:bz.shift??null, op_no:st.op,
             machine_code:st.mc||bz.machine_code||null, machine_name:st.mn||'',
