@@ -2107,7 +2107,7 @@ async function renderPlan(){
       el('div',{style:'display:flex;gap:8px;flex-wrap:wrap'},
         el('button',{class:'btn sm sec',title:'VDA 6.5 ürün denetimi için FULL ölçüm Excel şablonu indir (her madde 5 ölçüm — elle doldurulur; Min/Maks/Ortalama/Sonuç otomatik hesaplanır)',onclick:()=>exportVdaTemplate(sc, snm)},'📥 VDA 6.5 Ölçüm Şablonu'),
         canPlan?el('button',{class:'btn sm',id:'planSaveBtn',disabled:!Object.keys(PLAN_PENDING).length,style:'background:'+(Object.keys(PLAN_PENDING).length?'var(--ret)':'var(--ok)')+';cursor:'+(Object.keys(PLAN_PENDING).length?'pointer':'default'),title:'Yaptığın hücre değişikliklerini kaydet',onclick:savePlanChanges},Object.keys(PLAN_PENDING).length?('💾 Kaydet ('+Object.keys(PLAN_PENDING).length+')'):'💾 Kaydedildi'):'',
-        canPlan?el('button',{class:'btn sm sec',title:'Maddeleri Op No’ya göre sıralayıp Ölçü No (1..N) yeniden atar',onclick:()=>renumberByOp(sc)},'🔢 Op No’ya göre sırala'):'',
+        canPlan?el('button',{class:'btn sm sec',title:'Maddeleri önce ROTA (Op Kartı), sonra Op No’ya göre sıralayıp Ölçü No (1..N) yeniden atar',onclick:()=>renumberByOp(sc)},'🔢 Rota + Op No’ya göre sırala'):'',
         canPlan?el('button',{class:'btn sm sec',title:'Versiyonla / arşivle / geri yükle',onclick:()=>openPlanArchive(sc, snm)},'🗂 Versiyonlar'):'',
         canPlan?el('button',{class:'btn sm sec',title:'Bu planı başka bir ürün koduna kopyala',onclick:()=>openCopyPlan(sc, snm)},'📋 Başka Koda Kopyala'):'',
         (canPlan&&planLocked)?el('button',{class:'btn sm sec',title:'Elle-değişiklik korumasını kaldır → LeanSys çekiminde bu plan da güncellenebilir',onclick:()=>unlockPlan(sc)},'🔓 Korumayı Kaldır'):'',
@@ -2357,9 +2357,14 @@ async function bulkDeletePlans(codes, isAll){
   }catch(e){ toast('Silme hatası: '+esc(e.message||String(e)),'err'); }
 }
 async function renumberByOp(sc){
-  if(!confirm('Maddeler Op No’ya göre yeniden sıralanıp Ölçü No (1..N) atanacak. Mevcut elle sıralaman değişir. Devam?'))return;
-  const items=[...(PLAN||[]).filter(p=>p.stock_code===sc)].sort((a,b)=> (Number(a.op_no)||0)-(Number(b.op_no)||0) || (Number(a.seq)||0)-(Number(b.seq)||0) || ((a.id||0)-(b.id||0)) );
-  await reorderPlan(sc, items.map(x=>x.id), 'Op No’ya göre sıralandı, Ölçü No (1..'+items.length+') atandı.');
+  if(!confirm('Maddeler ROTA (Op Kartı) + Op No’ya göre yeniden sıralanıp Ölçü No (1..N) atanacak. Mevcut elle sıralaman değişir. Devam?'))return;
+  const rk=x=>String(x&&x.operasyon_karti||'').trim();          // Rota-1, Rota-2 … (boşlar en sona)
+  const items=[...(PLAN||[]).filter(p=>p.stock_code===sc)].sort((a,b)=>
+      (rk(a)?0:1)-(rk(b)?0:1)                                    // rotası olmayanlar sona
+   || rk(a).localeCompare(rk(b),'tr',{numeric:true})             // Rota-1 → Rota-2 → Rota-10
+   || (Number(a.op_no)||0)-(Number(b.op_no)||0)
+   || (Number(a.seq)||0)-(Number(b.seq)||0) || ((a.id||0)-(b.id||0)) );
+  await reorderPlan(sc, items.map(x=>x.id), 'Rota + Op No’ya göre sıralandı, Ölçü No (1..'+items.length+') atandı.');
 }
 // ---- KONTROL PLANI VERSİYONLAMA / ARŞİV (canlı plana dokunmaz, JSON snapshot) ----
 // iki plan sürümü arasındaki değişiklikleri (eklenen/çıkarılan/değişen madde) otomatik çıkarır
