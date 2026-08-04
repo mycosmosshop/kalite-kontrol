@@ -3528,7 +3528,7 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
       let denenmis=[]; try{ denenmis=JSON.parse(sessionStorage.getItem('kk_bom_try')||'[]'); }catch(e){}
       const cekilecek=eksikA.filter(k=>!denenmis.includes(k)).slice(0,20);   // oturumda bir kez dene, en çok 20 kod
       if(cekilecek.length){
-        status.textContent='Ürün ağacı LeanSys’ten çekiliyor ('+cekilecek.length+' kod, ~1 dk)…';
+        pgTxt.textContent='⏳ Ürün ağacı LeanSys’ten çekiliyor ('+cekilecek.length+' kod, ~1 dk)…';   // status.textContent İLERLEME ÇUBUĞUNU SİLER — pgTxt'e yaz
         try{ const ac=new AbortController(); const t=setTimeout(()=>ac.abort(),90000);   // 90 sn'de vazgeç
           await fetch('http://127.0.0.1:17777/refreshbom?codes='+encodeURIComponent(cekilecek.join(',')),{mode:'cors',signal:ac.signal});
           clearTimeout(t); await yukle(cekilecek);
