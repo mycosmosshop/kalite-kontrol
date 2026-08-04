@@ -3250,7 +3250,8 @@ async function openBulkAuto(){
     }catch(e){ toast('Excel okunamadı: '+e.message,'err'); }
   }
   // LeanSys operasyon kartındaki Std. Zaman (DAKİKA) → çevrim süresi (SANİYE). İsteğe bağlı: butona basınca doldurur, sonra elle düzenlenebilir.
-  async function pullStdTime(btn){
+  async function pullStdTime(btn,onlyMissing){
+    btn=btn||{textContent:'',disabled:false};                       // otomatik çağrıda buton yok
     const _t=btn.textContent; btn.disabled=true; btn.textContent='⏳ Çekiliyor…';
     try{
       const scs=[...new Set(Object.values(combos).map(c=>c.stock_code).filter(Boolean))];
@@ -3273,12 +3274,15 @@ async function openBulkAuto(){
         list.forEach(o=>{ const t=deTr(o.mn||''); let k=0; ws.forEach(w=>{ if(t.includes(w))k++; }); if(k>bs){bs=k;best=o;} });
         return bs>0&&best?best.dk:null; };
       let n=0,yok=[];
-      Object.values(combos).forEach(c=>{ const dk=map[c.stock_code+'|'+c.machine_code] ?? nameMatch(c.stock_code,c.machine_name||c.machine_code);
+      Object.values(combos).forEach(c=>{
+        if(onlyMissing && cyc[c.key]>0) return;                     // elle girilen çevrimi EZME
+        const dk=map[c.stock_code+'|'+c.machine_code] ?? nameMatch(c.stock_code,c.machine_name||c.machine_code);
         if(!(dk>0)){ yok.push(c.machine_code); return; }
         const sn=Math.round(dk*60*1000)/1000;                                          // dk → sn
         cyc[c.key]=sn; if(cycInputs[c.key])cycInputs[c.key].value=sn;
         try{ const st=JSON.parse(localStorage.getItem('kk_cyc')||'{}'); st[c.key]=sn; localStorage.setItem('kk_cyc',JSON.stringify(st)); }catch(_){}
         n++; });
+      if(onlyMissing && !n){ return; }                              // otomatik: yazacak bir şey yoksa sus
       toast(n?(n+' satıra LeanSys std. zamanı yazıldı (dk×60 = sn).'+(yok.length?(' '+yok.length+' makine için kayıt yok: '+[...new Set(yok)].slice(0,3).join(', ')):'')):'LeanSys operasyon kartında std. zaman bulunamadı (rota çekildi ama bu kod/makine için süre tanımsız).', n?'ok':'err');
     }catch(e){ toast('Std. zaman çekilemedi: '+e.message,'err'); }
     btn.disabled=false; btn.textContent=_t;
@@ -3365,10 +3369,29 @@ async function openBulkAuto(){
     const scope=lx?prods.filter(p=>lx.re.test(locOf(p))):prods;      // lokasyon seçiliyse kapsamı daralt
     if(!scope.length){ toast(lx?(lx.label+' lokasyonunda planı olan üretim yok.'):'Kapsamda üretim yok.','err'); return; }
     const opMap={}; Object.entries(opSelects).forEach(([k,sel])=>{ if(sel.value)opMap[k]=Number(sel.value); });
+    // ÇEVRİMSİZ SATIR UYARISI: süresi olmayan üretimde bitiş=başlama kalır → proses kontrolü çıkmaz.
+    const kaps=new Set(scope.map(p=>(p.machine_code||'?')+'||'+(p.stock_code||'?')));
+    const eksikC=Object.values(combos).filter(c=>kaps.has(c.key)&&!(cyc[c.key]>0));
+    if(eksikC.length){
+      const lst=eksikC.slice(0,10).map(c=>'  • '+(c.machine_name||c.machine_code)+'  ('+c.stock_code+', '+c.count+' üretim)').join('\n');
+      const msg='⚠ ÇEVRİM SÜRESİ GİRİLMEMİŞ '+eksikC.length+' satır var:\n\n'+lst
+        +(eksikC.length>10?('\n  … +'+(eksikC.length-10)+' satır'):'')
+        +'\n\nLeanSys operasyon kartında da std. zaman tanımsız (otomatik çekildi, bulunamadı).'
+        +'\n\nBu satırlarda bitiş = başlama kalır (süre 0) → PROSES kontrolü ÜRETİLMEZ, yalnız Seri Başı / Son çıkar.'
+        +'\n\nİptal edip yukarıdaki tabloya çevrim süresini elle yazabilirsin. Yine de devam edilsin mi?';
+      if(!confirm(msg)) return;
+    }
     runBulkAuto(scope,plan,cyc,regenCb.checked,fillEmptyCb.checked,status,go,who,allOpsCb.checked,opMap,virtCb.checked);
   }},'🎲 Üret');
   m.append(el('div',{},go),status);
   bg.append(m); root.innerHTML=''; root.append(bg);   // yükleniyor placeholder'ını temizle
+  // ÇEVRİM EKSİKLERİNİ LeanSys op kartından OTOMATİK doldur (elle girilenlere dokunmaz).
+  // Sanal adımların makinesi (ör. EL İŞÇİLİĞİ) çevrim tablosuna elle girilmediği için süresi 0 kalıyordu.
+  if(Object.values(combos).some(c=>!(cyc[c.key]>0))){
+    status.textContent='⏱ Eksik çevrim süreleri LeanSys’ten çekiliyor…';
+    try{ await pullStdTime(null,true); }catch(e){}
+    status.textContent='';
+  }
 }
 async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOps,opMap,addVirtual){
   // çevrim girilmediyse: mevcut başlama–bitiş sürelerine göre üret (proses dahil)
