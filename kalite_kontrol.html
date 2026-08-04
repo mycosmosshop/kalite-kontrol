@@ -3545,6 +3545,8 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
     const _vEnd=(sc,bz,st,qty)=>{ const dk=_vDk(sc,st,qty);
       if(dk!=null && bz.start_time) return new Date(new Date(bz.start_time).getTime()+dk*60000).toISOString();
       return bz.end_time||null; };                                   // std. zaman yoksa eski davranış (uyarı zaten çıkıyor)
+    const KAT_MAX=1000;      // bu katsayının üstü = LeanSys miktarı stok biriminde değil (aşağıda açıklama)
+    const supheli=[];        // çevrilemeyen (şüpheli) miktarlar → sonunda kullanıcıya bildirilir
     const yeni=[];
     const gruplar={};   // stok|iş emri → üretimler
     prods.forEach(p=>{ const g=(p.stock_code||'')+'|'+(p.work_order||''); (gruplar[g]=gruplar[g]||[]).push(p); });
@@ -3586,8 +3588,13 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
             const geri =ileri==null?agacKatsayi(st.pk,_bazAdim.pk,_agac):null;   // 1 hedef = geri × baz
             const _tam=/adet|plaka|paket|koli|rulo|top/i.test(String((st.pk&&_birim[st.pk])||''));   // Kg/m2/m3 ondalık kalsın
             const _yuv=v=>_tam?Math.max(1,Math.round(v)):Math.round(v*1e4)/1e4;
-            if(ileri>0) _qty=_yuv(_qty*ileri);
-            else if(geri>0) _qty=_yuv(_qty/geri);
+            const _kat=(ileri>0)?ileri:((geri>0)?1/geri:null);          // 1 baz = _kat × hedef
+            // AKIL SÜZGECİ: LeanSys'te ara operasyonun miktarı bazen stok biriminde DEĞİL (ör. LMN2
+            // "30000 Rulo" aslında metre). Böyle bir sayıyı ağaç oranıyla çarpınca milyarlık adet çıkıyor.
+            // Böyle durumda uydurma sayı yazmak yerine baz miktarı aynen bırakıp kullanıcıya bildiriyoruz.
+            // ponytail: sabit üst sınır; iş emrinin planlanan miktarı çekilirse oradan doğrulanabilir.
+            if(_kat!=null && _kat<=KAT_MAX) _qty=_yuv(_qty*_kat);
+            else if(_kat!=null) supheli.push((bz.work_order||'-')+' · '+sc+' · '+(bz.machine_name||bz.machine_code||'')+' → '+(st.mn||st.mc||'')+' (×'+Math.round(_kat).toLocaleString('tr')+')');
           }
           yeni.push({ prod_date:bz.prod_date||null, shift:bz.shift??null, op_no:st.op,
             machine_code:st.mc||bz.machine_code||null, machine_name:st.mn||'',
@@ -3610,6 +3617,13 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
       }
       if(vErr) toast('Sanal üretim eklenemedi: '+esc(vErr),'err');
       else toast(virtN+' sanal üretim adımı eklendi.','ok');
+    }
+    if(supheli.length){   // LeanSys miktarı stok biriminde değil → çevirmedik, sebebini göster
+      const u=[...new Set(supheli)];
+      status.insertAdjacentHTML('beforebegin','<div class="msg err" style="margin:8px 0">⚠ <b>'+u.length+
+        ' sanal adımda miktar ÇEVRİLMEDİ</b> (baz üretimin miktarı ürün ağacı birimiyle uyuşmuyor, katsayı '+KAT_MAX+
+        '×’ten büyük). Baz miktar aynen yazıldı. LeanSys’te bu operasyonun miktar/birimi düzeltilmeli:<br>'+
+        u.slice(0,6).map(esc).join('<br>')+(u.length>6?('<br>… +'+(u.length-6)):'')+'</div>');
     }
   }
   let made=0,prodN=0,skipped=0,cleaned=0,recalcN=0,doneN=0; const noOp={};   // op eşleşmeyen üretimler: 'kod op N' -> adet
