@@ -3374,11 +3374,11 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
   const rotaByStock={}; // stok -> rota adımları [{hid,op,mc,mn,def}]
   const _nm=x=>deTr(String(x||'').trim());
   const _loadRota=async codes=>{ for(let i=0;i<codes.length;i+=100){
-      const {data:oc}=await sb.from('operasyon_kartlari').select('stok_kodu,op_no,makine_kodu,makine_adi,header_id,varsayilan').in('stok_kodu',codes.slice(i,i+100));
+      const {data:oc}=await sb.from('operasyon_kartlari').select('stok_kodu,op_no,makine_kodu,makine_adi,header_id,varsayilan,parca_kodu').in('stok_kodu',codes.slice(i,i+100));
       (oc||[]).forEach(o=>{ if(!o.makine_kodu||o.op_no==null)return; const k=(o.stok_kodu||'')+'|'+o.makine_kodu;
         (opsByMachine[k]=opsByMachine[k]||[]).push(Number(o.op_no));
         (rotaSteps[k]=rotaSteps[k]||[]).push({hid:o.header_id,op:Number(o.op_no),def:o.varsayilan===true});
-        (rotaByStock[o.stok_kodu]=rotaByStock[o.stok_kodu]||[]).push({hid:o.header_id,op:Number(o.op_no),mc:o.makine_kodu,mn:o.makine_adi||o.makine_kodu,def:o.varsayilan===true});
+        (rotaByStock[o.stok_kodu]=rotaByStock[o.stok_kodu]||[]).push({hid:o.header_id,op:Number(o.op_no),mc:o.makine_kodu,mn:o.makine_adi||o.makine_kodu,def:o.varsayilan===true,pk:o.parca_kodu||null});
         if(o.varsayilan===true && defRota[o.stok_kodu]==null) defRota[o.stok_kodu]=o.header_id; });
       // HAM kontrol planı (rota bazlı): hangi rotanın hangi adımında hangi ölçümler yapılır
       const {data:lp}=await sb.from('leansys_kontrol_plani').select('stok_kodu,operasyon_id,op_no,olculecek,uretim_ekipman').in('stok_kodu',codes.slice(i,i+100));
@@ -3435,6 +3435,11 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
     try{ const {data:allOc}=await sb.from('operasyon_kartlari').select('makine_kodu,makine_adi').limit(5000);
       (allOc||[]).forEach(o=>{ if(o.makine_kodu&&!_mkMap.has(o.makine_kodu)) _mkMap.set(o.makine_kodu,o.makine_adi||o.makine_kodu); }); }catch(e){}
     const _makinaKatalog=[..._mkMap.entries()];
+    // adım parçalarının birimi (plakalama→Plaka, kesim→Adet): sanal üretimde doğru birim yazılsın
+    const _birim={};
+    { const pks=[...new Set(Object.values(rotaByStock).flat().map(x=>x.pk).filter(Boolean))];
+      for(let i=0;i<pks.length;i+=100){ try{ const {data:sk}=await sb.from('stok_kartlari').select('stok_kodu,birim').in('stok_kodu',pks.slice(i,i+100));
+        (sk||[]).forEach(x=>{ if(x.birim)_birim[x.stok_kodu]=x.birim; }); }catch(e){} } }
     const yeni=[];
     const gruplar={};   // stok|iş emri → üretimler
     prods.forEach(p=>{ const g=(p.stock_code||'')+'|'+(p.work_order||''); (gruplar[g]=gruplar[g]||[]).push(p); });
@@ -3447,10 +3452,16 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
       // Kapsanan adımlar: gerçek üretim, makinesi aynı olan adımı kapsar (kod eşitse kesin, değilse ad benzerliği)
       const kapsanan=new Set();
       g.forEach(pr=>{
+        if(/\|V$/.test(pr.fingerprint||'')) return;                          // sanal kayıt kapsama saymaz
+        // AYNI MAKİNE: gerçek üretim varsa o makinenin TÜM adımları karşılanmış sayılır (aynı makinede ikinci satır olmasın)
+        let eslesen=0;
+        adimlar.forEach(st=>{ const ayni=(pr.machine_code&&st.mc&&pr.machine_code===st.mc)||equipScore(pr.machine_name||pr.machine_code,st.mn)>=0.6;
+          if(ayni){ kapsanan.add(st.op+'|'+(st.mc||st.mn)); eslesen++; } });
+        if(eslesen) return;
+        // makine rotada hiç yoksa (ör. ambalajlama) → en yakın adımı karşılanmış say
         let bi=null,bs=0;
-        adimlar.forEach(st=>{ const sc2=(pr.machine_code&&st.mc&&pr.machine_code===st.mc)?99:equipScore(pr.machine_name||pr.machine_code,st.mn);
-          const bonus=(Number(pr.op_no)===st.op?0.05:0);
-          if(sc2+bonus>bs){ bs=sc2+bonus; bi=st; } });
+        adimlar.forEach(st=>{ const sc2=equipScore(pr.machine_name||pr.machine_code,st.mn)+(Number(pr.op_no)===st.op?0.05:0);
+          if(sc2>bs){ bs=sc2; bi=st; } });
         if(bi&&bs>0) kapsanan.add(bi.op+'|'+(bi.mc||bi.mn));
       });
       // HER GERÇEK ÜRETİM için eksik adımlar (aynı iş emrinde 3 kesim partisi varsa 3 plakalama/el işçiliği)
@@ -3464,7 +3475,7 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
           yeni.push({ prod_date:bz.prod_date||null, shift:bz.shift??null, op_no:st.op,
             machine_code:st.mc||bz.machine_code||null, machine_name:st.mn||'',
             stock_code:sc, stock_name:bz.stock_name||null, customer:bz.customer||null,
-            work_order:bz.work_order||null, quantity:bz.quantity??null, unit:bz.unit||null,
+            work_order:bz.work_order||null, quantity:bz.quantity??null, unit:(st.pk&&_birim[st.pk])||bz.unit||null,
             start_time:bz.start_time||null, end_time:bz.end_time||null, operator:bz.operator||null,
             fingerprint:(st.mc||'')+'|'+(bz.start_time||'')+'|'+sc+'|'+st.op+'|V' });
         });
