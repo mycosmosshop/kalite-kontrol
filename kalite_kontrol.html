@@ -3515,13 +3515,17 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
     // (350.0.831 · 10000 Adet → op1 14,42 m² · op3 0,2884 Rulo · op5 10000 Adet).
     // Ara operasyonun GERÇEKLEŞEN miktarı bazen stok biriminde değil (LMN2 "30000 Rulo" aslında metre);
     // o sayıyı ürün ağacıyla çarpınca milyarlık adet çıkıyordu. Plandan okuyunca bu sorun ortadan kalkar.
-    const _woPlan={};   // isemri|makine_kodu -> {qty,birim,op}
+    const _woPlan={};   // isemri|makine_kodu -> [{qty,birim,op}]  (aynı makine birden çok adımda olabilir)
+    // Beklenen BİRİME uyan adımı seç (KKP: op2=14,42 m² · op6=10000 Adet); yoksa en küçük op.
+    const _wpPick=(wo,mc,istenenBirim)=>{ const list=_woPlan[(wo||'')+'|'+(mc||'')]; if(!list||!list.length) return null;
+      const b=deTr(String(istenenBirim||'').trim());
+      return (b && list.find(x=>deTr(String(x.birim||'').trim())===b)) || [...list].sort((x,y)=>x.op-y.op)[0]; };
     { const wos=[...new Set(prods.map(p=>p.work_order).filter(Boolean))], gelen=new Set();
       const yukleW=async list=>{ for(let i=0;i<list.length;i+=100){ try{
           const {data}=await sb.from('isemri_operasyonlari').select('is_emri,op_no,makine_kodu,planlanan,op_birim').in('is_emri',list.slice(i,i+100));
           (data||[]).forEach(x=>{ if(!x.is_emri||!x.makine_kodu||!(Number(x.planlanan)>0))return;
-            gelen.add(x.is_emri); const k=x.is_emri+'|'+x.makine_kodu;
-            if(!_woPlan[k]||Number(x.op_no)<_woPlan[k].op) _woPlan[k]={qty:Number(x.planlanan),birim:x.op_birim||'',op:Number(x.op_no)}; });
+            gelen.add(x.is_emri); const k=x.is_emri+'|'+x.makine_kodu;   // aynı makine birden çok adımda olabilir (KKP op2=m², op6=Adet)
+            (_woPlan[k]=_woPlan[k]||[]).push({qty:Number(x.planlanan),birim:x.op_birim||'',op:Number(x.op_no)}); });
         }catch(e){} } };
       await yukleW(wos);
       const eksikW=wos.filter(w=>!gelen.has(w));
@@ -3609,8 +3613,8 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
                      || adimlar.find(a=>equipScore(bz.machine_name||bz.machine_code,a.mn)>=0.6);
           let _qty=bz.quantity??null, _unit=null;
           // 1) İŞ EMRİ PLANI (LeanSys'in kendi hesabı, doğru birimde) — en güvenilir kaynak.
-          const _wp=_woPlan[(bz.work_order||'')+'|'+(st.mc||'')];
-          const _bp=_woPlan[(bz.work_order||'')+'|'+(bz.machine_code||'')];
+          const _wp=_wpPick(bz.work_order, st.mc, st.pk&&_birim[st.pk]);
+          const _bp=_wpPick(bz.work_order, bz.machine_code, bz.unit);
           if(_wp){
             let K=1;                                                        // gerçekleşme/plan oranı (fazla üretim varsa ölçekle)
             if(_bp && _bp.qty>0 && bz.quantity>0){ const k=bz.quantity/_bp.qty; if(k>=0.1&&k<=10) K=k; }
