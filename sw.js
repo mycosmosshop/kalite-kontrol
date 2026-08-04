@@ -1,7 +1,7 @@
 // Sanifoam Kalite Kontrol — Service Worker (PWA)
 // Strateji: GET istekleri network-first + cache fallback (çevrimdışı app kabuğu).
 // Supabase API/auth ve POST/PUT/PATCH/DELETE asla cache'lenmez (veri her zaman canlı).
-const CACHE = 'kk-cache-v211';
+const CACHE = 'kk-cache-v212';
 
 self.addEventListener('install', (e) => { self.skipWaiting(); });
 

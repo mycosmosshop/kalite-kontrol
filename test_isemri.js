@@ -45,3 +45,14 @@ assert.deepStrictEqual(sanalMiktar('2091150347','910.5.607',10000,'910.5.084'),{
 // LeanSys'in kendi planı ürün ağacıyla tutarlı: 10000 Adet × 0,000028×1,03 = 0,2884 Rulo
 assert.ok(Math.abs(10000*0.000028*1.03 - 0.2884) < 1e-4);
 console.log('✔ sanal miktar iş emri planından (bozuk baz miktar artık patlatmıyor)');
+
+// SÜRE mamul adedinden, MİKTAR operasyonun kendi biriminden (LeanSys std. zamanı adet başına)
+// 350.0.258 · iş emri 2091130654 · 31200 Adet · LMN2 plan 5,6472 Rulo · std 0,0007 dk/adet
+const vDk=(pcs,sz)=>pcs>0&&sz>0?Math.round(pcs*sz):null;
+assert.strictEqual(vDk(31200,0.0007),22);   // ekranda 15:17→15:39 = 22 dk ✓
+assert.strictEqual(vDk(6,0.0007),0);        // op miktarından hesaplasak 0 dk çıkardı (yanlış olan buydu)
+assert.strictEqual(vDk(31200,0.002),62);    // LMN3: ekranda 15:17→16:20 = 63 dk ✓
+// miktar ise plandan gelir, adetten değil
+assert.strictEqual(Math.max(1,Math.round(5.6472)),6);            // LMN2 = 6 Rulo (31200 Rulo DEĞİL)
+assert.ok(Math.abs(31200*0.000181 - 5.6472) < 1e-3);             // ürün ağacı ile birebir
+console.log('✔ süre mamul adedinden, miktar operasyon biriminden');

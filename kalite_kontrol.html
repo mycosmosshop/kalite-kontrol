@@ -3522,10 +3522,10 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
       return (b && list.find(x=>deTr(String(x.birim||'').trim())===b)) || [...list].sort((x,y)=>x.op-y.op)[0]; };
     { const wos=[...new Set(prods.map(p=>p.work_order).filter(Boolean))], gelen=new Set();
       const yukleW=async list=>{ for(let i=0;i<list.length;i+=100){ try{
-          const {data}=await sb.from('isemri_operasyonlari').select('is_emri,op_no,makine_kodu,planlanan,op_birim').in('is_emri',list.slice(i,i+100));
+          const {data}=await sb.from('isemri_operasyonlari').select('is_emri,op_no,makine_kodu,planlanan,op_birim,isemri_miktar').in('is_emri',list.slice(i,i+100));
           (data||[]).forEach(x=>{ if(!x.is_emri||!x.makine_kodu||!(Number(x.planlanan)>0))return;
             gelen.add(x.is_emri); const k=x.is_emri+'|'+x.makine_kodu;   // aynı makine birden çok adımda olabilir (KKP op2=m², op6=Adet)
-            (_woPlan[k]=_woPlan[k]||[]).push({qty:Number(x.planlanan),birim:x.op_birim||'',op:Number(x.op_no)}); });
+            (_woPlan[k]=_woPlan[k]||[]).push({qty:Number(x.planlanan),birim:x.op_birim||'',op:Number(x.op_no),pcs:Number(x.isemri_miktar)||0}); });
         }catch(e){} } };
       await yukleW(wos);
       const eksikW=wos.filter(w=>!gelen.has(w));
@@ -3566,12 +3566,15 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
       } }
     // SANAL adımın SÜRESİ: bazın bitişini KOPYALAMA — her operasyon kendi std. zamanı kadar sürer.
     // (Baz KP5'in LeanSys bitişi bazen başlamadan 20 sn sonra geliyor; kopyalanınca sanal satır süresiz kalıyordu.)
-    const _vDk=(sc,st,qty)=>{ if(!(qty>0)) return null;
-      const cs=cyc[(st.mc||'?')+'||'+(sc||'?')];                       // 1) çevrim tablosuna ELLE girilen (sn/birim) önce
-      if(cs>0) return Math.round(qty*cs/60);
-      const sz=szBy[sc+'|'+(st.mc||'')]||0;                            // 2) yoksa LeanSys op kartı std. zamanı (dk/birim)
-      return sz>0?Math.round(qty*sz):null; };
-    const _vEnd=(sc,bz,st,qty)=>{ const dk=_vDk(sc,st,qty);
+    // SÜRE, operasyonun kendi miktarından DEĞİL MAMUL ADEDİNDEN hesaplanır.
+    // LeanSys std. zamanı/kapasitesi mamul adedi başınadır: LMN2 0,0007 dk × 31200 adet = 21,8 dk
+    // (0,0007 × 5,65 Rulo = 0,004 dk anlamsız olurdu). Miktar plandan, süre adetten.
+    const _vDk=(sc,st,pcs)=>{ if(!(pcs>0)) return null;
+      const cs=cyc[(st.mc||'?')+'||'+(sc||'?')];                       // 1) çevrim tablosuna ELLE girilen (sn/adet) önce
+      if(cs>0) return Math.round(pcs*cs/60);
+      const sz=szBy[sc+'|'+(st.mc||'')]||0;                            // 2) yoksa LeanSys op kartı std. zamanı (dk/adet)
+      return sz>0?Math.round(pcs*sz):null; };
+    const _vEnd=(sc,bz,st,pcs)=>{ const dk=_vDk(sc,st,pcs);
       if(dk!=null && bz.start_time) return new Date(new Date(bz.start_time).getTime()+dk*60000).toISOString();
       return bz.end_time||null; };                                   // std. zaman yoksa eski davranış (uyarı zaten çıkıyor)
     const KAT_MAX=1000;      // bu katsayının üstü = LeanSys miktarı stok biriminde değil (aşağıda açıklama)
@@ -3611,7 +3614,7 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
           // MİKTAR: baz üretimin parçasından hedef adımın parçasına ürün ağacı oranıyla çevir (1 plaka = 12 adet vb.)
           const _bazAdim=adimlar.find(a=>bz.machine_code&&a.mc&&bz.machine_code===a.mc)
                      || adimlar.find(a=>equipScore(bz.machine_name||bz.machine_code,a.mn)>=0.6);
-          let _qty=bz.quantity??null, _unit=null;
+          let _qty=bz.quantity??null, _unit=null, _pcs=Number(bz.quantity)||0;   // _pcs = MAMUL ADEDİ (süre bundan)
           // 1) İŞ EMRİ PLANI (LeanSys'in kendi hesabı, doğru birimde) — en güvenilir kaynak.
           const _wp=_wpPick(bz.work_order, st.mc, st.pk&&_birim[st.pk]);
           const _bp=_wpPick(bz.work_order, bz.machine_code, bz.unit);
@@ -3621,6 +3624,7 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
             const tam=/adet|plaka|paket|koli|rulo|top/i.test(_wp.birim||'');
             _qty = tam ? Math.max(1,Math.round(_wp.qty*K)) : Math.round(_wp.qty*K*1e4)/1e4;
             _unit=_wp.birim||null;
+            if(_wp.pcs>0) _pcs=Math.round(_wp.pcs*K);                  // süre: iş emrinin MAMUL adedi × gerçekleşme oranı
           }
           // 2) Plan yoksa ESKİ YÖNTEM: ürün ağacı oranı (akıl süzgeciyle)
           else if(_qty!=null && _bazAdim && _bazAdim.pk && st.pk && _bazAdim.pk!==st.pk){
@@ -3640,7 +3644,7 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
             machine_code:st.mc||bz.machine_code||null, machine_name:st.mn||'',
             stock_code:sc, stock_name:bz.stock_name||null, customer:bz.customer||null,
             work_order:bz.work_order||null, quantity:_qty, unit:_unit||(st.pk&&_birim[st.pk])||bz.unit||null,
-            start_time:bz.start_time||null, end_time:_vEnd(sc,bz,st,_qty), duration_min:_vDk(sc,st,_qty),
+            start_time:bz.start_time||null, end_time:_vEnd(sc,bz,st,_pcs), duration_min:_vDk(sc,st,_pcs),
             operator:bz.operator||null,
             fingerprint:(st.mc||'')+'|'+(bz.start_time||'')+'|'+sc+'|'+st.op+'|V' });
         });
