@@ -3433,8 +3433,9 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
   const pgBar=el('progress',{max:String(prods.length||1),value:'0',style:'width:100%;height:16px;display:block'});
   const pgTxt=el('div',{style:'font-size:12.5px;font-weight:600;color:var(--text);margin-top:4px'});
   status.append(pgBar,pgTxt);
-  const pgSet=(i,extra)=>{ pgBar.value=String(i); const pc=Math.round(i*100/(prods.length||1));
-    pgTxt.textContent='⏳ %'+pc+' · '+i+'/'+prods.length+' üretim'+(extra||''); };
+  const pgSet=(i,extra)=>{ const tot=prods.length||1;
+    pgBar.max=String(tot); pgBar.value=String(i);            // toplam sanal üretimlerle artabilir → max'ı da güncelle
+    pgTxt.textContent='⏳ %'+Math.round(i*100/tot)+' · '+i+'/'+tot+' üretim'+(extra||''); };
   pgSet(0,'');
   // ➕ SANAL ÜRETİM ADIMLARI: planda tanımlı ama o iş emrinde üretim kaydı olmayan operasyonlar
   // (ör. laminasyon/el işçiliği) aynı iş emri-miktar-tarihle sanal üretim olarak eklenir; kontrolleri normal akışta üretilir.
