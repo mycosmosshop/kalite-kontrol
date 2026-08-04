@@ -3510,6 +3510,31 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
     { const pks=[...new Set(Object.values(rotaByStock).flat().map(x=>x.pk).filter(Boolean))];
       for(let i=0;i<pks.length;i+=100){ try{ const {data:sk}=await sb.from('stok_kartlari').select('stok_kodu,birim').in('stok_kodu',pks.slice(i,i+100));
         (sk||[]).forEach(x=>{ if(x.birim)_birim[x.stok_kodu]=x.birim; }); }catch(e){} } }
+    // İŞ EMRİ OPERASYON PLANI — sanal miktarın BİRİNCİL kaynağı.
+    // LeanSys her iş emrinin her operasyonu için üretilecek miktarı DOĞRU BİRİMDE hesaplıyor
+    // (350.0.831 · 10000 Adet → op1 14,42 m² · op3 0,2884 Rulo · op5 10000 Adet).
+    // Ara operasyonun GERÇEKLEŞEN miktarı bazen stok biriminde değil (LMN2 "30000 Rulo" aslında metre);
+    // o sayıyı ürün ağacıyla çarpınca milyarlık adet çıkıyordu. Plandan okuyunca bu sorun ortadan kalkar.
+    const _woPlan={};   // isemri|makine_kodu -> {qty,birim,op}
+    { const wos=[...new Set(prods.map(p=>p.work_order).filter(Boolean))], gelen=new Set();
+      const yukleW=async list=>{ for(let i=0;i<list.length;i+=100){ try{
+          const {data}=await sb.from('isemri_operasyonlari').select('is_emri,op_no,makine_kodu,planlanan,op_birim').in('is_emri',list.slice(i,i+100));
+          (data||[]).forEach(x=>{ if(!x.is_emri||!x.makine_kodu||!(Number(x.planlanan)>0))return;
+            gelen.add(x.is_emri); const k=x.is_emri+'|'+x.makine_kodu;
+            if(!_woPlan[k]||Number(x.op_no)<_woPlan[k].op) _woPlan[k]={qty:Number(x.planlanan),birim:x.op_birim||'',op:Number(x.op_no)}; });
+        }catch(e){} } };
+      await yukleW(wos);
+      const eksikW=wos.filter(w=>!gelen.has(w));
+      let denW=[]; try{ denW=JSON.parse(sessionStorage.getItem('kk_wo_try')||'[]'); }catch(e){}
+      const cekW=eksikW.filter(w=>!denW.includes(w)).slice(0,200);          // oturumda bir kez dene
+      if(cekW.length){
+        pgTxt.textContent='⏳ İş emri operasyon planı LeanSys’ten çekiliyor ('+cekW.length+' iş emri)…';
+        try{ const ac=new AbortController(); const t=setTimeout(()=>ac.abort(),90000);
+          await fetch('http://127.0.0.1:17777/refreshisemri?wo='+encodeURIComponent(cekW.join(',')),{mode:'cors',signal:ac.signal});
+          clearTimeout(t); await yukleW(cekW);
+        }catch(e){}
+        try{ sessionStorage.setItem('kk_wo_try',JSON.stringify([...denW,...cekW])); }catch(e){}
+      } }
     // ÜRÜN AĞACI (miktar dönüşümü): urun_kodu -> {tuketim_kodu: miktar}. Eksikse LeanSys'ten otomatik çekilir.
     const _agac={};
     { // yalnız ANA ürün kodları sorgulanır: LeanSys ağaç çekimi zaten alt parçaları (yarımamul/hammadde) da getirir
@@ -3582,8 +3607,19 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
           // MİKTAR: baz üretimin parçasından hedef adımın parçasına ürün ağacı oranıyla çevir (1 plaka = 12 adet vb.)
           const _bazAdim=adimlar.find(a=>bz.machine_code&&a.mc&&bz.machine_code===a.mc)
                      || adimlar.find(a=>equipScore(bz.machine_name||bz.machine_code,a.mn)>=0.6);
-          let _qty=bz.quantity??null;
-          if(_qty!=null && _bazAdim && _bazAdim.pk && st.pk && _bazAdim.pk!==st.pk){
+          let _qty=bz.quantity??null, _unit=null;
+          // 1) İŞ EMRİ PLANI (LeanSys'in kendi hesabı, doğru birimde) — en güvenilir kaynak.
+          const _wp=_woPlan[(bz.work_order||'')+'|'+(st.mc||'')];
+          const _bp=_woPlan[(bz.work_order||'')+'|'+(bz.machine_code||'')];
+          if(_wp){
+            let K=1;                                                        // gerçekleşme/plan oranı (fazla üretim varsa ölçekle)
+            if(_bp && _bp.qty>0 && bz.quantity>0){ const k=bz.quantity/_bp.qty; if(k>=0.1&&k<=10) K=k; }
+            const tam=/adet|plaka|paket|koli|rulo|top/i.test(_wp.birim||'');
+            _qty = tam ? Math.max(1,Math.round(_wp.qty*K)) : Math.round(_wp.qty*K*1e4)/1e4;
+            _unit=_wp.birim||null;
+          }
+          // 2) Plan yoksa ESKİ YÖNTEM: ürün ağacı oranı (akıl süzgeciyle)
+          else if(_qty!=null && _bazAdim && _bazAdim.pk && st.pk && _bazAdim.pk!==st.pk){
             const ileri=agacKatsayi(_bazAdim.pk,st.pk,_agac);            // 1 baz = ileri × hedef
             const geri =ileri==null?agacKatsayi(st.pk,_bazAdim.pk,_agac):null;   // 1 hedef = geri × baz
             const _tam=/adet|plaka|paket|koli|rulo|top/i.test(String((st.pk&&_birim[st.pk])||''));   // Kg/m2/m3 ondalık kalsın
@@ -3599,7 +3635,7 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
           yeni.push({ prod_date:bz.prod_date||null, shift:bz.shift??null, op_no:st.op,
             machine_code:st.mc||bz.machine_code||null, machine_name:st.mn||'',
             stock_code:sc, stock_name:bz.stock_name||null, customer:bz.customer||null,
-            work_order:bz.work_order||null, quantity:_qty, unit:(st.pk&&_birim[st.pk])||bz.unit||null,
+            work_order:bz.work_order||null, quantity:_qty, unit:_unit||(st.pk&&_birim[st.pk])||bz.unit||null,
             start_time:bz.start_time||null, end_time:_vEnd(sc,bz,st,_qty), duration_min:_vDk(sc,st,_qty),
             operator:bz.operator||null,
             fingerprint:(st.mc||'')+'|'+(bz.start_time||'')+'|'+sc+'|'+st.op+'|V' });
