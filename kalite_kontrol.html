@@ -3445,17 +3445,21 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
           if(sc2+bonus>bs){ bs=sc2+bonus; bi=st; } });
         if(bi&&bs>0) kapsanan.add(bi.op+'|'+(bi.mc||bi.mn));
       });
-      adimlar.forEach(st=>{
-        const key=st.op+'|'+(st.mc||st.mn);
-        if(kapsanan.has(key)) return;                                       // bu adımda zaten üretim var
-        const _ps=rawPlan[sc+'|'+st.hid+'|'+st.op];
-        if(!_ps||!_ps.size) return;                                         // planda bu adımın ölçümü yok → kontrol üretilemez, sanal üretme
-        yeni.push({ prod_date:base.prod_date||null, shift:base.shift??null, op_no:st.op,
-          machine_code:st.mc||base.machine_code||null, machine_name:st.mn||'',
-          stock_code:sc, stock_name:base.stock_name||null, customer:base.customer||null,
-          work_order:base.work_order||null, quantity:base.quantity??null, unit:base.unit||null,
-          start_time:base.start_time||null, end_time:base.end_time||null, operator:base.operator||null,
-          fingerprint:(st.mc||'')+'|'+(base.start_time||'')+'|'+sc+'|'+st.op+'|V' });
+      // HER GERÇEK ÜRETİM için eksik adımlar (aynı iş emrinde 3 kesim partisi varsa 3 plakalama/el işçiliği)
+      g.forEach(bz=>{
+        if(/\|V$/.test(bz.fingerprint||'')) return;                          // sanalın sanalını üretme
+        adimlar.forEach(st=>{
+          const key=st.op+'|'+(st.mc||st.mn);
+          if(kapsanan.has(key)) return;                                     // bu adımda zaten GERÇEK üretim var
+          const _ps=rawPlan[sc+'|'+st.hid+'|'+st.op];
+          if(!_ps||!_ps.size) return;                                       // planda bu adımın ölçümü yok → sanal üretme
+          yeni.push({ prod_date:bz.prod_date||null, shift:bz.shift??null, op_no:st.op,
+            machine_code:st.mc||bz.machine_code||null, machine_name:st.mn||'',
+            stock_code:sc, stock_name:bz.stock_name||null, customer:bz.customer||null,
+            work_order:bz.work_order||null, quantity:bz.quantity??null, unit:bz.unit||null,
+            start_time:bz.start_time||null, end_time:bz.end_time||null, operator:bz.operator||null,
+            fingerprint:(st.mc||'')+'|'+(bz.start_time||'')+'|'+sc+'|'+st.op+'|V' });
+        });
       });
     });
     { const _seen=new Set(); for(let i=yeni.length-1;i>=0;i--){ if(_seen.has(yeni[i].fingerprint)) yeni.splice(i,1); else _seen.add(yeni[i].fingerprint); } }   // aynı fingerprint iki kez gitmesin
