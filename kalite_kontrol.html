@@ -1943,10 +1943,16 @@ async function renderPlan(){
       eşBox));
     (async()=>{
       try{
-        const [{data:lp},{data:oc}]=await Promise.all([
+        let [{data:lp},{data:oc}]=await Promise.all([
           sb.from('leansys_kontrol_plani').select('operasyon_id,op_no,olculecek,uretim_ekipman').eq('stok_kodu',PLAN_SEL),
           sb.from('operasyon_kartlari').select('header_id,op_no,makine_kodu,makine_adi,rota_adi,varsayilan').eq('stok_kodu',PLAN_SEL)
         ]);
+        // operasyon kartı hiç çekilmemişse LeanSys'ten OTOMATİK çek (ajan) ve tekrar oku
+        if(!oc||!oc.length){
+          eşBox.innerHTML='<div class="empty" style="padding:10px">Operasyon kartı LeanSys’ten çekiliyor…</div>';
+          try{ await fetch('http://127.0.0.1:17777/refreshop?codes='+encodeURIComponent(PLAN_SEL),{mode:'cors'});
+            ({data:oc}=await sb.from('operasyon_kartlari').select('header_id,op_no,makine_kodu,makine_adi,rota_adi,varsayilan').eq('stok_kodu',PLAN_SEL)); }catch(e){}
+        }
         const rota={}; (oc||[]).forEach(o=>{ rota[o.header_id+'|'+Number(o.op_no)]={mc:o.makine_kodu,mn:o.makine_adi||'',ad:o.rota_adi||('Rota '+o.header_id),def:o.varsayilan===true}; });
         const plan={}; (lp||[]).forEach(x=>{ if(x.operasyon_id==null||x.op_no==null)return; const k=x.operasyon_id+'|'+Number(x.op_no);
           const g=plan[k]||(plan[k]={hid:x.operasyon_id,op:Number(x.op_no),eq:new Set(),ol:new Set()});
@@ -1959,7 +1965,9 @@ async function renderPlan(){
         keys.forEach(k=>{ const r=rota[k]||null, pl=plan[k]||null;
           const eqs=pl?[...pl.eq]:[]; const rmn=r?r.mn:'';
           let dur,st;
+          const rotaYok=!Object.keys(rota).length;
           if(!pl){ dur='Planda ölçüm yok'; st='#94a3b8'; }
+          else if(rotaYok){ dur='Operasyon kartı yok (LeanSys’ten çek)'; st='#f59e0b'; }
           else if(!r){ dur='Rotada bu adım yok'; st='#f59e0b'; }
           else if(!eqs.length){ dur='Planda ekipman boş'; st='#f59e0b'; }
           else { const en=Math.max(...eqs.map(e=>equipScore(rmn,e)));      // aynı makine mi: evet/hayır (yazım farkı tolere edilir)

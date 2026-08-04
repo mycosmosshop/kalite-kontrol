@@ -1,0 +1,22 @@
+# Supabase projelerini CANLI tutar: ücretsiz planda 7 gün hareketsiz kalan proje otomatik duraklatılır.
+# Her gün her projeye küçük bir REST isteği atar (yalnız okuma; hiçbir veri değişmez).
+# Anahtarlar ANON (public) — zaten uygulamaların HTML'inde yayında, gizli değil.
+name: Supabase keepalive
+on:
+  schedule:
+    - cron: '17 6 * * *'      # her gün 06:17 UTC
+  workflow_dispatch:           # elle de çalıştırılabilir
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping projeler
+        run: |
+          ping() {
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 -H "apikey: $2"               "https://$1.supabase.co/rest/v1/keepalive_zzz?select=x&limit=1")
+            echo "$1 -> HTTP $code"
+          }
+          ping nnubrxbpthmkitueixbh "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5udWJyeGJwdGhta2l0dWVpeGJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1NjI2MDIsImV4cCI6MjA5NjEzODYwMn0.CHZUOylf_q8kkOQbFf9VWZ6-doUTlynmAhahM2EuImE"
+          ping bgraqliedgmksqdbddkp "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJncmFxbGllZGdta3NxZGJkZGtwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAzODA4MDEsImV4cCI6MjA5NTk1NjgwMX0.htOoBiFUfUsUgkUrbB0BZEanZR5lioYjJYVjobo2oO0"
+          ping donjfzetqpzrgforhenu "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRvbmpmemV0cXB6cmdmb3JoZW51Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM5MzMyNTMsImV4cCI6MjA5OTUwOTI1M30.qKwUeImRijR9V7TUoXYAfGxJpMF2hocZzXFK8ph189I"
+          ping chchaielttnimuuezazb ""
