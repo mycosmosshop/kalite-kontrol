@@ -3418,10 +3418,13 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
   const rawPlan={};     // stok|rota|op -> Set(ölçüm adı)  (ham kontrol planı, rota bazlı)
   const rawRows={};     // stok -> ham plan satırları (ekipman eşleşmesi için)
   const rotaByStock={}; // stok -> rota adımları [{hid,op,mc,mn,def}]
+  const szBy={}, szOp={};   // stok|makine -> LeanSys op kartı Std.Zaman (DK/birim), en küçük op_no'nunki
   const _nm=x=>deTr(String(x||'').trim());
   const _loadRota=async codes=>{ for(let i=0;i<codes.length;i+=100){
-      const {data:oc}=await sb.from('operasyon_kartlari').select('stok_kodu,op_no,makine_kodu,makine_adi,header_id,varsayilan,parca_kodu').in('stok_kodu',codes.slice(i,i+100));
+      const {data:oc}=await sb.from('operasyon_kartlari').select('stok_kodu,op_no,makine_kodu,makine_adi,header_id,varsayilan,parca_kodu,std_zaman').in('stok_kodu',codes.slice(i,i+100));
       (oc||[]).forEach(o=>{ if(!o.makine_kodu||o.op_no==null)return; const k=(o.stok_kodu||'')+'|'+o.makine_kodu;
+        { const v=Number(o.std_zaman), n=Number(o.op_no);                       // aynı makine iki adımdaysa küçük op (büyük op'takiler Kapasite=1 dolgu satırı)
+          if(v>0 && (szOp[k]==null || n<szOp[k])){ szBy[k]=v; szOp[k]=n; } }
         (opsByMachine[k]=opsByMachine[k]||[]).push(Number(o.op_no));
         (rotaSteps[k]=rotaSteps[k]||[]).push({hid:o.header_id,op:Number(o.op_no),def:o.varsayilan===true});
         (rotaByStock[o.stok_kodu]=rotaByStock[o.stok_kodu]||[]).push({hid:o.header_id,op:Number(o.op_no),mc:o.makine_kodu,mn:o.makine_adi||o.makine_kodu,def:o.varsayilan===true,pk:o.parca_kodu||null});
@@ -3512,6 +3515,12 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
         }catch(e){ toast('Ürün ağacı çekilemedi (miktar dönüşümü yapılamayabilir).','err'); }
         try{ sessionStorage.setItem('kk_bom_try',JSON.stringify([...denenmis,...cekilecek])); }catch(e){}
       } }
+    // SANAL adımın SÜRESİ: bazın bitişini KOPYALAMA — her operasyon kendi std. zamanı kadar sürer.
+    // (Baz KP5'in LeanSys bitişi bazen başlamadan 20 sn sonra geliyor; kopyalanınca sanal satır süresiz kalıyordu.)
+    const _vDk=(sc,st,qty)=>{ const sz=szBy[sc+'|'+(st.mc||'')]||0; return (sz>0&&qty>0)?Math.round(qty*sz):null; };
+    const _vEnd=(sc,bz,st,qty)=>{ const dk=_vDk(sc,st,qty);
+      if(dk!=null && bz.start_time) return new Date(new Date(bz.start_time).getTime()+dk*60000).toISOString();
+      return bz.end_time||null; };                                   // std. zaman yoksa eski davranış (uyarı zaten çıkıyor)
     const yeni=[];
     const gruplar={};   // stok|iş emri → üretimler
     prods.forEach(p=>{ const g=(p.stock_code||'')+'|'+(p.work_order||''); (gruplar[g]=gruplar[g]||[]).push(p); });
@@ -3560,7 +3569,8 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
             machine_code:st.mc||bz.machine_code||null, machine_name:st.mn||'',
             stock_code:sc, stock_name:bz.stock_name||null, customer:bz.customer||null,
             work_order:bz.work_order||null, quantity:_qty, unit:(st.pk&&_birim[st.pk])||bz.unit||null,
-            start_time:bz.start_time||null, end_time:bz.end_time||null, operator:bz.operator||null,
+            start_time:bz.start_time||null, end_time:_vEnd(sc,bz,st,_qty), duration_min:_vDk(sc,st,_qty),
+            operator:bz.operator||null,
             fingerprint:(st.mc||'')+'|'+(bz.start_time||'')+'|'+sc+'|'+st.op+'|V' });
         });
       });
@@ -3582,7 +3592,10 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
   for(const p of prods){
     pgSet(++doneN,' · '+made+' kayıt');
     if(!p.start_time){skipped++;continue;}   // başlama şart
-    const cs=cyc[(p.machine_code||'?')+'||'+(p.stock_code||'?')], start=new Date(p.start_time);
+    let cs=cyc[(p.machine_code||'?')+'||'+(p.stock_code||'?')]; const start=new Date(p.start_time);
+    // SANAL (◇) satır türetilmiştir, gerçek saati yoktur: çevrim tablosu boşsa LeanSys op kartı
+    // std. zamanına düş. Böylece bitişi bazdan kopyalanmış ESKİ sanal kayıtlar da düzelir.
+    if(!(cs>0) && /\|V$/.test(p.fingerprint||'')) cs=(szBy[(p.stock_code||'')+'|'+(p.machine_code||'')]||0)*60;
     const _qty=Number(p.quantity);
     // ADET (miktar) yok ya da 0 → kontrol OLMAMALI; varsa eski (hatalı) kayıtları temizle, atla. (En başta: bitmiş/devam eden/eski 16saat+ fark etmez.)
     if(!(_qty>0)){
