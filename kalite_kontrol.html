@@ -3218,6 +3218,18 @@ async function openBulkAuto(){
     return; }
   const combos={}; prods.forEach(p=>{ const mc=p.machine_code||'?', sc=p.stock_code||'?'; const k=mc+'||'+sc;
     if(!combos[k])combos[k]={key:k,machine_code:mc,machine_name:p.machine_name,stock_code:sc,stock_name:p.stock_name,unit:p.unit,count:0}; combos[k].count++; });
+  // SANAL adımların çevrimi de girilebilsin: rotada olup ÜRETİM KAYDI OLMAYAN makineler de tabloya eklenir
+  // (ör. PLAKALAMA / EL İŞÇİLİĞİ). Sanal üretim kutusu işaretliyse bu satırlara girdiğin süre kullanılır.
+  { const _scs=[...new Set(prods.map(p=>p.stock_code).filter(Boolean))], _snm={};
+    prods.forEach(p=>{ if(p.stock_name)_snm[p.stock_code]=p.stock_name; });
+    for(let i=0;i<_scs.length;i+=100){
+      try{ const {data:oc}=await sb.from('operasyon_kartlari')
+             .select('stok_kodu,op_no,makine_kodu,makine_adi,varsayilan').in('stok_kodu',_scs.slice(i,i+100)).order('op_no');
+        (oc||[]).forEach(o=>{ if(!o.makine_kodu||o.varsayilan===false)return;
+          const k=o.makine_kodu+'||'+o.stok_kodu; if(combos[k])return;      // gerçek üretimi var, zaten listede
+          combos[k]={key:k,machine_code:o.makine_kodu,machine_name:o.makine_adi||o.makine_kodu,
+            stock_code:o.stok_kodu,stock_name:_snm[o.stok_kodu]||'',unit:'',count:0,sanal:true,op_no:o.op_no}; });
+      }catch(e){} } }
   let savedCyc={}; try{ savedCyc=JSON.parse(localStorage.getItem('kk_cyc')||'{}'); }catch(e){}   // KOD+MAKİNE bazlı kayıtlı çevrim süreleri
   const cyc={}; Object.keys(combos).forEach(k=>{ if(Number(savedCyc[k])>0) cyc[k]=Number(savedCyc[k]); });
   const bg=el('div',{class:'modal-bg',onclick:e=>{if(e.target===bg)root.innerHTML='';}});
@@ -3296,13 +3308,14 @@ async function openBulkAuto(){
   const kapsam = secili ? ('🎯 '+prods.length+' SEÇİLİ üretim') : (aktifFiltre ? ('🔎 Filtreli kapsam — '+prods.length+' üretim'+(URETIM_FILT.stock?' · '+URETIM_FILT.stock:'')+((URETIM_FILT.start||URETIM_FILT.end)?' · '+(URETIM_FILT.start||'…')+'–'+(URETIM_FILT.end||'…'):'')) : (prods.length+' üretim (planı olan tümü)'));
   m.append(el('p',{class:'meta'},`${kapsam}. Çevrim süresi (saniye/birim) girersen bitiş = başlangıç + adet × çevrim olarak yeniden hesaplanıp üretime yazılır. <b>Her satır KOD + MAKİNE bazlıdır</b> (aynı makinede 12 gözlü kalıp vb. farklı ürün = farklı çevrim); girdiğin değer o <b>ürün+makine</b> için hafızaya kaydedilir — tekrar açınca hatırlanır ve düzenlenebilir. ÇEVRİM GİRMEZSEN üretimin MEVCUT başlama–bitiş süresi kullanılır. Sonra plandaki örnekleme sıklığına göre Seri Başı + saatlik Proses + Son üretilir (hepsi uygun, rastgele). Satır seçersen sadece seçilenlere; filtre uygularsan filtre kapsamına uygulanır.`));
   if(noPlan.length){ m.append(el('div',{class:'msg err',style:'margin:0 0 12px',html:`⚠ <b>${noPlan.length} üretim</b> kapsam DIŞI: stok kodunun kontrol planı yok → <b>${noPlanStocks.map(esc).join(', ')}</b>. Bu makineler/çevrimler aşağıda görünmez ve bitişleri hesaplanmaz. Çözüm: Kontrol Planı’nda «📋 Başka Koda Kopyala» ile bu kod(lar)a plan oluştur, sonra tekrar dene.`}));}
-  Object.values(combos).sort((a,b)=>(a.stock_code+a.machine_code).localeCompare(b.stock_code+b.machine_code)).forEach(c=>{
+  Object.values(combos).sort((a,b)=>((a.sanal?1:0)-(b.sanal?1:0))||(a.stock_code+a.machine_code).localeCompare(b.stock_code+b.machine_code)).forEach(c=>{
     const inp=el('input',{class:'inp',type:'number',step:'0.001',value:(cyc[c.key]>0?cyc[c.key]:''),placeholder:'çevrim süresi (sn/'+(c.unit||'birim')+')',
       oninput:e=>{ const v=Number(e.target.value)||0; cyc[c.key]=v;
         try{ const s=JSON.parse(localStorage.getItem('kk_cyc')||'{}'); if(v>0)s[c.key]=v; else delete s[c.key]; localStorage.setItem('kk_cyc',JSON.stringify(s)); }catch(_){} }});
     cycInputs[c.key]=inp;
     m.append(el('div',{class:'row',style:'margin-bottom:8px'},
-      el('div',{class:'field grow'},el('label',{class:'lab'},`📦 ${esc(c.stock_code)}${c.stock_name?(' — '+esc(c.stock_name)):''} · 🛠 ${esc(c.machine_code)} ${esc(c.machine_name||'')} · ${c.count} üretim · birim: ${esc(c.unit||'-')}`), inp)));
+      el('div',{class:'field grow'},el('label',{class:'lab',html:`📦 ${esc(c.stock_code)}${c.stock_name?(' — '+esc(c.stock_name)):''} · 🛠 ${esc(c.machine_code)} ${esc(c.machine_name||'')} · `
+        + (c.sanal ? `<b style="color:var(--muted)">◇ SANAL adım (op${c.op_no??'-'}) — üretim kaydı yok</b>` : `${c.count} üretim · birim: ${esc(c.unit||'-')}`)}), inp)));
   });
   // LOKASYON + KALİTECİ: lokasyon seçilirse kapsam o lokasyona daralır; kaliteci(ler) kayıtlara ölçümcü olarak yazılır
   const locSel=el('select',{class:'inp'});
@@ -3524,7 +3537,11 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
       } }
     // SANAL adımın SÜRESİ: bazın bitişini KOPYALAMA — her operasyon kendi std. zamanı kadar sürer.
     // (Baz KP5'in LeanSys bitişi bazen başlamadan 20 sn sonra geliyor; kopyalanınca sanal satır süresiz kalıyordu.)
-    const _vDk=(sc,st,qty)=>{ const sz=szBy[sc+'|'+(st.mc||'')]||0; return (sz>0&&qty>0)?Math.round(qty*sz):null; };
+    const _vDk=(sc,st,qty)=>{ if(!(qty>0)) return null;
+      const cs=cyc[(st.mc||'?')+'||'+(sc||'?')];                       // 1) çevrim tablosuna ELLE girilen (sn/birim) önce
+      if(cs>0) return Math.round(qty*cs/60);
+      const sz=szBy[sc+'|'+(st.mc||'')]||0;                            // 2) yoksa LeanSys op kartı std. zamanı (dk/birim)
+      return sz>0?Math.round(qty*sz):null; };
     const _vEnd=(sc,bz,st,qty)=>{ const dk=_vDk(sc,st,qty);
       if(dk!=null && bz.start_time) return new Date(new Date(bz.start_time).getTime()+dk*60000).toISOString();
       return bz.end_time||null; };                                   // std. zaman yoksa eski davranış (uyarı zaten çıkıyor)

@@ -31,6 +31,22 @@ assert.strictEqual(bitisDk(180,'351.0.022|910.5.608'),30);  // 21:35 → 22:05 �
 assert.strictEqual(bitisDk(320,'351.0.022|910.5.053'),80);  // 23:42 → 01:02 ✔ (gerçek üretim)
 assert.strictEqual(bitisDk(320,'351.0.022|910.5.159'),58);  // eskiden 23:42→23:42 idi, artık 00:40
 
+// sanal adımın süresi: elle girilen çevrim (sn) > LeanSys std. zaman (dk)
+const cycT={'910.5.159||351.0.022':20}, szByT={'351.0.022|910.5.159':0.18,'351.0.022|910.5.608':0.166};
+const vDk=(sc,mc,qty)=>{ if(!(qty>0))return null;
+  const cs=cycT[(mc||'?')+'||'+(sc||'?')]; if(cs>0) return Math.round(qty*cs/60);
+  const sz=szByT[sc+'|'+(mc||'')]||0; return sz>0?Math.round(qty*sz):null; };
+assert.strictEqual(vDk('351.0.022','910.5.159',180),60);   // elle girilen 20 sn kazanır: 180×20/60
+assert.strictEqual(vDk('351.0.022','910.5.608',180),30);   // elle yok → std. zaman 0,166 dk
+assert.strictEqual(vDk('351.0.022','910.5.999',180),null); // ikisi de yok → süre yazılmaz
+
+// çevrim tablosuna rotadaki ÜRETİMSİZ makineler de eklenir (sanal satır)
+const combosT={'910.5.053||351.0.186':{key:'910.5.053||351.0.186',count:44}};
+for(const o of [{makine_kodu:'910.5.053'},{makine_kodu:'910.5.608'},{makine_kodu:'910.5.159'},{makine_kodu:'910.5.159'}]){
+  const k=o.makine_kodu+'||351.0.186'; if(combosT[k])continue; combosT[k]={key:k,count:0,sanal:true}; }
+assert.deepStrictEqual(Object.values(combosT).filter(c=>c.sanal).map(c=>c.key),
+  ['910.5.608||351.0.186','910.5.159||351.0.186']);        // aynı makine iki op'ta olsa tek satır
+
 // eksik çevrim tespiti (🎲 Üret uyarısı)
 const combos={'A||X':{key:'A||X'},'B||X':{key:'B||X'}}, cyc={'A||X':10};
 assert.deepStrictEqual(Object.values(combos).filter(c=>!(cyc[c.key]>0)).map(c=>c.key),['B||X']);
