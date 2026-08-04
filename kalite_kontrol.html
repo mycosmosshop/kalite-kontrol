@@ -3388,9 +3388,16 @@ async function openBulkAuto(){
   // ÇEVRİM EKSİKLERİNİ LeanSys op kartından OTOMATİK doldur (elle girilenlere dokunmaz).
   // Sanal adımların makinesi (ör. EL İŞÇİLİĞİ) çevrim tablosuna elle girilmediği için süresi 0 kalıyordu.
   if(Object.values(combos).some(c=>!(cyc[c.key]>0))){
-    status.textContent='⏱ Eksik çevrim süreleri LeanSys’ten çekiliyor…';
+    status.textContent='⏱ Eksik çevrim süreleri LeanSys op kartından çekiliyor…';
     try{ await pullStdTime(null,true); }catch(e){}
-    status.textContent='';
+    // SONUCU GÖSTER: sessiz kalma. Dolan satır kaç, hâlâ boş olan hangisi?
+    const bos=Object.values(combos).filter(c=>!(cyc[c.key]>0));
+    bos.forEach(c=>{ const i=cycInputs[c.key]; if(i){ i.style.borderColor='var(--danger,#dc2626)'; i.placeholder='çevrim yok — LeanSys’te std. zaman tanımsız'; } });
+    status.innerHTML = bos.length
+      ? '⚠ '+bos.length+' satırda çevrim süresi yok (LeanSys op kartında std. zaman tanımsız): '
+        + bos.slice(0,3).map(c=>esc(c.machine_name||c.machine_code)).join(', ') + (bos.length>3?' +'+(bos.length-3):'')
+        + ' — kırmızı kutulara elle yazabilirsin.'
+      : '✔ Çevrim süreleri LeanSys op kartından dolduruldu (dk×60 = sn).';
   }
 }
 async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOps,opMap,addVirtual){
