@@ -3453,16 +3453,25 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
         (sk||[]).forEach(x=>{ if(x.birim)_birim[x.stok_kodu]=x.birim; }); }catch(e){} } }
     // ÜRÜN AĞACI (miktar dönüşümü): urun_kodu -> {tuketim_kodu: miktar}. Eksikse LeanSys'ten otomatik çekilir.
     const _agac={};
-    { const kodlar=[...new Set([...Object.keys(rotaByStock), ...Object.values(rotaByStock).flat().map(x=>x.pk)].filter(Boolean))];
+    { // yalnız ANA ürün kodları sorgulanır: LeanSys ağaç çekimi zaten alt parçaları (yarımamul/hammadde) da getirir
+      const anaKodlar=[...new Set(Object.keys(rotaByStock).filter(Boolean))];
+      const parcaKodlari=[...new Set(Object.values(rotaByStock).flat().map(x=>x.pk).filter(Boolean))];
       const yukle=async ks=>{ for(let i=0;i<ks.length;i+=80){ try{
           const {data:ua}=await sb.from('urun_agaclari').select('urun_kodu,tuketim_kodu,miktar').in('urun_kodu',ks.slice(i,i+80));
           (ua||[]).forEach(x=>{ if(!x.urun_kodu||!x.tuketim_kodu||!(Number(x.miktar)>0))return;
             (_agac[x.urun_kodu]=_agac[x.urun_kodu]||{})[x.tuketim_kodu]=Number(x.miktar); }); }catch(e){} } };
-      await yukle(kodlar);
-      const eksikA=kodlar.filter(k=>!_agac[k]);
-      if(eksikA.length){ try{ status.textContent='Ürün ağacı LeanSys’ten çekiliyor…';
-        await fetch('http://127.0.0.1:17777/refreshbom?codes='+encodeURIComponent(eksikA.slice(0,60).join(',')),{mode:'cors'});
-        await yukle(eksikA); }catch(e){} } }
+      await yukle([...anaKodlar,...parcaKodlari]);
+      const eksikA=anaKodlar.filter(k=>!_agac[k]);
+      let denenmis=[]; try{ denenmis=JSON.parse(sessionStorage.getItem('kk_bom_try')||'[]'); }catch(e){}
+      const cekilecek=eksikA.filter(k=>!denenmis.includes(k)).slice(0,20);   // oturumda bir kez dene, en çok 20 kod
+      if(cekilecek.length){
+        status.textContent='Ürün ağacı LeanSys’ten çekiliyor ('+cekilecek.length+' kod, ~1 dk)…';
+        try{ const ac=new AbortController(); const t=setTimeout(()=>ac.abort(),90000);   // 90 sn'de vazgeç
+          await fetch('http://127.0.0.1:17777/refreshbom?codes='+encodeURIComponent(cekilecek.join(',')),{mode:'cors',signal:ac.signal});
+          clearTimeout(t); await yukle(cekilecek);
+        }catch(e){ toast('Ürün ağacı çekilemedi (miktar dönüşümü yapılamayabilir).','err'); }
+        try{ sessionStorage.setItem('kk_bom_try',JSON.stringify([...denenmis,...cekilecek])); }catch(e){}
+      } }
     const yeni=[];
     const gruplar={};   // stok|iş emri → üretimler
     prods.forEach(p=>{ const g=(p.stock_code||'')+'|'+(p.work_order||''); (gruplar[g]=gruplar[g]||[]).push(p); });
