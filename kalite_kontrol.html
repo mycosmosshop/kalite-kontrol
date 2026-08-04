@@ -3670,7 +3670,7 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
         u.slice(0,6).map(esc).join('<br>')+(u.length>6?('<br>… +'+(u.length-6)):'')+'</div>');
     }
   }
-  let made=0,prodN=0,skipped=0,cleaned=0,recalcN=0,doneN=0; const noOp={};   // op eşleşmeyen üretimler: 'kod op N' -> adet
+  let made=0,prodN=0,skipped=0,cleaned=0,recalcN=0,doneN=0; const noOp={}, yabanci={};   // noOp: op eşleşmeyen · yabanci: makinesi rota/planda HİÇ olmayan üretimler
   for(const p of prods){
     pgSet(++doneN,' · '+made+' kayıt');
     if(!p.start_time){skipped++;continue;}   // başlama şart
@@ -3713,7 +3713,16 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
         ? _planP.filter(it=>Number(it.op_no)===_rs.op && _rs.names.has(_nm(it.measure_name)))   // aynı op + aynı ad → iki rota karışmaz
         : [];
       if(!items.length && _rs&&_rs.names&&_rs.names.size) items=_planP.filter(it=>_rs.names.has(_nm(it.measure_name)));  // op no tutmuyorsa yalnız ad
-      if(!items.length) items=opItemsFor(_planP,(_auto!=null?_auto:p.op_no),useAllOps); }   // 3) eski otomatik (yedek)
+      // 3) eski otomatik (yedek) — YALNIZ makine rota/planda TANINIYORSA.
+      // Tanınmıyorsa op no'ya bakıp BAŞKA operasyonun ölçümlerini yazma: VARGEL KESİM (rotada yok)
+      // op3 olduğu için KP11'in KALINLIK/BOY/EN ölçüleri ona yazılıyordu. Uydurma yerine raporla.
+      if(!items.length){
+        const _taninan = (opsByMachine[(p.stock_code||'')+'|'+(p.machine_code||'')]||[]).length>0
+                      || !(rawRows[p.stock_code]||[]).length                       // planda ekipman bilgisi hiç yoksa eski davranış
+                      || (rawRows[p.stock_code]||[]).some(x=>equipScore(p.machine_name||p.machine_code,x.uretim_ekipman)>0);
+        if(_taninan) items=opItemsFor(_planP,(_auto!=null?_auto:p.op_no),useAllOps);
+        else yabanci[(p.stock_code||'?')+' · '+(p.machine_name||p.machine_code||'?')]=(yabanci[(p.stock_code||'?')+' · '+(p.machine_name||p.machine_code||'?')]||0)+1;
+      } }
     if(!items.length){ const k=(p.stock_code||'?')+' op'+(p.op_no??'-'); noOp[k]=(noOp[k]||0)+1; skipped++; continue; }   // planda bu operasyon yok → sessiz atlama YERİNE raporla
     // proses sıklığı: proses maddelerinin EN KISA pozitif örnekleme sıklığı (aylık vb. uzun değerlere takılmasın); en çok 1 günle sınırla
     const freq=prosesCycleFreq(stageItems(items,'proses'));
@@ -3743,9 +3752,10 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
     if(did)prodN++; else skipped++;
     pgSet(doneN,' · '+made+' kayıt');
   }
+  const yabTxt=Object.keys(yabanci).length?(' ⛔ '+Object.values(yabanci).reduce((a,b)=>a+b,0)+' üretimin MAKİNESİ kontrol planında/rotada YOK: '+Object.entries(yabanci).slice(0,5).map(([k,v])=>k+' ×'+v).join(', ')+(Object.keys(yabanci).length>5?' …':'')+' — bu makineler için kontrol ÜRETİLMEDİ (başka operasyonun ölçüsü yazılmasın diye). LeanSys’te rotaya/plana eklenmeli ya da yukarıdaki «Operasyon eşleme»den elle seç.'):'';
   const noOpTxt=Object.keys(noOp).length?(' ⚠ '+Object.values(noOp).reduce((a,b)=>a+b,0)+' üretim atlandı: '+Object.entries(noOp).slice(0,6).map(([k,v])=>k+' ×'+v).join(', ')+(Object.keys(noOp).length>6?' …':'')+' — makinesi LeanSys rotasında bulunamadı ve plan bu op no’yu içermiyor. (Operasyon Kartları’nı çek ya da elle eşleme yaz.)'):'';
   pgBar.value=String(prods.length); pgBar.style.accentColor='#16a34a';
-  pgTxt.textContent=`Bitti ✓ ${prodN} üretim, ${made} yeni kontrol kaydı.${virtN?` ${virtN} sanal üretim adımı eklendi.`:''} ${recalcN?`${recalcN} bitiş çevrime göre hesaplandı. `:''}${skipped} atlandı/zaten tamdı.${cleaned?` ${cleaned} kısa üretimde fazla proses temizlendi.`:''}`+noOpTxt;
+  pgTxt.textContent=`Bitti ✓ ${prodN} üretim, ${made} yeni kontrol kaydı.${virtN?` ${virtN} sanal üretim adımı eklendi.`:''} ${recalcN?`${recalcN} bitiş çevrime göre hesaplandı. `:''}${skipped} atlandı/zaten tamdı.${cleaned?` ${cleaned} kısa üretimde fazla proses temizlendi.`:''}`+noOpTxt+yabTxt;
   toast(`${made} kontrol kaydı oluşturuldu (${prodN} üretim).${recalcN?` ${recalcN} üretimin bitişi çevrime göre yeniden yazıldı.`:''}`,'ok');
   go.disabled=false; loadControlCounts && loadControlCounts();
   renderUretimler();   // üretim listesini yenile → hesaplanan bitişler hemen görünür
