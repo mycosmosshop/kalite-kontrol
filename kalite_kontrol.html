@@ -3077,6 +3077,17 @@ function opByMachineName(items,machineName){
     if(r>bestR || (r===bestR && hit[o]>bestH)){ bestR=r; bestH=hit[o]; best=o; } });
   return best;
 }
+// 1 birim 'from' parçası için kaç 'to' gerekir (ürün ağacı zinciri; ör. 1 adet mamul = 0.0833 plaka → 1 plaka = 12 adet)
+function agacKatsayi(from,to,tree){
+  if(!from||!to) return null;
+  if(from===to) return 1;
+  const q=[[from,1]], seen=new Set([from]);
+  while(q.length){ const [k,f]=q.shift(); const kids=tree[k]||{};
+    for(const c in kids){ const nf=f*kids[c];
+      if(c===to) return nf;
+      if(!seen.has(c)){ seen.add(c); q.push([c,nf]); } } }
+  return null;
+}
 // ---- ROTA/EKİPMAN EŞLEŞTİRİCİ (ortak) --------------------------------------------------------
 // LeanSys ham kontrol planı (leansys_kontrol_plani) her ölçüm maddesinde ROTA (operasyon_id),
 // ADIM (op_no) ve ÜRETİM EKİPMANI taşır. Üretimin makinesini ekipmanla eşleştirip doğru adımı buluruz.
@@ -3440,6 +3451,18 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
     { const pks=[...new Set(Object.values(rotaByStock).flat().map(x=>x.pk).filter(Boolean))];
       for(let i=0;i<pks.length;i+=100){ try{ const {data:sk}=await sb.from('stok_kartlari').select('stok_kodu,birim').in('stok_kodu',pks.slice(i,i+100));
         (sk||[]).forEach(x=>{ if(x.birim)_birim[x.stok_kodu]=x.birim; }); }catch(e){} } }
+    // ÜRÜN AĞACI (miktar dönüşümü): urun_kodu -> {tuketim_kodu: miktar}. Eksikse LeanSys'ten otomatik çekilir.
+    const _agac={};
+    { const kodlar=[...new Set([...Object.keys(rotaByStock), ...Object.values(rotaByStock).flat().map(x=>x.pk)].filter(Boolean))];
+      const yukle=async ks=>{ for(let i=0;i<ks.length;i+=80){ try{
+          const {data:ua}=await sb.from('urun_agaclari').select('urun_kodu,tuketim_kodu,miktar').in('urun_kodu',ks.slice(i,i+80));
+          (ua||[]).forEach(x=>{ if(!x.urun_kodu||!x.tuketim_kodu||!(Number(x.miktar)>0))return;
+            (_agac[x.urun_kodu]=_agac[x.urun_kodu]||{})[x.tuketim_kodu]=Number(x.miktar); }); }catch(e){} } };
+      await yukle(kodlar);
+      const eksikA=kodlar.filter(k=>!_agac[k]);
+      if(eksikA.length){ try{ status.textContent='Ürün ağacı LeanSys’ten çekiliyor…';
+        await fetch('http://127.0.0.1:17777/refreshbom?codes='+encodeURIComponent(eksikA.slice(0,60).join(',')),{mode:'cors'});
+        await yukle(eksikA); }catch(e){} } }
     const yeni=[];
     const gruplar={};   // stok|iş emri → üretimler
     prods.forEach(p=>{ const g=(p.stock_code||'')+'|'+(p.work_order||''); (gruplar[g]=gruplar[g]||[]).push(p); });
@@ -3472,10 +3495,20 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
           if(kapsanan.has(key)) return;                                     // bu adımda zaten GERÇEK üretim var
           const _ps=rawPlan[sc+'|'+st.hid+'|'+st.op];
           if(!_ps||!_ps.size) return;                                       // planda bu adımın ölçümü yok → sanal üretme
+          // MİKTAR: baz üretimin parçasından hedef adımın parçasına ürün ağacı oranıyla çevir (1 plaka = 12 adet vb.)
+          const _bazAdim=adimlar.find(a=>bz.machine_code&&a.mc&&bz.machine_code===a.mc)
+                     || adimlar.find(a=>equipScore(bz.machine_name||bz.machine_code,a.mn)>=0.6);
+          let _qty=bz.quantity??null;
+          if(_qty!=null && _bazAdim && _bazAdim.pk && st.pk && _bazAdim.pk!==st.pk){
+            const ileri=agacKatsayi(_bazAdim.pk,st.pk,_agac);            // 1 baz = ileri × hedef
+            const geri =ileri==null?agacKatsayi(st.pk,_bazAdim.pk,_agac):null;   // 1 hedef = geri × baz
+            if(ileri>0) _qty=Math.max(1,Math.round(_qty*ileri));
+            else if(geri>0) _qty=Math.max(1,Math.round(_qty/geri));
+          }
           yeni.push({ prod_date:bz.prod_date||null, shift:bz.shift??null, op_no:st.op,
             machine_code:st.mc||bz.machine_code||null, machine_name:st.mn||'',
             stock_code:sc, stock_name:bz.stock_name||null, customer:bz.customer||null,
-            work_order:bz.work_order||null, quantity:bz.quantity??null, unit:(st.pk&&_birim[st.pk])||bz.unit||null,
+            work_order:bz.work_order||null, quantity:_qty, unit:(st.pk&&_birim[st.pk])||bz.unit||null,
             start_time:bz.start_time||null, end_time:bz.end_time||null, operator:bz.operator||null,
             fingerprint:(st.mc||'')+'|'+(bz.start_time||'')+'|'+sc+'|'+st.op+'|V' });
         });
