@@ -3763,7 +3763,9 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
 
 // ====================== KONTROL KAYITLARI ======================
 let KAYIT_STAGE='seri_basi';
-let KAYIT_FILT={start:'',end:'',stock:''};
+let KAYIT_FILT={start:'',end:'',stock:'',group:''};
+let _kayitKodCache=null;                 // oturum boyu: üretimlerin stok+makine kodu (kod listesi/şube filtresi için)
+const GROUP_CODES=(()=>{ const m={}; for(const k in MACHINE_GROUP_MAP){ (m[MACHINE_GROUP_MAP[k]]=m[MACHINE_GROUP_MAP[k]]||[]).push(k); } return m; })();
 let KAYIT_GK_FOCUS=null;   // izlenebilirlikten 'giriş kalite' tıklanınca: {stok,ad} → Giriş Kalite Kayıtları sekmesinde LeanSys giriş kontrolü gösterilir
 let KAYIT_PRODS=null;   // izlenebilirlik: bir op'un birden çok üretiminin kayıtları (liste)
 let _kayitDeb=null; // tarih yazarken her tuşta yeniden çizmesin
@@ -5428,15 +5430,26 @@ async function renderKayitlar(){
   const root=$('#tab-kayitlar');
   root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
   // kayıtlar (aşamaya göre) + üretim bilgileri (cari, başlama/bitiş, miktar, makine adı)
-  let q=sb.from('control_records').select('*').eq('stage',KAYIT_STAGE).order('checked_at',{ascending:false}).limit(2000);
-  if(KAYIT_PROD) q=q.eq('production_id',KAYIT_PROD);
-  if(KAYIT_PRODS&&KAYIT_PRODS.length) q=q.in('production_id',KAYIT_PRODS);   // izlenebilirlik: bir op'un tüm üretimleri
-  if(KAYIT_IRS) q=q.eq('giris_irsaliye',KAYIT_IRS);   // izlenebilirlik: yalnız bu irsaliyenin giriş kalitesi
-  if(KAYIT_FILT.stock) q=q.eq('stock_code',KAYIT_FILT.stock);
-  if(KAYIT_FILT.start) q=q.gte('checked_at',KAYIT_FILT.start);
-  if(KAYIT_FILT.end) q=q.lte('checked_at',KAYIT_FILT.end+'T23:59:59');
-  const [{data:recsD},{data:prodsD}]=await Promise.all([q, sb.from('productions').select('id,customer,start_time,end_time,quantity,unit,machine_name,machine_code,shift,stock_code,stock_name,prod_date,work_order,op_no,operator')]);
-  let recs=recsD||[];
+  // Her sayfa için TAZE sorgu (builder'a iki kez .range() verilemez). ORDER BY benzersiz olmalı,
+  // yoksa sayfalar arasında satır kaybolur.
+  const mkQ=()=>{ let q=sb.from('control_records').select('*').eq('stage',KAYIT_STAGE)
+      .order('checked_at',{ascending:false}).order('id',{ascending:false});
+    if(KAYIT_PROD) q=q.eq('production_id',KAYIT_PROD);
+    if(KAYIT_PRODS&&KAYIT_PRODS.length) q=q.in('production_id',KAYIT_PRODS);   // izlenebilirlik: bir op'un tüm üretimleri
+    if(KAYIT_IRS) q=q.eq('giris_irsaliye',KAYIT_IRS);   // izlenebilirlik: yalnız bu irsaliyenin giriş kalitesi
+    if(KAYIT_FILT.stock) q=q.eq('stock_code',KAYIT_FILT.stock);
+    if(KAYIT_FILT.group) q=q.in('machine_code',(GROUP_CODES[KAYIT_FILT.group]||[' ']));   // ŞUBE (makine grubu)
+    if(KAYIT_FILT.start) q=q.gte('checked_at',KAYIT_FILT.start);
+    if(KAYIT_FILT.end) q=q.lte('checked_at',KAYIT_FILT.end+'T23:59:59');
+    return q; };
+  const KAYIT_MAX=6000;                     // ponytail: sabit tavan; daha fazlası gerekirse tarih/şube ile daralt
+  let recs=[], kesildi=false;
+  for(let f=0; f<KAYIT_MAX; f+=1000){
+    const {data,error}=await mkQ().range(f,f+999);
+    if(error)break; recs.push(...(data||[]));
+    if(!data||data.length<1000)break;
+    if(f+1000>=KAYIT_MAX) kesildi=true;
+  }
   // İZLENEBİLİRLİK GİRİŞ KALİTE: irsaliye filtresi 0 sonuç verdiyse (trace FIFO irsaliyesi ≠ kayıt giriş irsaliyesi olabilir) → YALNIZ STOK ile tekrar dene, boş kalmasin
   if(!recs.length && KAYIT_IRS && KAYIT_STAGE==='giris' && KAYIT_FILT.stock){
     let q2=sb.from('control_records').select('*').eq('stage','giris').eq('stock_code',KAYIT_FILT.stock).order('checked_at',{ascending:false}).limit(2000);
@@ -5470,16 +5483,35 @@ async function renderKayitlar(){
     ));
   }
   // filtreler — stok kodu artık DROPDOWN (anında filtreler, kod bazlı)
-  const stocks=[...new Set((prodsD||[]).map(p=>p.stock_code).filter(Boolean))].sort();
-  const stockSel=el('select',{class:'inp',style:'min-width:170px',onchange:e=>{KAYIT_FILT.stock=e.target.value;renderKayitlar();}});
-  stockSel.append(el('option',{value:''},'Tüm stok kodları'));
-  stocks.forEach(s=>{ const o=el('option',{value:s},s); if(s===KAYIT_FILT.stock)o.selected=true; stockSel.append(o); });
+  if(!_kayitKodCache){   // TÜM üretimlerden (sayfalı) kod+makine — eskiden 1000 satırla sınırlıydı, kodların çoğu listede yoktu
+    const acc=[];
+    for(let f=0;;f+=1000){ const {data,error}=await sb.from('productions').select('stock_code,machine_code').order('id').range(f,f+999);
+      if(error)break; acc.push(...(data||[])); if(!data||data.length<1000)break; }
+    _kayitKodCache=acc;
+  }
+  const grupSet=[...new Set(_kayitKodCache.map(p=>machineGroupOf(p.machine_code)).filter(Boolean))].sort();
+  const stocks=[...new Set(_kayitKodCache
+      .filter(p=>!KAYIT_FILT.group||machineGroupOf(p.machine_code)===KAYIT_FILT.group)
+      .map(p=>p.stock_code).filter(Boolean))].sort();
+  // ŞUBE (makine grubu) filtresi
+  const grupSel=el('select',{class:'inp',style:'min-width:170px',onchange:e=>{KAYIT_FILT.group=e.target.value;KAYIT_FILT.stock='';renderKayitlar();}});
+  grupSel.append(el('option',{value:''},'Tüm şubeler'));
+  grupSet.forEach(g=>{ const o=el('option',{value:g},g); if(g===KAYIT_FILT.group)o.selected=true; grupSel.append(o); });
+  // STOK KODU: yazarak aranabilir (native datalist) — yüzlerce kod arasında dropdown'da kaybolmasın
+  const dl=el('datalist',{id:'kayitStokList'}); stocks.forEach(s=>dl.append(el('option',{value:s})));
+  const stockSel=el('input',{class:'inp',style:'min-width:170px',list:'kayitStokList',placeholder:'🔍 kod yaz/seç ('+stocks.length+')',value:KAYIT_FILT.stock||'',
+    onchange:e=>{ const v=e.target.value.trim();
+      if(v && !stocks.includes(v)){ const h=stocks.filter(x=>x.includes(v));
+        if(h.length===1) e.target.value=h[0];
+        else if(!h.length){ toast('Bu kodda üretim yok: '+esc(v),'err'); return; } }
+      KAYIT_FILT.stock=e.target.value.trim(); renderKayitlar(); }});
   const filt=el('div',{class:'card'},
     el('div',{class:'toolbar'},
       el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Başlangıç'),el('input',{type:'date',class:'inp',value:KAYIT_FILT.start,onchange:e=>{KAYIT_FILT.start=e.target.value;clearTimeout(_kayitDeb);_kayitDeb=setTimeout(renderKayitlar,800);}})),
       el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),el('input',{type:'date',class:'inp',value:KAYIT_FILT.end,onchange:e=>{KAYIT_FILT.end=e.target.value;clearTimeout(_kayitDeb);_kayitDeb=setTimeout(renderKayitlar,800);}})),
-      el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Stok Kodu'),stockSel),
-      el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{KAYIT_FILT={start:'',end:'',stock:''};KAYIT_IRS=null;KAYIT_PROD=null;KAYIT_PRODS=null;renderKayitlar();}},'Temizle'),
+      el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Şube'),grupSel),
+      el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Stok Kodu'),stockSel,dl),
+      el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{KAYIT_FILT={start:'',end:'',stock:'',group:''};KAYIT_IRS=null;KAYIT_PROD=null;KAYIT_PRODS=null;renderKayitlar();}},'Temizle'),
       el('div',{class:'grow'}),
       el('div',{class:'stat'},el('b',{},String(recs.length)),el('span',{},STAGES[KAYIT_STAGE])),
       el('button',{class:'btn sm',style:'flex:0',onclick:()=>exportRecords(recs)},'⬇ Excel'),
@@ -5490,6 +5522,7 @@ async function renderKayitlar(){
     )
   );
   root.append(filt);
+  if(kesildi) root.append(el('div',{class:'msg err',html:'⚠ En yeni <b>'+recs.length+'</b> kayıt gösteriliyor (tavan). Tümü için <b>tarih aralığı</b>, <b>şube</b> ya da <b>stok kodu</b> ile daralt.'}));
   // İZLENEBİLİRLİKTEN GİRİŞ KALİTE: odaklı malzemenin GERÇEK LeanSys giriş kontrolü (kontrol planı yoksa 'kontrol planı yok')
   if(KAYIT_STAGE==='giris' && KAYIT_GK_FOCUS){
     const f=KAYIT_GK_FOCUS;
