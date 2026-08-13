@@ -3225,7 +3225,12 @@ async function openBulkAuto(){
     for(let i=0;i<_scs.length;i+=100){
       try{ const {data:oc}=await sb.from('operasyon_kartlari')
              .select('stok_kodu,op_no,makine_kodu,makine_adi,varsayilan').in('stok_kodu',_scs.slice(i,i+100)).order('op_no');
-        (oc||[]).forEach(o=>{ if(!o.makine_kodu||o.varsayilan===false)return;
+        // VARSAYILAN rotası olan stokta yalnız onu kullan; HİÇ varsayılan yoksa (LeanSys'te
+        // tarihsiz kartlar çekilemediğinde oluyordu) eldeki rotaları kullan — yoksa hiçbir
+        // operasyon listelenmiyordu (700.0.570-A'da 6 adımdan yalnız paketleme görünüyordu).
+        const _varVar={}; (oc||[]).forEach(o=>{ if(o.varsayilan===true) _varVar[o.stok_kodu]=true; });
+        (oc||[]).forEach(o=>{ if(!o.makine_kodu) return;
+          if(_varVar[o.stok_kodu] && o.varsayilan!==true) return;
           const k=o.makine_kodu+'||'+o.stok_kodu; if(combos[k])return;      // gerçek üretimi var, zaten listede
           combos[k]={key:k,machine_code:o.makine_kodu,machine_name:o.makine_adi||o.makine_kodu,
             stock_code:o.stok_kodu,stock_name:_snm[o.stok_kodu]||'',unit:'',count:0,sanal:true,op_no:o.op_no}; });
