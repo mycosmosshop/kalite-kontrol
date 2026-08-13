@@ -656,6 +656,8 @@ const MACHINE_GROUP_MAP = {
   "910.5.972":"BURSA NON WOVEN PROSESI", "910.5.978":"ADANA SUBESI", "910.5.979":"ADANA SUBESI", "910.5.980":"ADANA SUBESI", "910.55.702":"ANKARA SUBESI"
 };
 function machineGroupOf(code){ return MACHINE_GROUP_MAP[String(code||'').trim()] || ''; }
+// NOT: grup -> makine kodlari haritasi (GROUP_CODES) aşağıda, Kontrol Kayıtları bölümünde
+// bir kez tanımlı; burada da (renderUretimler çalışma anında) kullanılır.
 function ufDate(p){ return p.prod_date || (p.start_time?String(p.start_time).slice(0,10):''); }
 function matchesUF(p){
   const ids=URETIM_FILT.ids||[];
@@ -1297,7 +1299,10 @@ async function renderUretimler(){
   const root=$('#tab-uretimler');
   root.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
   // Filtre yoksa: en son 500 (hız). Filtre (tarih/stok) varsa: veritabanından eşleşen TÜM kayıtları sayfa sayfa çek.
-  const _f=URETIM_FILT, _ids=_f.ids||[], _active=!!(_ids.length||_f.start||_f.end||_f.stock);
+  // Makine Grubu / Makine de AKTİF filtre sayılır. Eskiden sayılmıyordu: yalnız grup seçilince
+  // tüm şubelerden en yeni 500 kayıt çekilip istemcide süzülüyordu → Ankara'nın 582 üretiminin
+  // çoğu hiç gelmiyor, Stok Kodu listesi eksik/rastgele oluyordu.
+  const _f=URETIM_FILT, _ids=_f.ids||[], _active=!!(_ids.length||_f.start||_f.end||_f.stock||_f.group||_f.machine);
   let data=[], error=null;
   if(_ids.length){
     // izlenebilirlikten "Üretim listesinde gör" → YALNIZ bu op üretim ID'leri; sentetik (trace fill-in, boş satır) GÖSTERME
@@ -1310,6 +1315,8 @@ async function renderUretimler(){
     for(let from=0; from<40000; from+=1000){
       let q=sb.from('productions').select('*').neq('sentetik',true).order('start_time',{ascending:false}).range(from,from+999);
       if(_f.stock) q=q.eq('stock_code',_f.stock);
+      if(_f.machine) q=q.eq('machine_code',_f.machine);
+      else if(_f.group) q=q.in('machine_code',(GROUP_CODES[_f.group]||[' ']));   // şube = makine grubu
       if(_f.start) q=q.gte('prod_date',_f.start);
       if(_f.end)   q=q.lte('prod_date',_f.end);
       const r=await q;
