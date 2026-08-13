@@ -1982,7 +1982,7 @@ async function renderPlan(){
             else { dur='✘ Eşleşmiyor'; st='#dc2626'; } }
           body.append(el('tr',{},
             el('td',{style:'white-space:nowrap;font-size:12px'},(r?r.ad:'—')+(r&&r.def?' ★':'')),
-            el('td',{},String((pl||r).op)),
+            el('td',{},String(pl?pl.op:Number(k.split('|')[1]))),        // r'de op alanı yok → anahtardan
             el('td',{style:'font-size:12px'},rmn||'—',r&&r.mc?el('div',{style:'color:var(--muted);font-size:10.5px'},r.mc):''),
             el('td',{style:'font-size:12px'},eqs.length?eqs.join(' · '):'—'),
             el('td',{style:'font-size:11px;color:var(--muted);max-width:280px'},pl?[...pl.ol].slice(0,4).join(', ')+([...pl.ol].length>4?' …':''):'—'),
@@ -3113,11 +3113,35 @@ function agacKatsayi(from,to,tree,_d){
 const _kkWords=x=>[...new Set(deTr(String(x||'')).split(/[^a-z0-9]+/).filter(w=>w.length>=4))];
 // ORAN (0..1): kelime köklerinin kesişimi / birleşimi. Yazım farkına dayanıklı (ambalajlama↔ambaljlama),
 // ortak genel kelimeler (eskisehir/isciligi) tek başına eşleşme saydırmaz.
+// Damerau-Levenshtein <=1: harf yer degistirme/eksik/fazla TEK hatayi tolere eder.
+// Gercek vaka: makine kartinda "BLS BSL204", kontrol planinda elle "BLS BLS204" yazilmis;
+// aynı makine (910.5.003) olmasına rağmen "Eşleşmiyor" çıkıyordu.
+function _tokenYakin(a,b){
+  if(a===b) return true;
+  const la=a.length, lb=b.length;
+  if(Math.abs(la-lb)>1) return false;
+  if(la===lb){                                  // bitisik harf yer degistirmesi (bsl <-> bls)
+    let fark=[]; for(let i=0;i<la;i++) if(a[i]!==b[i]) fark.push(i);
+    if(fark.length===1) return true;                                   // tek harf farki
+    if(fark.length===2 && fark[1]===fark[0]+1
+       && a[fark[0]]===b[fark[1]] && a[fark[1]]===b[fark[0]]) return true;   // yer degistirme
+    return false;
+  }
+  const uzun=la>lb?a:b, kisa=la>lb?b:a;          // tek harf eksik/fazla
+  for(let i=0;i<uzun.length;i++) if(uzun.slice(0,i)+uzun.slice(i+1)===kisa) return true;
+  return false;
+}
 function equipScore(a,b){
-  const A=new Set(_kkWords(a).map(w=>w.slice(0,5))), B=new Set(_kkWords(b).map(w=>w.slice(0,5)));
-  if(!A.size||!B.size) return 0;
-  let kes=0; A.forEach(x=>{ if(B.has(x)) kes++; });
-  return kes/(A.size+B.size-kes);
+  const A=[..._kkWords(a).map(w=>w.slice(0,5))], B=[..._kkWords(b).map(w=>w.slice(0,5))];
+  if(!A.length||!B.length) return 0;
+  const kullanildi=new Array(B.length).fill(false);
+  let kes=0;
+  A.forEach(x=>{                                  // once birebir, sonra yazim-hatasi toleransli
+    let i=B.findIndex((y,j)=>!kullanildi[j] && y===x);
+    if(i<0) i=B.findIndex((y,j)=>!kullanildi[j] && _tokenYakin(x,y));
+    if(i>=0){ kullanildi[i]=true; kes++; }
+  });
+  return kes/(A.length+B.length-kes);
 }
 // rawRows: leansys_kontrol_plani satırları (tek stok). Dönüş: {hid,op,names:Set,equip} | null
 function routeStepFor(rawRows,machineName,machineCode,opNo,defHid){
