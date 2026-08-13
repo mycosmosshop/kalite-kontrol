@@ -1,40 +1,52 @@
 # Supabase projelerini CANLI tutar: ücretsiz planda 7 gün hareketsiz kalan proje otomatik duraklatılır.
 #
-# ÖNEMLİ DERS (2026-08-11): Eski sürüm var olmayan bir tabloyu (keepalive_zzz) sorguluyordu.
-# PostgREST bunu ŞEMA ÖNBELLEĞİNDEN 404 ile reddediyor, sorgu VERİTABANINA HİÇ GİTMİYOR →
-# Supabase "hareket yok" sayıyor ve duraklatma uyarısı gelmeye devam ediyordu.
-# Bu yüzden artık her projede GERÇEKTEN VAR OLAN bir tablo sorgulanır ve HTTP 200 beklenir;
-# 200 dışında bir yanıt gelirse iş BAŞARISIZ olur (sessizce bozulmasın).
+# DERS 1 (2026-08-11): Var olmayan tabloyu (keepalive_zzz) sorgulamak İŞE YARAMAZ. PostgREST bunu
+#   ŞEMA ÖNBELLEĞİNDEN 404 ile reddeder, sorgu veritabanına HİÇ GİTMEZ. İş yeşil görünür, proje durur.
+# DERS 2 (2026-08-13): Salt-okuma SELECT de yeterli olmayabilir — RLS yüzünden 0 satır dönebiliyor.
+#   Bu yüzden asıl ping artık YAZMA (upsert): her koşuda gerçek bir DB değişikliği + WAL üretir.
+#   Yazma için `keepalive` tablosu gerekir → supabase_keepalive_table.sql'i her projede BİR KEZ çalıştır.
+#   Tablo yoksa iş, okuma (COUNT) ping'ine düşer ve bunu UYARI olarak yazar.
 #
-# Anahtarlar ANON/publishable — zaten uygulamaların HTML'inde yayında, gizli değil. Yalnız okuma.
+# Anahtarlar ANON/publishable — zaten uygulamaların HTML'inde yayında, gizli değil.
 name: Supabase keepalive
 on:
   schedule:
     - cron: '17 6 * * *'      # her gün 06:17 UTC
-    - cron: '17 18 * * *'     # + akşam 18:17 UTC (bir koşu kaçarsa 7 günlük sayaç yine sıfırlanır)
-  workflow_dispatch:           # elle de çalıştırılabilir
+    - cron: '17 18 * * *'     # + 18:17 UTC (bir koşu kaçarsa 7 günlük sayaç yine sıfırlanır)
+  workflow_dispatch:
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping projeler (gerçek tablo, 200 zorunlu)
+      - name: Ping projeler (önce YAZMA, olmazsa COUNT)
         run: |
-          fail=0
-          ping() {   # $1=ref  $2=apikey  $3=tablo
-            code=$(curl -s -o /tmp/body -w '%{http_code}' --max-time 30 \
-                   -H "apikey: $2" "https://$1.supabase.co/rest/v1/$3?select=*&limit=1")
-            if [ "$code" = "200" ]; then
-              echo "OK   $1  ($3)"
+          fail=0; uyari=0
+          ping() {   # $1=ref  $2=apikey  $3=okuma_tablosu
+            base="https://$1.supabase.co/rest/v1"
+            # 1) YAZMA: tek satırlık keepalive tablosuna upsert (kesin DB hareketi)
+            w=$(curl -s -o /tmp/w -w '%{http_code}' --max-time 30 -X POST \
+                -H "apikey: $2" -H "Content-Type: application/json" \
+                -H "Prefer: resolution=merge-duplicates,return=minimal" \
+                -d "[{\"id\":1,\"ping_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}]" \
+                "$base/keepalive?on_conflict=id")
+            # 2) OKUMA: gerçek COUNT sorgusu (yazma yoksa da bir şey çalışsın)
+            r=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 \
+                -H "apikey: $2" -H "Prefer: count=exact" -H "Range: 0-0" \
+                "$base/$3?select=*")
+            if [ "$w" = "201" ] || [ "$w" = "200" ] || [ "$w" = "204" ]; then
+              echo "OK    $1  yazma=$w  okuma=$r"
+            elif [ "$r" = "200" ] || [ "$r" = "206" ]; then
+              echo "UYARI $1  yazma=$w (keepalive tablosu YOK → supabase_keepalive_table.sql calistir)  okuma=$r"
+              uyari=1
             else
-              echo "HATA $1  ($3) -> HTTP $code"; head -c 200 /tmp/body; echo
+              echo "HATA  $1  yazma=$w  okuma=$r"; head -c 200 /tmp/w; echo
               fail=1
             fi
           }
-          # KaliteKontrol / ERP ana veri
           ping nnubrxbpthmkitueixbh "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5udWJyeGJwdGhta2l0dWVpeGJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1NjI2MDIsImV4cCI6MjA5NjEzODYwMn0.CHZUOylf_q8kkOQbFf9VWZ6-doUTlynmAhahM2EuImE" stok_kartlari
-          # CMMS Pro (duraklatma uyarısı bu projeden geliyordu)
           ping bgraqliedgmksqdbddkp "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJncmFxbGllZGdta3NxZGJkZGtwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAzODA4MDEsImV4cCI6MjA5NTk1NjgwMX0.htOoBiFUfUsUgkUrbB0BZEanZR5lioYjJYVjobo2oO0" shared_data
           ping donjfzetqpzrgforhenu "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRvbmpmemV0cXB6cmdmb3JoZW51Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM5MzMyNTMsImV4cCI6MjA5OTUwOTI1M30.qKwUeImRijR9V7TUoXYAfGxJpMF2hocZzXFK8ph189I" profiles
-          # Tedarikçi ayar/senkron (eski sürümde anahtar BOŞTU → 401, hiç sayılmıyordu)
           ping chchaielttnimuuezazb "sb_publishable_S2ywbq7TkgcZKiVif3td-A_oAuQL3QT" supplier_sync
+          echo "----"
+          [ $uyari = 1 ] && echo "NOT: UYARI satiri olan projelerde supabase_keepalive_table.sql henuz calistirilmadi."
           exit $fail
