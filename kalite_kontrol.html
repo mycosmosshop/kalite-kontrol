@@ -1658,6 +1658,254 @@ function timeFromExcel(v){                // Excel saat-Date'i → "HH:MM" (en y
   return String(d.getUTCHours()).padStart(2,'0')+':'+String(d.getUTCMinutes()).padStart(2,'0');
 }
 
+// ============ PFMEA OTOMATIK URETIMI ============
+// Ürün ağacı (hammaddeler) + operasyon kartı (rota) + kontrol planından PFMEA
+// iskeleti üretir; S/O/D, mevcut kontroller ve önerilen aksiyonlar KURALLARLA
+// doldurulur. Üretilen her değer "otomatik öneri"dir ve kaydın remarks alanında
+// hangi kaynağa dayandığı yazar — denetimde gerekçesi sorulduğunda izlenebilsin.
+// AP tablosu resmi AIAG-VDA FMEA Handbook (2019) matrisidir (PFMEA modülüyle aynı).
+const AP_MATRIS = 'LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLMMMMMMLLLLMMMMMMLLLLMMMMMMLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLMMMMMMLLLLMMMMMMLLLLMMMMMMLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLMMMMLLLLLLMMMMLMMMMMMMMMLMMMMMMMMMMMMMHHHHHHMMMMHHHHHHMMMMHHHHHHLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLMMMMLLLLLLMMMMLMMMMMMMMMLMMMMMMMMMMMMMHHHHHHMMMMHHHHHHMMMMHHHHHHLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLMMMMLLLLLLMMMMLMMMMMMMMMLMMMMMMMMMMMMMHHHHHHMMMMHHHHHHMMMMHHHHHHLLLLLLLLLLLLLLMMMMMMLLLLMMMMMMMMMMMMHHHHMMMMMMHHHHMHHHHHHHHHMHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHLLLLLLLLLLLLLLMMMMMMLLLLMMMMMMMMMMMMHHHHMMMMMMHHHHMHHHHHHHHHMHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHLLLLLLLLLLLLLLMMHHHHLLLLMMHHHHMHHHHHHHHHMHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHLLLLLLLLLLLLLLMMHHHHLLLLMMHHHHMHHHHHHHHHMHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH';
+function apHesapla(S,O,D){
+  const s1=Math.min(10,Math.max(1,Math.round(S)||1)), o1=Math.min(10,Math.max(1,Math.round(O)||1)), d1=Math.min(10,Math.max(1,Math.round(D)||1));
+  return AP_MATRIS[(s1-1)*100+(o1-1)*10+(d1-1)] || 'L';
+}
+const _pfSay=(x)=>String(x==null?'':x).trim();
+const _pfKup=(x)=>_pfSay(x).toLocaleUpperCase('tr');
+
+// ── ŞİDDET (S): karakteristiğin türünden ──────────────────────────────────
+// Özel karakteristik müşteri/emniyet etkisi taşır → yüksek; son kontrol müşteriye
+// giden son bariyerdir; girdi kalite kontrolde etki tesis içinde kalır.
+function pfSiddet(it, girdiMi){
+  if(_pfSay(it.special_characteristic)) return 8;
+  if(it.final_control) return 7;
+  if(girdiMi) return 5;
+  return 5;
+}
+// ── OLASILIK (O): önleyici kontrolün varlığından ──────────────────────────
+function pfOlasilik(it){
+  let o = _pfSay(it.process_control) ? 3 : 5;      // tanımlı proses kontrolü varsa daha düşük
+  if(Number(it.periodic_days)>0) o += 1;           // yalnız periyodik bakılıyorsa kaçma şansı artar
+  return Math.min(10,Math.max(1,o));
+}
+// ── TESPİT (D): ölçüm yönteminden ve örnekleme sıklığından ────────────────
+function pfTespit(it){
+  const y=_pfKup(it.method), f=_pfKup(it.sampling_frequency);
+  let d;
+  if(/%100|100%|OTOMAT|SENSÖR|SENSOR|KAMERA|MASTAR|GAUGE|POKA/.test(y)) d=2;
+  else if(/KUMPAS|MİKROMETRE|MIKROMETRE|TERAZİ|TERAZI|TARTI|KOMPARATÖR|CETVEL|ÖLÇÜM|OLCUM|TEST|CİHAZ|CIHAZ/.test(y)) d=4;
+  else if(/GÖZLE|GOZLE|GÖRSEL|GORSEL|VİZÜEL|VIZUEL|BAKARAK/.test(y)) d=7;
+  else if(!y) d=9;                                  // yöntem tanımsız → tespit güvencesi yok
+  else d=5;
+  if(/HER PARÇA|HER ÜRÜN|HER PARCA|HER URUN|%100/.test(f)) d-=1;
+  else if(/VARDİYA|VARDIYA|GÜN|GUN|HAFTA|AY|PERİYOD|PERIYOD|LOT/.test(f)) d+=1;
+  return Math.min(10,Math.max(1,d));
+}
+// ── MEVCUT KONTROLLER: kontrol planından birebir ──────────────────────────
+function pfOnleme(it){
+  return _pfSay(it.process_control) || 'Proses talimatı + operatör eğitimi (FR17)';
+}
+function pfTespitKontrol(it){
+  const p=[_pfSay(it.method)||'Tanımlı ölçüm yöntemi yok'];
+  const n=_pfSay(it.sample_size), f=_pfSay(it.sampling_frequency);
+  if(n) p.push(n+' adet');
+  if(f) p.push(f);
+  return p.join(' · ');
+}
+// ── ÖNERİLEN AKSİYONLAR: AP seviyesine göre, işletmedeki mevcut araçlarla ──
+function pfAksiyonlar(ap, it){
+  if(ap==='H') return [
+    {ad:'Poka-yoke / otomatik kontrol devreye alınması (tespit gücünü artırır)'},
+    {ad:'SPC ile izleme başlatılması (X̄-R kontrol grafiği)'},
+    {ad:'DÖF açılması ve kök neden analizi (8D)'}];
+  if(ap==='M') return [
+    {ad:'Kontrol sıklığının artırılması ('+(_pfSay(it.sampling_frequency)||'mevcut sıklık')+' → daha sık)'},
+    {ad:'Operatör eğitimi (FR17) ve çalışma talimatının güncellenmesi'}];
+  return [{ad:'Mevcut kontroller yeterli — periyodik gözden geçirmede teyit'}];
+}
+
+// ── İSKELET ÜRETİCİ (saf fonksiyon: test edilebilir) ──────────────────────
+// urun: {kod, ad}  bom: [{tuketim_kodu,tuketim_adi}]  rota: [{op_no,makine_adi,makine_kodu}]
+// plan: [{op_no, measure_name, target, unit, lower_limit, upper_limit, nitel_hedef,
+//         method, sample_size, sampling_frequency, process_control, special_characteristic,
+//         final_control, giris_kalite, periodic_days}]
+function pfmeaIskeletUret(urun, bom, rota, plan, kaynakNot){
+  const fd={failureModes:{},processItems:{},processSteps:{},failureCauses:{},failureEffects:{},processItemIds:[],processStepFunctions:{}};
+  let ns=0,nf=0,nm=0,nc=0,ne=0;
+  const yeni=(p,n)=>p+'_'+n;
+
+  const itemId='i_1';
+  fd.processItems[itemId]={id:itemId,name:_pfSay(urun.ad)+' ('+_pfSay(urun.kod)+')',stepIds:[]};
+  fd.processItemIds=[itemId];
+
+  // Adımlar: önce girdi kalite kontrol (hammadde başına), sonra rota operasyonları
+  const adimlar=[];
+  (bom||[]).forEach(b=> adimlar.push({
+    girdi:true, op:0,
+    ad:'Girdi Kalite Kontrol – '+_pfSay(b.tuketim_adi)+' ('+_pfSay(b.tuketim_kodu)+')',
+    mak:'GKK / FR34-GKK', sembol:'document'
+  }));
+  [...(rota||[])].sort((a,b)=>Number(a.op_no)-Number(b.op_no)).forEach(r=> adimlar.push({
+    girdi:false, op:Number(r.op_no),
+    ad:'Op '+_pfSay(r.op_no)+' – '+(_pfSay(r.makine_adi)||_pfSay(r.makine_kodu)),
+    mak:_pfSay(r.makine_adi)||_pfSay(r.makine_kodu), sembol:'process'
+  }));
+
+  adimlar.forEach(a=>{
+    const sid=yeni('s',++ns);
+    fd.processSteps[sid]={id:sid,name:a.ad,functionIds:[],includeInPF:true,
+      operationNumber:String(a.op),machineDeviceSource:a.mak};
+    fd.processItems[itemId].stepIds.push(sid);
+
+    // Bu adımın kontrol planı maddeleri
+    const maddeler=(plan||[]).filter(x=> a.girdi ? !!x.giris_kalite : (Number(x.op_no)===a.op && !x.giris_kalite));
+    maddeler.forEach(it=>{
+      const fid=yeni('f',++nf);
+      const spec=[_pfSay(it.target),_pfSay(it.unit)].filter(Boolean).join(' ')
+        || [_pfSay(it.lower_limit),_pfSay(it.upper_limit)].filter(Boolean).join(' – ')
+        || _pfSay(it.nitel_hedef) || '—';
+      fd.processStepFunctions[fid]={
+        id:fid, name:_pfSay(it.measure_name)+' değerini şartname sınırlarında tutmak',
+        clientType:'E', sampleSize:_pfSay(it.sample_size), controlMethod:pfOnleme(it),
+        failureModeIds:[], flowchartSymbol:a.sembol, sampleFrequency:_pfSay(it.sampling_frequency),
+        processDescription:a.ad, includeInControlPlan:true,
+        productCharacteristic:_pfSay(it.measure_name),
+        productSpecificationTolerance:spec,
+        evaluationMeasurementTechnique:_pfSay(it.method),
+        classificationSpecialCharacteristic:!!_pfSay(it.special_characteristic)
+      };
+      fd.processSteps[sid].functionIds.push(fid);
+
+      // Hata türü + etki + nedenler
+      const S=pfSiddet(it,a.girdi), O=pfOlasilik(it), D=pfTespit(it);
+      const mid=yeni('m',++nm), eid=yeni('e',++ne);
+      fd.failureEffects[eid]={id:eid,severity:S,clientType:'E',
+        effectText:'End user:\n— (—)\nShip to Plant:\n'+_pfSay(it.measure_name)+' uygunsuzluğu nedeniyle montaj/işlev sapması. ('+S+')\nIn-Plant:\nYeniden işlem, hurda, hat duruşu. ('+S+')'};
+      fd.failureModes[mid]={id:mid,causeIds:[],effectIds:[eid],
+        description:_pfSay(it.measure_name)+' şartname dışı ('+spec+')'};
+      fd.processStepFunctions[fid].failureModeIds.push(mid);
+
+      const nedenler = a.girdi
+        ? [['Tedarikçi kaynaklı malzeme sapması','Malzeme'],
+           ['Girdi kalite kontrol planına uyulmaması','Personel']]
+        : [['Proses parametresi sapması (ayar/hız/sıcaklık)','Makine'],
+           ['Ekipman/kalıp aşınması veya hatalı ayar','Makine'],
+           ['Operatör uygulama hatası','Personel']];
+      nedenler.forEach(([aciklama,ogeTuru])=>{
+        const cid=yeni('c',++nc);
+        const ap=apHesapla(S,O,D);
+        fd.failureCauses[cid]={
+          id:cid, actions:pfAksiyonlar(ap,it).map((x,i)=>({id:cid+'_a'+(i+1),description:x.ad,status:'open',responsible:'',dueDate:''})),
+          remarks:'OTOMATİK ÖNERİ — '+(kaynakNot||'kontrol planı')+' esas alındı; S/O/D ve aksiyonlar ekip tarafından doğrulanmalıdır.',
+          detection:D, occurrence:O, description:aciklama, actionPriority:ap,
+          revisedSeverity:null, detectionControl:pfTespitKontrol(it), revisedDetection:null,
+          preventionControl:pfOnleme(it), revisedOccurrence:null,
+          processWorkElement:ogeTuru, workElementFunction:''
+        };
+        fd.failureModes[mid].causeIds.push(cid);
+      });
+    });
+  });
+  return fd;
+}
+
+// ── Veri hazirlama: eksik olan kaynagi LeanSys ajanindan otomatik cek ─────
+// Ajan yerelde calisir (127.0.0.1:17777). Erisilemezse eldeki veriyle devam
+// edilir ve hangi kaynagin eksik oldugu kullaniciya yazilir.
+async function pfmeaVeriHazirla(sc, bildir){
+  const oku = async ()=>{
+    const [bom, rota, plan, hdr] = await Promise.all([
+      sb.from('urun_agaclari').select('tuketim_kodu,tuketim_adi,miktar,birim,varsayilan').eq('urun_kodu',sc),
+      sb.from('operasyon_kartlari').select('op_no,makine_kodu,makine_adi,rota_adi,varsayilan,header_id').eq('stok_kodu',sc),
+      sb.from('control_plan_items').select('*').eq('stock_code',sc),
+      sb.from('control_plan_headers').select('*').eq('stock_code',sc).maybeSingle()
+    ]);
+    return { bom:(bom.data||[]), rota:(rota.data||[]), plan:(plan.data||[]), hdr:(hdr.data||null) };
+  };
+  let v = await oku();
+  const eksik = [];
+  if(!v.bom.length)  eksik.push(['refreshbom','ürün ağacı']);
+  if(!v.rota.length) eksik.push(['refreshop','operasyon kartı']);
+  if(!v.plan.length) eksik.push(['refreshplan','kontrol planı']);
+  const cekilemeyen = [];
+  for(const [uc, ad] of eksik){
+    bildir && bildir(ad+' LeanSys’ten çekiliyor…');
+    try{
+      const r = await fetch('http://127.0.0.1:17777/'+uc+'?codes='+encodeURIComponent(sc), {mode:'cors'});
+      if(!r.ok) throw new Error('HTTP '+r.status);
+    }catch(e){ cekilemeyen.push(ad); }
+  }
+  if(eksik.length) v = await oku();                 // cekim sonrasi yeniden oku
+  return { ...v, cekilemeyen };
+}
+
+// ── Uretim + kayit ────────────────────────────────────────────────────────
+async function pfmeaOlustur(sc, snm){
+  const root=$('#modalRoot');
+  const bg=el('div',{class:'modal-bg',onclick:e=>{ if(e.target===bg) root.innerHTML=''; }});
+  const m=el('div',{class:'modal',style:'position:relative;max-width:720px'});
+  m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
+  m.append(el('h3',{},'🧬 PFMEA Oluştur — '+esc(sc)));
+  const govde=el('div'); m.append(govde); bg.append(m); root.innerHTML=''; root.append(bg);
+  const yaz=(t)=>{ govde.innerHTML='<div class="empty" style="padding:14px">'+esc(t)+'</div>'; };
+  yaz('Veriler hazırlanıyor…');
+  try{
+    const v = await pfmeaVeriHazirla(sc, yaz);
+    if(!v.rota.length && !v.plan.length){
+      govde.innerHTML='<div class="empty" style="padding:14px;color:var(--ret)">Bu ürün için operasyon kartı ve kontrol planı bulunamadı.'
+        + (v.cekilemeyen.length?'<br>LeanSys ajanına erişilemedi ('+esc(v.cekilemeyen.join(', '))+'). Ajanı çalıştırıp tekrar deneyin.':'')+'</div>';
+      return;
+    }
+    // Yalnizca varsayilan agac/rota
+    const bom = v.bom.filter(b=> b.varsayilan!==false);
+    const rotaHid = (v.rota.find(r=>r.varsayilan===true)||v.rota[0]||{}).header_id;
+    const rota = v.rota.filter(r=> r.header_id===rotaHid);
+    const kaynakNot = 'kontrol planı '+((v.hdr&&v.hdr.doc_no)||'—')+(v.hdr&&v.hdr.rev_no?(' Rev.'+v.hdr.rev_no):'');
+
+    yaz('PFMEA iskeleti üretiliyor…');
+    const fd = pfmeaIskeletUret({kod:sc, ad:snm||sc}, bom, rota, v.plan, kaynakNot);
+    const adim=Object.keys(fd.processSteps).length, kar=Object.keys(fd.processStepFunctions).length,
+          hata=Object.keys(fd.failureModes).length, neden=Object.keys(fd.failureCauses).length;
+    if(!kar){
+      govde.innerHTML='<div class="empty" style="padding:14px;color:var(--ret)">Kontrol planında madde bulunamadı — PFMEA karakteristikleri kontrol planından üretilir.</div>';
+      return;
+    }
+    const bugun=new Date().toISOString().slice(0,10);
+    const ad = (snm? (snm+' ') : '') + sc + ' PFMEA';
+    const veri = {
+      id: (crypto.randomUUID? crypto.randomUUID() : ('pf-'+Date.now())),
+      fmeaData: fd,
+      projectData: {
+        cp:{ notes:'Otomatik üretildi — kaynak: ürün ağacı + operasyon kartı + '+kaynakNot+'.',
+             dateRev:bugun, dateOrig:bugun, coreTeam:'', controlPlan:'production' },
+        pf:{}, fmea:{}, history:[], historyBaseline:null
+      },
+      registryData: (window.PFMEA_REGISTRY || null)
+    };
+    yaz('Kaydediliyor…');
+    const {error} = await sb.from('pfmea_projects').insert({ name:ad, data:veri });
+    if(error) throw error;
+
+    govde.innerHTML =
+      '<div style="padding:6px 2px 12px">'
+      + '<div style="color:var(--ok);font-weight:600;margin-bottom:8px">✔ PFMEA oluşturuldu: '+esc(ad)+'</div>'
+      + '<table style="width:100%"><tbody>'
+      + '<tr><td>Proses adımı</td><td style="text-align:right"><b>'+adim+'</b></td></tr>'
+      + '<tr><td>Karakteristik (kontrol planından)</td><td style="text-align:right"><b>'+kar+'</b></td></tr>'
+      + '<tr><td>Hata türü</td><td style="text-align:right"><b>'+hata+'</b></td></tr>'
+      + '<tr><td>Hata nedeni (S/O/D + AP + aksiyon)</td><td style="text-align:right"><b>'+neden+'</b></td></tr>'
+      + '<tr><td>Hammadde (girdi kalite kontrol adımı)</td><td style="text-align:right"><b>'+bom.length+'</b></td></tr>'
+      + '</tbody></table>'
+      + (v.cekilemeyen.length?'<div style="margin-top:10px;color:var(--warn)">⚠ LeanSys ajanına erişilemedi: '+esc(v.cekilemeyen.join(', '))+' — eldeki veriyle üretildi.</div>':'')
+      + '<div style="margin-top:12px;font-size:12.5px;color:var(--muted)">S/O/D değerleri, mevcut kontroller ve aksiyonlar kontrol planından '
+      + 'kurallarla türetilmiş <b>önerilerdir</b>; her nedenin “remarks” alanında kaynağı yazılıdır. '
+      + 'PFMEA modülünde açıp ekiple gözden geçirin.</div>'
+      + '<div style="margin-top:12px"><a class="btn sm" target="_blank" rel="noopener" href="https://mycosmosshop.github.io/pfmea/">PFMEA modülünü aç</a></div>'
+      + '</div>';
+  }catch(e){
+    govde.innerHTML='<div class="empty" style="padding:14px;color:var(--ret)">Hata: '+esc(e.message||String(e))+'</div>';
+  }
+}
+
 // ============ TUTARLILIK DENETIMI (Plan ↔ Op Kartı ↔ PFMEA) ============
 // IATF denetiminde en sık sorulan tutarlılık: kontrol planındaki adımlar
 // operasyon kartıyla (rota) ve PFMEA ile aynı mı? Tek üründe elle bakmak
@@ -2299,6 +2547,7 @@ async function renderPlan(){
       el('div',{style:'display:flex;gap:8px;flex-wrap:wrap'},
         el('button',{class:'btn sm sec',title:'VDA 6.5 ürün denetimi için FULL ölçüm Excel şablonu indir (her madde 5 ölçüm — elle doldurulur; Min/Maks/Ortalama/Sonuç otomatik hesaplanır)',onclick:()=>exportVdaTemplate(sc, snm)},'📥 VDA 6.5 Ölçüm Şablonu'),
         el('button',{class:'btn sm sec',title:'TÜM ürünlerde kontrol planı ↔ operasyon kartı ↔ (isteğe bağlı) PFMEA tutarlılığını tarar',onclick:()=>tutarlilikAc()},'🧪 Tutarlılık Denetimi'),
+        el('button',{class:'btn sm sec',title:'Ürün ağacı + operasyon kartı + kontrol planından bu ürün için PFMEA üretir (eksik veriyi LeanSys’ten çeker)',onclick:()=>pfmeaOlustur(sc, snm)},'🧬 PFMEA Oluştur'),
         canPlan?el('button',{class:'btn sm',id:'planSaveBtn',disabled:!Object.keys(PLAN_PENDING).length,style:'background:'+(Object.keys(PLAN_PENDING).length?'var(--ret)':'var(--ok)')+';cursor:'+(Object.keys(PLAN_PENDING).length?'pointer':'default'),title:'Yaptığın hücre değişikliklerini kaydet',onclick:savePlanChanges},Object.keys(PLAN_PENDING).length?('💾 Kaydet ('+Object.keys(PLAN_PENDING).length+')'):'💾 Kaydedildi'):'',
         canPlan?el('button',{class:'btn sm sec',title:'Maddeleri önce ROTA (Op Kartı), sonra Op No’ya göre sıralayıp Ölçü No (1..N) yeniden atar',onclick:()=>renumberByOp(sc)},'🔢 Rota + Op No’ya göre sırala'):'',
         canPlan?el('button',{class:'btn sm sec',title:'Versiyonla / arşivle / geri yükle',onclick:()=>openPlanArchive(sc, snm)},'🗂 Versiyonlar'):'',
