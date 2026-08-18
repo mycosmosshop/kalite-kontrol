@@ -1681,10 +1681,22 @@ function pfGirdiMalzemeMi(kod){
 }
 const _pfKup=(x)=>_pfSay(x).toLocaleUpperCase('tr');
 
+// ── EMNİYET / MEVZUAT karakteristiği mi? ─────────────────────────────────
+// Yanma davranışı (FMVSS 302 / ISO 3795), toksisite, emisyon gibi ölçüler
+// müşteri aracında can güvenliği ve yasal uygunlukla ilgilidir.
+const PF_EMNIYET_KALIP = /(YANMA|YANMAZ|ALEV|TUTUŞ|TUTUS|FLAME|FLAMMAB|FMVSS|ISO ?3795|EMNİYET|EMNIYET|GÜVENL|GUVENL|SAFETY|TOKSİK|TOKSIK|ZEHİR|ZEHIR|EMİSYON|EMISYON|VOC|FOGGING|MEVZUAT|YASAL|REGULAT)/;
+function pfEmniyetMi(it){
+  const m = _pfKup(it.measure_name) + ' ' + _pfKup(it.nitel_hedef) + ' ' + _pfKup(it.special_characteristic);
+  return PF_EMNIYET_KALIP.test(m);
+}
+
 // ── ŞİDDET (S): karakteristiğin türünden ──────────────────────────────────
 // Özel karakteristik müşteri/emniyet etkisi taşır → yüksek; son kontrol müşteriye
 // giden son bariyerdir; girdi kalite kontrolde etki tesis içinde kalır.
 function pfSiddet(it, girdiMi){
+  // Emniyet/mevzuat etkisi: AIAG-VDA'da 9 = uyarı ile, 10 = uyarısız. Hangisi
+  // olduğu ürün/müşteri bilgisi gerektirdiğinden savunulabilir olan 9 verilir.
+  if(pfEmniyetMi(it)) return 9;
   if(_pfSay(it.special_characteristic)) return 8;
   if(it.final_control) return 7;
   if(girdiMi) return 5;
@@ -1722,6 +1734,12 @@ function pfTespitKontrol(it){
 }
 // ── ÖNERİLEN AKSİYONLAR: AP seviyesine göre, işletmedeki mevcut araçlarla ──
 function pfAksiyonlar(ap, it){
+  // Emniyet/mevzuat karakteristiğinde AP düşük çıksa bile kontrolün sürekliliği
+  // belgelenmelidir (periyodik test + sertifika geçerliliği).
+  if(pfEmniyetMi(it)) return [
+    {ad:'Yanma/mevzuat testinin periyodik tekrarı ve sertifika geçerliliğinin izlenmesi'},
+    {ad:'Malzeme değişikliğinde (tedarikçi/reçete) yeniden onay — PPAP/IMDS güncellemesi'},
+    ...(ap==='L'? [] : [{ad:'Kontrol sıklığının artırılması ve sonuçların kayıt altına alınması'}])];
   if(ap==='H') return [
     {ad:'Poka-yoke / otomatik kontrol devreye alınması (tespit gücünü artırır)'},
     {ad:'SPC ile izleme başlatılması (X̄-R kontrol grafiği)'},
@@ -1795,7 +1813,7 @@ function pfmeaIskeletUret(urun, bom, rota, plan, kaynakNot, bomPlan){
       const S=pfSiddet(it,a.girdi), O=pfOlasilik(it), D=pfTespit(it);
       const mid=yeni('m',++nm), eid=yeni('e',++ne);
       fd.failureEffects[eid]={id:eid,severity:S,clientType:'E',
-        effectText:'End user:\n— (—)\nShip to Plant:\n'+_pfSay(it.measure_name)+' uygunsuzluğu nedeniyle montaj/işlev sapması. ('+S+')\nIn-Plant:\nYeniden işlem, hurda, hat duruşu. ('+S+')'};
+        effectText: (pfEmniyetMi(it) ? 'EMNİYET / MEVZUAT KARAKTERİSTİĞİ — can güvenliği ve yasal uygunluk riski.' + String.fromCharCode(10) : '') +'End user:\n— (—)\nShip to Plant:\n'+_pfSay(it.measure_name)+' uygunsuzluğu nedeniyle montaj/işlev sapması. ('+S+')\nIn-Plant:\nYeniden işlem, hurda, hat duruşu. ('+S+')'};
       fd.failureModes[mid]={id:mid,causeIds:[],effectIds:[eid],
         description:_pfSay(it.measure_name)+' şartname dışı ('+spec+')'};
       fd.processStepFunctions[fid].failureModeIds.push(mid);

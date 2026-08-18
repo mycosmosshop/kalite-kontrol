@@ -14,10 +14,12 @@ function al(ad, tip) {
 const K = new Function(
   al('AP_MATRIS', 'const') + '\n' + al('apHesapla') + '\n' +
   html.slice(html.indexOf('const _pfSay='), html.indexOf('const _pfKup=') + 80) + '\n' +
+  html.slice(html.indexOf('const PF_EMNIYET_KALIP')).split(';')[0] + ';\n' +
+  al('pfEmniyetMi') + '\n' +
   al('pfSiddet') + '\n' + al('pfOlasilik') + '\n' + al('pfTespit') + '\n' +
   al('pfOnleme') + '\n' + al('pfTespitKontrol') + '\n' + al('pfAksiyonlar') + '\n' +
   al('pfmeaIskeletUret') + '\n' +
-  'return {AP_MATRIS,apHesapla,pfGirdiMalzemeMi,pfSiddet,pfOlasilik,pfTespit,pfOnleme,pfTespitKontrol,pfAksiyonlar,pfmeaIskeletUret};')();
+  'return {AP_MATRIS,apHesapla,pfGirdiMalzemeMi,pfEmniyetMi,pfSiddet,pfOlasilik,pfTespit,pfOnleme,pfTespitKontrol,pfAksiyonlar,pfmeaIskeletUret};')();
 
 // ── AP tablosu resmi AIAG-VDA degerleriyle tutmali ──
 assert.strictEqual(K.AP_MATRIS.length, 1000, 'AP matrisi 10x10x10 olmali');
@@ -40,6 +42,25 @@ assert.strictEqual(K.pfSiddet({ special_characteristic: '◆' }, false), 8, 'oze
 assert.strictEqual(K.pfSiddet({ final_control: true }, false), 7, 'son kontrol musteriye son bariyer');
 assert.strictEqual(K.pfSiddet({}, true), 5);
 assert.strictEqual(K.pfSiddet({}, false), 5);
+
+// ── EMNIYET/MEVZUAT: YALNIZ siddeti yukseltir; O ve D'ye DOKUNMAZ ──
+// AIAG-VDA: O nedenin sikligini, D kontrolun yakalama gucunu olcer; sonucun
+// tehlikeli olmasi bu ikisini degistirmez. Ucunu birden sismek yaygin hatadir.
+assert.strictEqual(K.pfEmniyetMi({ measure_name: 'Yanma h\u0131z\u0131 (FMVSS 302)' }), true);
+assert.strictEqual(K.pfEmniyetMi({ measure_name: 'Alev ilerleme testi' }), true);
+assert.strictEqual(K.pfEmniyetMi({ nitel_hedef: 'ISO 3795 uygun' }), true);
+assert.strictEqual(K.pfEmniyetMi({ measure_name: 'Kesim \u00f6l\u00e7\u00fcs\u00fc' }), false);
+assert.strictEqual(K.pfSiddet({ measure_name: 'Yanma h\u0131z\u0131' }, false), 9, 'emniyet karakteristigi S=9');
+assert.strictEqual(K.pfSiddet({ measure_name: 'Yanma h\u0131z\u0131', special_characteristic: 'X' }, false), 9,
+  'emniyet, ozel karakteristikten baskin');
+assert.strictEqual(K.pfOlasilik({ measure_name: 'Yanma h\u0131z\u0131', process_control: 'SPC' }),
+                   K.pfOlasilik({ measure_name: 'Kesim', process_control: 'SPC' }),
+                   'emniyet OLASILIGI degistirmemeli');
+assert.strictEqual(K.pfTespit({ measure_name: 'Yanma h\u0131z\u0131', method: 'Kumpas' }),
+                   K.pfTespit({ measure_name: 'Kesim', method: 'Kumpas' }),
+                   'emniyet TESPITI degistirmemeli');
+assert.ok(JSON.stringify(K.pfAksiyonlar('L', { measure_name: 'Yanma h\u0131z\u0131' })).includes('sertifika'),
+  'emniyette AP dusuk olsa da sureklilik aksiyonu onerilmeli');
 
 // ── Olasilik: onleyici kontrolun varligindan ──
 assert.strictEqual(K.pfOlasilik({ process_control: 'SPC' }), 3, 'tanimli proses kontrolu olasiligi dusurur');
