@@ -1670,6 +1670,15 @@ function apHesapla(S,O,D){
   return AP_MATRIS[(s1-1)*100+(o1-1)*10+(d1-1)] || 'L';
 }
 const _pfSay=(x)=>String(x==null?'':x).trim();
+// Girdi kalite kontrolune tabi malzemeler stok kodunun ORTA parcasindan
+// ayrilir: 909.4.018, 952.10.004 → girdi hammaddesi; 205.0.214-C → isletmede
+// uretilen yari mamul (girdi kontrol adimi acilmaz).
+// Yeni bir orta kod cikarsa yalnizca bu listeye eklenir.
+const PF_GIRDI_ORTA_KODLAR = ['4','10'];
+function pfGirdiMalzemeMi(kod){
+  const m = _pfSay(kod).match(/^\s*\d+\s*\.\s*(\d+)\s*\./);
+  return !!m && PF_GIRDI_ORTA_KODLAR.indexOf(m[1]) >= 0;
+}
 const _pfKup=(x)=>_pfSay(x).toLocaleUpperCase('tr');
 
 // ── ŞİDDET (S): karakteristiğin türünden ──────────────────────────────────
@@ -1728,7 +1737,9 @@ function pfAksiyonlar(ap, it){
 // plan: [{op_no, measure_name, target, unit, lower_limit, upper_limit, nitel_hedef,
 //         method, sample_size, sampling_frequency, process_control, special_characteristic,
 //         final_control, giris_kalite, periodic_days}]
-function pfmeaIskeletUret(urun, bom, rota, plan, kaynakNot){
+// bomPlan: {hammaddeKodu: [kontrol plani maddeleri]} — her hammaddenin KENDI
+// girdi kontrol plani. Yoksa o adim karakteristiksiz uretilir (ekip doldurur).
+function pfmeaIskeletUret(urun, bom, rota, plan, kaynakNot, bomPlan){
   const fd={failureModes:{},processItems:{},processSteps:{},failureCauses:{},failureEffects:{},processItemIds:[],processStepFunctions:{}};
   let ns=0,nf=0,nm=0,nc=0,ne=0;
   const yeni=(p,n)=>p+'_'+n;
@@ -1739,8 +1750,9 @@ function pfmeaIskeletUret(urun, bom, rota, plan, kaynakNot){
 
   // Adımlar: önce girdi kalite kontrol (hammadde başına), sonra rota operasyonları
   const adimlar=[];
-  (bom||[]).forEach(b=> adimlar.push({
-    girdi:true, op:0,
+  // YALNIZ girdi hammaddeleri: yari mamuller (orta kod 0) girdi kontrolune girmez
+  (bom||[]).filter(b=> pfGirdiMalzemeMi(b.tuketim_kodu)).forEach(b=> adimlar.push({
+    girdi:true, op:0, kod:_pfSay(b.tuketim_kodu),
     ad:'Girdi Kalite Kontrol – '+_pfSay(b.tuketim_adi)+' ('+_pfSay(b.tuketim_kodu)+')',
     mak:'GKK / FR34-GKK', sembol:'document'
   }));
@@ -1757,7 +1769,11 @@ function pfmeaIskeletUret(urun, bom, rota, plan, kaynakNot){
     fd.processItems[itemId].stepIds.push(sid);
 
     // Bu adımın kontrol planı maddeleri
-    const maddeler=(plan||[]).filter(x=> a.girdi ? !!x.giris_kalite : (Number(x.op_no)===a.op && !x.giris_kalite));
+    // Girdi adimi: o MALZEMENIN kendi kontrol plani. Uretim adimi: urun planinin
+    // ilgili op no'su (girdi kalite maddeleri urun planindan dislanir).
+    const maddeler = a.girdi
+      ? (((bomPlan||{})[a.kod]) || [])
+      : (plan||[]).filter(x=> Number(x.op_no)===a.op && !x.giris_kalite);
     maddeler.forEach(it=>{
       const fid=yeni('f',++nf);
       const spec=[_pfSay(it.target),_pfSay(it.unit)].filter(Boolean).join(' ')
@@ -1856,13 +1872,28 @@ async function pfmeaOlustur(sc, snm){
       return;
     }
     // Yalnizca varsayilan agac/rota
-    const bom = v.bom.filter(b=> b.varsayilan!==false);
+    // Varsayilan agac + yalnizca girdi hammaddeleri (yari mamul kodlari elenir)
+    const bomTum = v.bom.filter(b=> b.varsayilan!==false);
+    const bom = bomTum.filter(b=> pfGirdiMalzemeMi(b.tuketim_kodu));
+    const elenen = bomTum.length - bom.length;
     const rotaHid = (v.rota.find(r=>r.varsayilan===true)||v.rota[0]||{}).header_id;
     const rota = v.rota.filter(r=> r.header_id===rotaHid);
     const kaynakNot = 'kontrol planı '+((v.hdr&&v.hdr.doc_no)||'—')+(v.hdr&&v.hdr.rev_no?(' Rev.'+v.hdr.rev_no):'');
 
+    // Her girdi hammaddesinin KENDI kontrol plani (girdi karakteristikleri oradan)
+    yaz('Hammadde girdi kontrol planları okunuyor…');
+    const bomPlan = {};
+    if(bom.length){
+      const kodlar = bom.map(b=>b.tuketim_kodu).filter(Boolean);
+      for(let i=0;i<kodlar.length;i+=40){
+        const {data} = await sb.from('control_plan_items').select('*').in('stock_code', kodlar.slice(i,i+40));
+        (data||[]).forEach(x=> (bomPlan[x.stock_code]=bomPlan[x.stock_code]||[]).push(x));
+      }
+    }
+    const planiOlmayan = bom.filter(b=> !(bomPlan[b.tuketim_kodu]||[]).length).length;
+
     yaz('PFMEA iskeleti üretiliyor…');
-    const fd = pfmeaIskeletUret({kod:sc, ad:snm||sc}, bom, rota, v.plan, kaynakNot);
+    const fd = pfmeaIskeletUret({kod:sc, ad:snm||sc}, bom, rota, v.plan, kaynakNot, bomPlan);
     const adim=Object.keys(fd.processSteps).length, kar=Object.keys(fd.processStepFunctions).length,
           hata=Object.keys(fd.failureModes).length, neden=Object.keys(fd.failureCauses).length;
     if(!kar){
@@ -1893,7 +1924,9 @@ async function pfmeaOlustur(sc, snm){
       + '<tr><td>Karakteristik (kontrol planından)</td><td style="text-align:right"><b>'+kar+'</b></td></tr>'
       + '<tr><td>Hata türü</td><td style="text-align:right"><b>'+hata+'</b></td></tr>'
       + '<tr><td>Hata nedeni (S/O/D + AP + aksiyon)</td><td style="text-align:right"><b>'+neden+'</b></td></tr>'
-      + '<tr><td>Hammadde (girdi kalite kontrol adımı)</td><td style="text-align:right"><b>'+bom.length+'</b></td></tr>'
+      + '<tr><td>Girdi hammaddesi (kalite kontrol adımı)</td><td style="text-align:right"><b>'+bom.length+'</b></td></tr>'
+      + (elenen? '<tr><td style="color:var(--muted)">Ağaçta olup girdi kontrolüne girmeyen (yarı mamul vb.)</td><td style="text-align:right;color:var(--muted)">'+elenen+'</td></tr>':'')
+      + (planiOlmayan? '<tr><td style="color:var(--warn)">Girdi kontrol planı bulunmayan hammadde</td><td style="text-align:right;color:var(--warn)">'+planiOlmayan+'</td></tr>':'')
       + '</tbody></table>'
       + (v.cekilemeyen.length?'<div style="margin-top:10px;color:var(--warn)">⚠ LeanSys ajanına erişilemedi: '+esc(v.cekilemeyen.join(', '))+' — eldeki veriyle üretildi.</div>':'')
       + '<div style="margin-top:12px;font-size:12.5px;color:var(--muted)">S/O/D değerleri, mevcut kontroller ve aksiyonlar kontrol planından '

@@ -17,7 +17,7 @@ const K = new Function(
   al('pfSiddet') + '\n' + al('pfOlasilik') + '\n' + al('pfTespit') + '\n' +
   al('pfOnleme') + '\n' + al('pfTespitKontrol') + '\n' + al('pfAksiyonlar') + '\n' +
   al('pfmeaIskeletUret') + '\n' +
-  'return {AP_MATRIS,apHesapla,pfSiddet,pfOlasilik,pfTespit,pfOnleme,pfTespitKontrol,pfAksiyonlar,pfmeaIskeletUret};')();
+  'return {AP_MATRIS,apHesapla,pfGirdiMalzemeMi,pfSiddet,pfOlasilik,pfTespit,pfOnleme,pfTespitKontrol,pfAksiyonlar,pfmeaIskeletUret};')();
 
 // ── AP tablosu resmi AIAG-VDA degerleriyle tutmali ──
 assert.strictEqual(K.AP_MATRIS.length, 1000, 'AP matrisi 10x10x10 olmali');
@@ -25,6 +25,15 @@ assert.strictEqual(K.AP_MATRIS.length, 1000, 'AP matrisi 10x10x10 olmali');
   .forEach(([S,O,D,b]) => assert.strictEqual(K.apHesapla(S,O,D), b, `AP S${S}/O${O}/D${D} = ${b} olmali`));
 assert.strictEqual(K.apHesapla(0,0,0), K.apHesapla(1,1,1), 'sinir disi deger 1e kirpilmali');
 assert.strictEqual(K.apHesapla(99,99,99), K.apHesapla(10,10,10), 'sinir disi deger 10a kirpilmali');
+
+// ── Girdi hammaddesi ayrimi: kodun ORTA parcasi ──
+assert.strictEqual(K.pfGirdiMalzemeMi('909.4.018'), true, '.4. girdi hammaddesi');
+assert.strictEqual(K.pfGirdiMalzemeMi('952.10.004'), true, '.10. girdi hammaddesi');
+assert.strictEqual(K.pfGirdiMalzemeMi('205.0.214-C'), false, '.0. yari mamul — girdi degil');
+assert.strictEqual(K.pfGirdiMalzemeMi('700.0.454'), false, 'urun kodu girdi degil');
+assert.strictEqual(K.pfGirdiMalzemeMi(''), false);
+assert.strictEqual(K.pfGirdiMalzemeMi(null), false);
+assert.strictEqual(K.pfGirdiMalzemeMi('909.5.018'), false, 'listede olmayan orta kod girdi sayilmaz');
 
 // ── Siddet: karakteristik turunden ──
 assert.strictEqual(K.pfSiddet({ special_characteristic: '◆' }, false), 8, 'ozel karakteristik yuksek siddet');
@@ -62,28 +71,34 @@ assert.strictEqual(K.pfAksiyonlar('L', {}).length, 1);
 // ── Iskelet: gercek veriye benzer girdiyle ──
 const fd = K.pfmeaIskeletUret(
   { kod: '205.0.214-C', ad: 'SES VE ISI YALITIM SÜNGERİ' },
-  [{ tuketim_kodu: '909.4.018', tuketim_adi: 'BASOTECT G PLUS' }],
+  [{ tuketim_kodu: '909.4.018', tuketim_adi: 'BASOTECT G PLUS' },
+   { tuketim_kodu: '952.10.004', tuketim_adi: 'BANT' },
+   { tuketim_kodu: '205.0.300',  tuketim_adi: 'YARI MAMUL SÜNGER' }],
   [{ op_no: 2, makine_adi: 'PAKETLEME' }, { op_no: 1, makine_adi: 'SU JETİ' }],
   [{ op_no: 1, measure_name: 'Kesim ölçüsü', target: '195', unit: 'mm', method: 'Kumpas',
      sample_size: '5', sampling_frequency: 'Her lot', process_control: 'Proses talimatı',
      special_characteristic: '◆' },
    { op_no: 2, measure_name: 'Etiket doğruluğu', nitel_hedef: 'Uygun', method: 'Gözle' },
    { giris_kalite: true, measure_name: 'Yoğunluk', target: '9', unit: 'kg/m³', method: 'Terazi' }],
-  'kontrol planı PL41 Rev.02');
+  'kontrol planı PL41 Rev.02',
+  // Her hammaddenin KENDI girdi kontrol plani
+  { '909.4.018': [{ measure_name: 'Yoğunluk', target: '9', unit: 'kg/m³', method: 'Terazi' }],
+    '952.10.004': [{ measure_name: 'Yapışma', nitel_hedef: 'Uygun', method: 'Gözle' }] });
 
 assert.strictEqual(Object.keys(fd.processItems).length, 1);
 assert.strictEqual(fd.processItemIds.length, 1);
 // 1 hammadde (girdi) + 2 rota adimi
-assert.strictEqual(Object.keys(fd.processSteps).length, 3, 'girdi + 2 operasyon adimi olmali');
+assert.strictEqual(Object.keys(fd.processSteps).length, 4, '2 girdi hammaddesi + 2 operasyon adimi (yari mamul elenir)');
 const adimlar = Object.values(fd.processSteps);
 assert.strictEqual(adimlar[0].operationNumber, '0', 'girdi kalite kontrol Op 0');
-assert.deepStrictEqual(adimlar.slice(1).map(x => x.operationNumber), ['1', '2'], 'operasyonlar op no sirasinda');
-assert.strictEqual(adimlar[1].machineDeviceSource, 'SU JETİ');
+assert.deepStrictEqual(adimlar.slice(2).map(x => x.operationNumber), ['1', '2'], 'operasyonlar op no sirasinda');
+assert.ok(!JSON.stringify(fd.processSteps).includes('205.0.300'), 'yari mamul icin girdi kontrol adimi acilmamali');
+assert.strictEqual(adimlar[2].machineDeviceSource, 'SU JETİ');
 
 // Her karakteristik icin fonksiyon + hata turu + etki uretilmeli
-assert.strictEqual(Object.keys(fd.processStepFunctions).length, 3, 'her kontrol plani maddesi bir fonksiyon');
-assert.strictEqual(Object.keys(fd.failureModes).length, 3);
-assert.strictEqual(Object.keys(fd.failureEffects).length, 3);
+assert.strictEqual(Object.keys(fd.processStepFunctions).length, 4, '2 uretim + 2 girdi karakteristigi');
+assert.strictEqual(Object.keys(fd.failureModes).length, 4);
+assert.strictEqual(Object.keys(fd.failureEffects).length, 4);
 
 // Ozel karakteristikli madde: S=8, spec dolu, siniflandirma isaretli
 const f1 = Object.values(fd.processStepFunctions).find(f => f.productCharacteristic === 'Kesim ölçüsü');
@@ -111,6 +126,13 @@ const gf = Object.values(fd.processStepFunctions).find(f => f.productCharacteris
 const gm = fd.failureModes[gf.failureModeIds[0]];
 assert.strictEqual(gm.causeIds.length, 2, 'girdi adiminda 2 neden');
 assert.ok(fd.failureCauses[gm.causeIds[0]].description.includes('Tedarikçi'));
+
+// Girdi karakteristigi YALNIZ kendi malzemesinin adiminda olmali
+const yogAdim = Object.values(fd.processSteps).find(x=> x.name.includes('909.4.018'));
+const bantAdim = Object.values(fd.processSteps).find(x=> x.name.includes('952.10.004'));
+const adAl = (st)=> st.functionIds.map(i=> fd.processStepFunctions[i].productCharacteristic);
+assert.deepStrictEqual(adAl(yogAdim), ['Yoğunluk'], 'BASOTECT adiminda yalniz kendi karakteristigi');
+assert.deepStrictEqual(adAl(bantAdim), ['Yapışma'], 'BANT adiminda yalniz kendi karakteristigi');
 
 // Yontemsiz madde: D=9 -> daha yuksek AP
 const ef = Object.values(fd.processStepFunctions).find(f => f.productCharacteristic === 'Etiket doğruluğu');
