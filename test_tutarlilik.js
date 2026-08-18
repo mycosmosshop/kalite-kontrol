@@ -73,10 +73,23 @@ assert.deepStrictEqual(tur(b), ['PFMEA’da olmayan op']);
 b = tutarlilikKarsilastir('X', plan([{ op: 1, eq: 'A' }]), rota([{ op: 1, mn: 'A' }]), { ops: [1, 9] });
 assert.deepStrictEqual(tur(b), ['Planda olmayan PFMEA op']);
 
-// --- 9) PFMEA JSON ozeti: ic ice yapidan op numaralarini toplar ---
-const oz = tdPfmeaOzet({ partNumber: '36.72010-6345', structure: { items: [{ operationNumber: '10' }, { operationNumber: 20, alt: [{ operationNumber: '30' }] }] } });
-assert.strictEqual(oz.kod, '36.72010-6345');
-assert.deepStrictEqual(oz.ops, [10, 20, 30], 'ic ice op numaralari toplanmali');
-assert.deepStrictEqual(tdPfmeaOzet({ partNumber: 'A', x: { operationNumber: 'yok' } }).ops, [], 'sayi olmayan op atlanmali');
+// --- 9) PFMEA ozeti: veritabani bicimi (pfmea_projects.data) ---
+// Gercek kayit yapisi: processItems adinda ic stok kodu parantez icinde,
+// processSteps icinde operationNumber + machineDeviceSource.
+const oz = tdPfmeaOzet({ name: '36.72010-6345 INDEX C PFMEA', data: { fmeaData: {
+  processItems: { i_1: { name: '36.72010-6345 INDEX C — SES VE ISI YALITIM SUNGERI (205.0.214-C)' } },
+  processSteps: { s_1: { operationNumber: '0',  machineDeviceSource: 'GKK / FR34-GKK' },
+                  s_2: { operationNumber: '10', machineDeviceSource: 'SU JETI' },
+                  s_3: { operationNumber: 20,   machineDeviceSource: 'PAKETLEME' },
+                  s_4: { operationNumber: 'yok' } } } } });
+assert.strictEqual(oz.kod, '205.0.214-C', 'ic stok kodu processItems adindan cikarilmali');
+assert.deepStrictEqual(oz.ops, [0, 10, 20], 'sayisal op numaralari toplanmali (gecersiz olan atlanir)');
+assert.strictEqual(oz.mak.get(10), 'SU JETI', 'op -> makine eslemesi tutulmali');
 
-console.log('OK tutarlilik denetimi: 9 senaryo — op farklari, yazim hatasi toleransi, varsayilan rota ve PFMEA ayagi dogru');
+// --- 10) Op 0 (girdi kalite kontrol) sahte bulgu URETMEMELI ---
+// PFMEA'da GKK adimi Op 0'dir; uretim rotasinda karsiligi yoktur.
+let b10 = tutarlilikKarsilastir('X', plan([{ op: 10, eq: 'SU JETI' }]),
+  rota([{ op: 10, mn: 'SU JETI' }]), { ops: [0, 10] });
+assert.deepStrictEqual(tur(b10), [], 'Op 0 eksik sayilmamali, cikan: ' + JSON.stringify(b10));
+
+console.log('OK tutarlilik denetimi: 10 senaryo — op farklari, yazim hatasi toleransi, varsayilan rota ve PFMEA ayagi dogru');

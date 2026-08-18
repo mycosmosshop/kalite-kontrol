@@ -1712,7 +1712,9 @@ function tutarlilikKarsilastir(sc, planSatir, opSatir, pfmea){
 
   // PFMEA ayağı (yüklenmişse)
   if(pfmea && pfmea.ops){
-    const fmeaOps = new Set(pfmea.ops.map(Number));
+    // Op 0 = girdi kalite kontrol (GKK). PFMEA'da bilerek var, uretim rotasinda
+    // yoktur; "eksik" saymak her uründe sahte bulgu uretirdi.
+    const fmeaOps = new Set(pfmea.ops.map(Number).filter(n=>n>0));
     for(const op of planOps.keys())
       if(!fmeaOps.has(op)) bulgular.push({tur:'PFMEA’da olmayan op', detay:'Op '+op+' kontrol planında var, PFMEA’da yok'});
     for(const op of fmeaOps)
@@ -1721,20 +1723,32 @@ function tutarlilikKarsilastir(sc, planSatir, opSatir, pfmea){
   return bulgular;
 }
 
-// PFMEA JSON'undan operasyon numaralarini cikarir (bicim toleransli)
-function tdPfmeaOzet(j){
+// PFMEA projesinden urun kodu + operasyon/makine bilgisini cikarir.
+// Kaynak: pfmea_projects tablosu (PFMEA modulunun kendi verisi) — kullanicidan
+// dosya istemeye gerek yok.
+function tdPfmeaOzet(proje){
   try{
-    const ops = new Set();
-    const gez = (n)=>{
-      if(!n || typeof n!=='object') return;
-      if(Array.isArray(n)) return n.forEach(gez);
-      const on = n.operationNumber ?? n.opNo ?? n.op_no;
-      if(on!=null && String(on).trim()!=='' && !isNaN(Number(on))) ops.add(Number(on));
-      Object.values(n).forEach(gez);
-    };
-    gez(j);
-    const kod = j.partNumber || j.stockCode || j.stok_kodu || (j.header&&j.header.partNumber) || '';
-    return { kod:String(kod||'').trim(), ops:[...ops].sort((a,b)=>a-b) };
+    const d = (proje && proje.data) || {};
+    const fd = d.fmeaData || {};
+    const ps = fd.processSteps || {};
+    const pi = fd.processItems || {};
+    const ops = new Map();                                  // op no -> makine/kaynak
+    Object.values(ps).forEach(x=>{
+      const n = Number(x && x.operationNumber);
+      if(!isFinite(n)) return;
+      ops.set(n, tdNorm(x.machineDeviceSource || ''));
+    });
+    // Urun kodu: processItems adinin icindeki ic stok kodu — "… (205.0.214-C)"
+    let kod = '';
+    Object.values(pi).forEach(x=>{
+      const m = String((x&&x.name)||'').match(/(\d{3}\.\d\.\d{3}(?:-[A-Za-z0-9]+)?)/);
+      if(m && !kod) kod = m[1];
+    });
+    if(!kod){
+      const m2 = String((proje&&proje.name)||'').match(/(\d{3}\.\d\.\d{3}(?:-[A-Za-z0-9]+)?)/);
+      if(m2) kod = m2[1];
+    }
+    return { kod, ad:(proje&&proje.name)||'', ops:[...ops.keys()].sort((a,b)=>a-b), mak:ops };
   }catch(e){ return null; }
 }
 
@@ -1748,58 +1762,58 @@ function tutarlilikAc(){
   m.append(kutu); bg.append(m); root.innerHTML=''; root.append(bg);
   kutu.append(
     el('div',{style:'font-size:12.5px;color:var(--muted);margin-bottom:10px'},
-      'Tüm ürünlerde kontrol planı ile operasyon kartı (rota) karşılaştırılır: eksik/fazla operasyon adımı ve ekipman adı uyuşmazlığı. PFMEA JSON’u yüklerseniz üçüncü ayak da denetlenir. Ekipman adlarında tek harf yazım hatası tolere edilir.'),
+      'Kontrol planı ↔ operasyon kartı (rota) ↔ PFMEA karşılaştırılır: eksik/fazla operasyon adımı ve ekipman adı uyuşmazlığı. PFMEA verisi PFMEA modülünden OTOMATİK okunur. Ekipman adlarında tek harf yazım hatası tolere edilir; PFMEA’daki girdi kalite kontrol adımları (Op 0) rotada bulunmadığı için sayılmaz.'),
     el('div',{style:'display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px'},
       el('button',{class:'btn sm',id:'tdTara',onclick:()=>tutarlilikTara()},'▶ Taramayı başlat'),
-      el('label',{class:'btn sm sec',style:'cursor:pointer'},'📄 PFMEA JSON yükle',
-        el('input',{type:'file',accept:'.json',multiple:true,style:'display:none',onchange:(e)=>tdPfmeaYukle(e.target.files)})),
-      el('span',{id:'tdPfmeaBilgi',style:'font-size:12px;color:var(--muted)'},'PFMEA yüklenmedi'),
+      el('span',{id:'tdPfmeaBilgi',style:'font-size:12px;color:var(--muted)'},'PFMEA verisi otomatik okunur'),
       el('button',{class:'btn sm sec',onclick:()=>tdExcel()},'📥 Excel')),
     el('div',{id:'tdSonuc'},el('div',{class:'empty',style:'padding:14px'},'Taramayı başlatın.')));
 }
 
-function tdPfmeaYukle(files){
-  _tdPfmea = _tdPfmea || {};
-  let n=0;
-  [...files].forEach(f=>{
-    const fr=new FileReader();
-    fr.onload=()=>{ try{
-      const oz=tdPfmeaOzet(JSON.parse(fr.result));
-      if(oz && oz.kod){ _tdPfmea[oz.kod]=oz; n++; }
-      const b=$('#tdPfmeaBilgi'); if(b) b.textContent=Object.keys(_tdPfmea).length+' PFMEA yüklendi: '+Object.keys(_tdPfmea).join(', ').slice(0,80);
-    }catch(e){ toast('PFMEA JSON okunamadı: '+f.name,'err'); } };
-    fr.readAsText(f);
-  });
-}
-
 async function tutarlilikTara(){
   const kutu=$('#tdSonuc'); if(!kutu) return;
-  kutu.innerHTML='<div class="empty" style="padding:14px">Taranıyor…</div>';
+  const durum=(t)=>{ kutu.innerHTML='<div class="empty" style="padding:14px">'+esc(t)+'</div>'; };
+  durum('Operasyon kartları okunuyor…');
   try{
-    // Sayfalama: iki kaynak da 1000 satir siniri asabilir
-    const cek = async (tablo, sutunlar)=>{
-      let hepsi=[], off=0;
-      for(;;){
-        const {data,error}=await sb.from(tablo).select(sutunlar).order('stok_kodu',{ascending:true}).range(off,off+999);
-        if(error) throw error;
-        hepsi=hepsi.concat(data||[]);
-        if(!data || data.length<1000) break;
-        off+=1000;
-      }
-      return hepsi;
-    };
-    const [lp, oc] = await Promise.all([
-      cek('leansys_kontrol_plani','stok_kodu,op_no,olculecek,uretim_ekipman'),
-      cek('operasyon_kartlari','stok_kodu,header_id,op_no,makine_kodu,makine_adi,rota_adi,varsayilan')
-    ]);
+    // 1) Rotasi olan urunler (kucuk tablo) — tarama kapsamini BU belirler.
+    //    leansys_kontrol_plani 111 bin satir; tumunu cekmek taramayi kilitler.
+    const {data:oc,error:e1}=await sb.from('operasyon_kartlari')
+      .select('stok_kodu,header_id,op_no,makine_kodu,makine_adi,rota_adi,varsayilan');
+    if(e1) throw e1;
+    const kodlar=[...new Set((oc||[]).map(x=>x.stok_kodu).filter(Boolean))].sort();
+    if(!kodlar.length){ durum('Operasyon kartı bulunamadı — önce LeanSys’ten çekin.'); return; }
+
+    // 2) Kontrol plani satirlari: YALNIZ bu kodlar icin, obek obek
+    durum('Kontrol planı okunuyor (0/'+kodlar.length+' ürün)…');
+    let lp=[];
+    for(let i=0;i<kodlar.length;i+=40){
+      const obek=kodlar.slice(i,i+40);
+      const {data,error}=await sb.from('leansys_kontrol_plani')
+        .select('stok_kodu,op_no,olculecek,uretim_ekipman').in('stok_kodu',obek);
+      if(error) throw error;
+      lp=lp.concat(data||[]);
+      durum('Kontrol planı okunuyor ('+Math.min(i+40,kodlar.length)+'/'+kodlar.length+' ürün)…');
+    }
+
+    // 3) PFMEA: modulun kendi tablosundan OTOMATIK
+    durum('PFMEA projeleri okunuyor…');
+    _tdPfmea={};
+    try{
+      const {data:pp}=await sb.from('pfmea_projects').select('name,data');
+      (pp||[]).forEach(pr=>{ const oz=tdPfmeaOzet(pr); if(oz && oz.kod) _tdPfmea[oz.kod]=oz; });
+    }catch(e){ /* PFMEA okunamazsa iki ayakla devam */ }
+    const bilgi=$('#tdPfmeaBilgi');
+    if(bilgi){ const n=Object.keys(_tdPfmea).length;
+      bilgi.textContent = n ? (n+' PFMEA eşleşti: '+Object.keys(_tdPfmea).join(', ').slice(0,90)) : 'PFMEA bulunamadı — iki ayakla denetlendi'; }
+
+    // 4) Karsilastir
     const grup={};
     lp.forEach(x=>{ (grup[x.stok_kodu]=grup[x.stok_kodu]||{p:[],o:[]}).p.push(x); });
-    oc.forEach(x=>{ (grup[x.stok_kodu]=grup[x.stok_kodu]||{p:[],o:[]}).o.push(x); });
-
+    (oc||[]).forEach(x=>{ (grup[x.stok_kodu]=grup[x.stok_kodu]||{p:[],o:[]}).o.push(x); });
     _tdSonuc=[];
     Object.keys(grup).sort().forEach(sc=>{
-      const pf = _tdPfmea ? (_tdPfmea[sc] || null) : null;
-      tutarlilikKarsilastir(sc, grup[sc].p, grup[sc].o, pf).forEach(b=> _tdSonuc.push({kod:sc, ...b, pfmea: pf?'evet':'—'}));
+      const pf=_tdPfmea[sc]||null;
+      tutarlilikKarsilastir(sc, grup[sc].p, grup[sc].o, pf).forEach(b=> _tdSonuc.push({kod:sc, ...b, pfmea: pf?'✓':'—'}));
     });
     tdCiz(Object.keys(grup).length);
   }catch(e){ kutu.innerHTML='<div class="empty" style="padding:14px;color:var(--ret)">Hata: '+esc(e.message||String(e))+'</div>'; }
