@@ -1658,6 +1658,175 @@ function timeFromExcel(v){                // Excel saat-Date'i → "HH:MM" (en y
   return String(d.getUTCHours()).padStart(2,'0')+':'+String(d.getUTCMinutes()).padStart(2,'0');
 }
 
+// ============ TUTARLILIK DENETIMI (Plan ↔ Op Kartı ↔ PFMEA) ============
+// IATF denetiminde en sık sorulan tutarlılık: kontrol planındaki adımlar
+// operasyon kartıyla (rota) ve PFMEA ile aynı mı? Tek üründe elle bakmak
+// kolay, ama tüm ürünlerde imkansız — bu tarama onu tek düğmeye indirir.
+// PFMEA verisi bu veritabanında YOK; JSON olarak yüklenir (dışa aktardığımız
+// biçimin aynısı).
+let _tdSonuc = [], _tdPfmea = null;
+
+function tdNorm(x){ return String(x==null?'':x).trim(); }
+
+// Bir ürünün üç kaynağını karşılaştırıp bulgu listesi döndürür (saf fonksiyon).
+function tutarlilikKarsilastir(sc, planSatir, opSatir, pfmea){
+  const bulgular = [];
+  // Operasyon kartı: varsayılan rota tercih edilir
+  const rotalar = {};
+  (opSatir||[]).forEach(o=>{ const h=o.header_id; (rotalar[h]=rotalar[h]||{def:o.varsayilan===true, ops:new Map(), ad:o.rota_adi||('Rota '+h)});
+    rotalar[h].ops.set(Number(o.op_no), {mc:tdNorm(o.makine_kodu), mn:tdNorm(o.makine_adi)}); });
+  const hids = Object.keys(rotalar);
+  const secHid = hids.find(h=>rotalar[h].def) || hids[0];
+  const rota = secHid ? rotalar[secHid] : null;
+
+  // Kontrol planı: op no -> ekipman kümesi
+  const planOps = new Map();
+  (planSatir||[]).forEach(x=>{ if(x.op_no==null) return; const k=Number(x.op_no);
+    const g = planOps.get(k) || {eq:new Set(), ol:new Set()};
+    if(x.uretim_ekipman) g.eq.add(tdNorm(x.uretim_ekipman));
+    if(x.olculecek) g.ol.add(tdNorm(x.olculecek));
+    planOps.set(k, g); });
+
+  if(!rota && planOps.size) bulgular.push({tur:'Operasyon kartı yok', detay:'Kontrol planı var ama rota/operasyon kartı çekilmemiş'});
+  if(rota && !planOps.size)  bulgular.push({tur:'Kontrol planı yok', detay:'Operasyon kartı var ama kontrol planı maddesi yok'});
+
+  if(rota && planOps.size){
+    // Op numarası farkları
+    for(const op of rota.ops.keys())
+      if(!planOps.has(op)) bulgular.push({tur:'Planda olmayan op', detay:'Op '+op+' — '+(rota.ops.get(op).mn||rota.ops.get(op).mc)+' (rota: '+rota.ad+')'});
+    for(const op of planOps.keys())
+      if(!rota.ops.has(op)) bulgular.push({tur:'Rotada olmayan op', detay:'Op '+op+' kontrol planında var, operasyon kartında yok'});
+    // Ekipman adı uyuşmazlığı (yazım hatası toleranslı)
+    for(const [op, g] of planOps){
+      const r = rota.ops.get(op); if(!r) continue;
+      const eqs = [...g.eq].filter(Boolean); if(!eqs.length) continue;
+      // Birebir ayni ad HER ZAMAN eslesir: benzerlik puani 4 harften kisa
+      // kelimeleri attigi icin kisa makine adlarinda ("A", "KP5") yanlis
+      // "uyusmuyor" uretiyordu.
+      const ayni = (a,b)=> tdNorm(a).toLocaleUpperCase('tr') === tdNorm(b).toLocaleUpperCase('tr');
+      const uyan = eqs.some(e => ayni(e, r.mn) || ayni(e, r.mc) ||
+        (typeof equipScore==='function' && equipScore(e, r.mn) >= 0.6));
+      if(!uyan) bulgular.push({tur:'Ekipman uyuşmuyor', detay:'Op '+op+' — plan: “'+eqs.join(' / ')+'” · rota: “'+(r.mn||r.mc)+'”'});
+    }
+  }
+
+  // PFMEA ayağı (yüklenmişse)
+  if(pfmea && pfmea.ops){
+    const fmeaOps = new Set(pfmea.ops.map(Number));
+    for(const op of planOps.keys())
+      if(!fmeaOps.has(op)) bulgular.push({tur:'PFMEA’da olmayan op', detay:'Op '+op+' kontrol planında var, PFMEA’da yok'});
+    for(const op of fmeaOps)
+      if(!planOps.has(op)) bulgular.push({tur:'Planda olmayan PFMEA op', detay:'Op '+op+' PFMEA’da var, kontrol planında yok'});
+  }
+  return bulgular;
+}
+
+// PFMEA JSON'undan operasyon numaralarini cikarir (bicim toleransli)
+function tdPfmeaOzet(j){
+  try{
+    const ops = new Set();
+    const gez = (n)=>{
+      if(!n || typeof n!=='object') return;
+      if(Array.isArray(n)) return n.forEach(gez);
+      const on = n.operationNumber ?? n.opNo ?? n.op_no;
+      if(on!=null && String(on).trim()!=='' && !isNaN(Number(on))) ops.add(Number(on));
+      Object.values(n).forEach(gez);
+    };
+    gez(j);
+    const kod = j.partNumber || j.stockCode || j.stok_kodu || (j.header&&j.header.partNumber) || '';
+    return { kod:String(kod||'').trim(), ops:[...ops].sort((a,b)=>a-b) };
+  }catch(e){ return null; }
+}
+
+function tutarlilikAc(){
+  const root=$('#modalRoot');
+  const bg=el('div',{class:'modal-bg',onclick:e=>{ if(e.target===bg) root.innerHTML=''; }});
+  const m=el('div',{class:'modal',style:'position:relative;max-width:1100px;width:94vw'});
+  m.append(el('button',{class:'close-x',onclick:()=>root.innerHTML=''},'×'));
+  m.append(el('h3',{},'🧪 Tutarlılık Denetimi — Kontrol Planı ↔ Operasyon Kartı ↔ PFMEA'));
+  const kutu = el('div');
+  m.append(kutu); bg.append(m); root.innerHTML=''; root.append(bg);
+  kutu.append(
+    el('div',{style:'font-size:12.5px;color:var(--muted);margin-bottom:10px'},
+      'Tüm ürünlerde kontrol planı ile operasyon kartı (rota) karşılaştırılır: eksik/fazla operasyon adımı ve ekipman adı uyuşmazlığı. PFMEA JSON’u yüklerseniz üçüncü ayak da denetlenir. Ekipman adlarında tek harf yazım hatası tolere edilir.'),
+    el('div',{style:'display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px'},
+      el('button',{class:'btn sm',id:'tdTara',onclick:()=>tutarlilikTara()},'▶ Taramayı başlat'),
+      el('label',{class:'btn sm sec',style:'cursor:pointer'},'📄 PFMEA JSON yükle',
+        el('input',{type:'file',accept:'.json',multiple:true,style:'display:none',onchange:(e)=>tdPfmeaYukle(e.target.files)})),
+      el('span',{id:'tdPfmeaBilgi',style:'font-size:12px;color:var(--muted)'},'PFMEA yüklenmedi'),
+      el('button',{class:'btn sm sec',onclick:()=>tdExcel()},'📥 Excel')),
+    el('div',{id:'tdSonuc'},el('div',{class:'empty',style:'padding:14px'},'Taramayı başlatın.')));
+}
+
+function tdPfmeaYukle(files){
+  _tdPfmea = _tdPfmea || {};
+  let n=0;
+  [...files].forEach(f=>{
+    const fr=new FileReader();
+    fr.onload=()=>{ try{
+      const oz=tdPfmeaOzet(JSON.parse(fr.result));
+      if(oz && oz.kod){ _tdPfmea[oz.kod]=oz; n++; }
+      const b=$('#tdPfmeaBilgi'); if(b) b.textContent=Object.keys(_tdPfmea).length+' PFMEA yüklendi: '+Object.keys(_tdPfmea).join(', ').slice(0,80);
+    }catch(e){ toast('PFMEA JSON okunamadı: '+f.name,'err'); } };
+    fr.readAsText(f);
+  });
+}
+
+async function tutarlilikTara(){
+  const kutu=$('#tdSonuc'); if(!kutu) return;
+  kutu.innerHTML='<div class="empty" style="padding:14px">Taranıyor…</div>';
+  try{
+    // Sayfalama: iki kaynak da 1000 satir siniri asabilir
+    const cek = async (tablo, sutunlar)=>{
+      let hepsi=[], off=0;
+      for(;;){
+        const {data,error}=await sb.from(tablo).select(sutunlar).order('stok_kodu',{ascending:true}).range(off,off+999);
+        if(error) throw error;
+        hepsi=hepsi.concat(data||[]);
+        if(!data || data.length<1000) break;
+        off+=1000;
+      }
+      return hepsi;
+    };
+    const [lp, oc] = await Promise.all([
+      cek('leansys_kontrol_plani','stok_kodu,op_no,olculecek,uretim_ekipman'),
+      cek('operasyon_kartlari','stok_kodu,header_id,op_no,makine_kodu,makine_adi,rota_adi,varsayilan')
+    ]);
+    const grup={};
+    lp.forEach(x=>{ (grup[x.stok_kodu]=grup[x.stok_kodu]||{p:[],o:[]}).p.push(x); });
+    oc.forEach(x=>{ (grup[x.stok_kodu]=grup[x.stok_kodu]||{p:[],o:[]}).o.push(x); });
+
+    _tdSonuc=[];
+    Object.keys(grup).sort().forEach(sc=>{
+      const pf = _tdPfmea ? (_tdPfmea[sc] || null) : null;
+      tutarlilikKarsilastir(sc, grup[sc].p, grup[sc].o, pf).forEach(b=> _tdSonuc.push({kod:sc, ...b, pfmea: pf?'evet':'—'}));
+    });
+    tdCiz(Object.keys(grup).length);
+  }catch(e){ kutu.innerHTML='<div class="empty" style="padding:14px;color:var(--ret)">Hata: '+esc(e.message||String(e))+'</div>'; }
+}
+
+function tdCiz(urunSayisi){
+  const kutu=$('#tdSonuc'); if(!kutu) return;
+  if(!_tdSonuc.length){ kutu.innerHTML='<div class="empty" style="padding:14px;color:var(--ok)">✔ '+urunSayisi+' üründe tutarsızlık bulunamadı.</div>'; return; }
+  const say={}; _tdSonuc.forEach(x=> say[x.tur]=(say[x.tur]||0)+1);
+  const ozet=Object.keys(say).sort((a,b)=>say[b]-say[a]).map(k=>'<span class="pill" style="margin-right:6px">'+esc(k)+': <b>'+say[k]+'</b></span>').join('');
+  const kodlar=new Set(_tdSonuc.map(x=>x.kod));
+  kutu.innerHTML='<div style="margin-bottom:8px">'+urunSayisi+' ürün tarandı · <b>'+kodlar.size+'</b> üründe <b>'+_tdSonuc.length+'</b> bulgu<br>'+ozet+'</div>'
+    +'<div style="max-height:52vh;overflow:auto;border:1px solid var(--line);border-radius:8px">'
+    +'<table><thead><tr><th>Ürün Kodu</th><th>Bulgu</th><th>Detay</th><th>PFMEA</th></tr></thead><tbody>'
+    +_tdSonuc.map(x=>'<tr><td><b>'+esc(x.kod)+'</b></td><td>'+esc(x.tur)+'</td><td>'+esc(x.detay)+'</td><td style="text-align:center">'+esc(x.pfmea)+'</td></tr>').join('')
+    +'</tbody></table></div>';
+}
+
+function tdExcel(){
+  if(!_tdSonuc.length){ toast('Önce tarama yapın.','err'); return; }
+  const satir=[['Ürün Kodu','Bulgu','Detay','PFMEA yüklü']].concat(_tdSonuc.map(x=>[x.kod,x.tur,x.detay,x.pfmea]));
+  const wb=XLSX.utils.book_new(); const ws=XLSX.utils.aoa_to_sheet(satir);
+  ws['!cols']=[{wch:18},{wch:26},{wch:70},{wch:12}];
+  XLSX.utils.book_append_sheet(wb,ws,'Tutarlılık');
+  XLSX.writeFile(wb,'Tutarlilik_Denetimi_'+new Date().toISOString().slice(0,10)+'.xlsx');
+}
+
 // ====================== KONTROL PLANI ======================
 let PLAN=[]; let PLAN_SEL=''; let PLAN_HDR={};
 let PLAN_PENDING={};  // {id:{field:val,...}} kaydedilmemiş hücre değişiklikleri (manuel kaydet)
@@ -2115,6 +2284,7 @@ async function renderPlan(){
       el('h3',{style:'margin:0'},`${sc}${snm?' — '+esc(snm):''} (${items.length} madde)`),
       el('div',{style:'display:flex;gap:8px;flex-wrap:wrap'},
         el('button',{class:'btn sm sec',title:'VDA 6.5 ürün denetimi için FULL ölçüm Excel şablonu indir (her madde 5 ölçüm — elle doldurulur; Min/Maks/Ortalama/Sonuç otomatik hesaplanır)',onclick:()=>exportVdaTemplate(sc, snm)},'📥 VDA 6.5 Ölçüm Şablonu'),
+        el('button',{class:'btn sm sec',title:'TÜM ürünlerde kontrol planı ↔ operasyon kartı ↔ (isteğe bağlı) PFMEA tutarlılığını tarar',onclick:()=>tutarlilikAc()},'🧪 Tutarlılık Denetimi'),
         canPlan?el('button',{class:'btn sm',id:'planSaveBtn',disabled:!Object.keys(PLAN_PENDING).length,style:'background:'+(Object.keys(PLAN_PENDING).length?'var(--ret)':'var(--ok)')+';cursor:'+(Object.keys(PLAN_PENDING).length?'pointer':'default'),title:'Yaptığın hücre değişikliklerini kaydet',onclick:savePlanChanges},Object.keys(PLAN_PENDING).length?('💾 Kaydet ('+Object.keys(PLAN_PENDING).length+')'):'💾 Kaydedildi'):'',
         canPlan?el('button',{class:'btn sm sec',title:'Maddeleri önce ROTA (Op Kartı), sonra Op No’ya göre sıralayıp Ölçü No (1..N) yeniden atar',onclick:()=>renumberByOp(sc)},'🔢 Rota + Op No’ya göre sırala'):'',
         canPlan?el('button',{class:'btn sm sec',title:'Versiyonla / arşivle / geri yükle',onclick:()=>openPlanArchive(sc, snm)},'🗂 Versiyonlar'):'',
