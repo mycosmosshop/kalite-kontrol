@@ -27,6 +27,9 @@ td.durum{width:110px;text-align:center}
 .rozet{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:700}
 .r0{background:#fee2e2;color:#991b1b}.r50{background:#fef3c7;color:#92400e}.r100{background:#dcfce7;color:#166534}
 .kanit{font-size:11px;color:#166534;background:#dcfce7;border-radius:4px;padding:1px 5px;margin-left:4px}
+.yukle-dugme{font-size:11px;color:#166534;background:#dcfce7;border-radius:4px;padding:1px 6px;
+  margin-left:4px;text-decoration:none;white-space:nowrap}
+.yukle-dugme:hover{background:#bbf7d0}
 .aiag3{font-size:11px;color:#1e40af;background:#dbeafe;border-radius:4px;padding:1px 5px;margin-left:4px}
 .form-ad{font-size:12px;color:var(--soluk)}
 a.dosya{color:#1d4ed8;text-decoration:none}a.dosya:hover{text-decoration:underline}
@@ -448,8 +451,6 @@ function cizPano() {
   if (!panoKayitlari.length) { $('#panoKart').innerHTML = 'Henüz APQP kaydı yok.'; return; }
   const satir = panoKayitlari.map(p => {
     const y = yuzde(p);
-    const hepsi = p.bolumler.flatMap(b => b.adimlar);
-    const kanitli = hepsi.filter(a => (a.kanitlar || []).length).length;
     return '<tr data-ac-proje="' + p.id + '" style="cursor:pointer">'
       + '<td><b>' + p.stokKodu + '</b></td>'
       + '<td>' + (p.urunAdi || '') + '</td>'
@@ -457,7 +458,6 @@ function cizPano() {
       + '<td>' + (p.lokasyon || '<span style="color:#b45309">—</span>') + '</td>'
       + '<td class="no">' + (p.tarih || '') + '</td>'
       + '<td class="no">' + (p.devreyeAlma || '') + '</td>'
-      + '<td class="durum">' + kanitli + ' / ' + hepsi.length + '</td>'
       + '<td class="durum">' + rozet(y) + '</td>'
       + '<td class="durum"><a href="#" class="sil-dugme" data-proje-sil="' + p.id
       + '" title="Bu APQP kaydını sil">Sil</a></td>'
@@ -466,7 +466,7 @@ function cizPano() {
   $('#panoKart').innerHTML =
     '<table><thead><tr><th>Ürün Kodu</th><th>Ürün Adı (LeanSys)</th><th>Müşteri</th>'
     + '<th>Lokasyon</th><th>APQP Başlangıç</th><th>Devreye Alma</th>'
-    + '<th>Kanıt</th><th>Tamamlanma</th><th></th></tr></thead><tbody>' + satir + '</tbody></table>';
+    + '<th>Tamamlanma</th><th></th></tr></thead><tbody>' + satir + '</tbody></table>';
 }
 
 // Revizyon tarihçesi — AIAG APQP 3rd Ed. 1.15 (değişiklik günlüğü):
@@ -521,7 +521,10 @@ function cizListe() {
           parca.push(ac + dugme);
         }
       });
-      if (!(a.kanitlar || []).length) parca.push('<span style="color:#b45309;font-size:11px">kanıt yok</span>');
+      // Her adima doküman yüklenebilir; kanıtı olmayan adımda tek seçenek budur
+      parca.push('<a href="#" class="yukle-dugme" data-yukle="' + encodeURIComponent(b.no + '|' + a.no)
+        + '" title="Bilgisayardan doküman seçin — ürünün Drive klasörüne kaydedilir ve bu adıma bağlanır">'
+        + '⬆ doküman yükle</a>');
       const form = parca.join('<br>');
       h += '<tr>'
         + '<td class="no">' + a.no + '</td>'
@@ -641,6 +644,13 @@ document.addEventListener('click', e => {
       .catch(err => mesaj('Yeniden adlandırılamadı: ' + err.message));
     return;
   }
+  const yyuk = e.target.closest && e.target.closest('a[data-yukle]');
+  if (yyuk) {
+    e.preventDefault();
+    const [bno, ano] = decodeURIComponent(yyuk.dataset.yukle).split('|');
+    dokumanYukle(bno, ano);
+    return;
+  }
   const ysil = e.target.closest && e.target.closest('a[data-sil]');
   if (ysil) {
     e.preventDefault();
@@ -656,6 +666,48 @@ document.addEventListener('click', e => {
   e.preventDefault();
   dosyaAc(decodeURIComponent(a.dataset.ac));
 });
+
+// Bilgisayardan doküman secip urunun Drive klasorune yazar, adima baglar.
+// Ad, urun kodunu tasimazsa eklenir: kanit suzgeci yalniz urune ait dosyalari
+// kabul ediyor, aksi halde yuklenen dosya bir sonraki yenilemede dusuyordu.
+function dokumanYukle(bno, ano) {
+  if (!aktif) return;
+  const sec = document.createElement('input');
+  sec.type = 'file';
+  sec.onchange = async () => {
+    const f = sec.files && sec.files[0];
+    if (!f) return;
+    if (f.size > 20 * 1024 * 1024) { mesaj('Dosya 20 MB üzerinde — Drive klasörüne elle kopyalayın.'); return; }
+    let ad = f.name;
+    if (!buUruneAit(ad, aktif.stokKodu, aktif.musteriParca)) {
+      const nk = ad.lastIndexOf('.');
+      ad = (nk > 0 ? ad.slice(0, nk) : ad) + ' ' + aktif.stokKodu + (nk > 0 ? ad.slice(nk) : '');
+    }
+    mesaj('Yükleniyor: ' + ad + ' …');
+    try {
+      const tampon = await f.arrayBuffer();
+      const bayt = new Uint8Array(tampon);
+      let ham = '';
+      for (let i = 0; i < bayt.length; i += 8192) ham += String.fromCharCode.apply(null, bayt.subarray(i, i + 8192));
+      const c = await fetch(AJAN + '/dosyayuk?dir=' + encodeURIComponent(driveKlasoru(aktif.stokKodu))
+        + '&ad=' + encodeURIComponent(ad), { method: 'POST', body: btoa(ham) });
+      const j = await c.json();
+      if (!j.ok) throw new Error(j.hata || 'yazılamadı');
+      const b = aktif.bolumler.find(x => x.no === bno);
+      const a = b && b.adimlar.find(x => x.no === ano);
+      if (a) {
+        a.kanitlar = (a.kanitlar || []).concat([{ tur: 'drive', ad: j.ad, yol: j.yol }]);
+        a.durum = 100;
+        if (!a.tamamlanma) a.tamamlanma = bugun();
+      }
+      await kaydet(aktif); ciz();
+      mesaj('Yüklendi: ' + j.ad + ' — adım ' + ano + ' tamamlandı olarak işaretlendi.');
+    } catch (err) {
+      mesaj('Yüklenemedi: ' + err.message + ' (yerel ajan çalışıyor mu?)');
+    }
+  };
+  sec.click();
+}
 
 $('#sekmeler').addEventListener('click', e => {
   if (!e.target.dataset.gorunum) return;
