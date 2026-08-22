@@ -25,11 +25,15 @@ EK_ADIMLAR = {
          "0.5", "Satınalma", "", "PL11 Onaylı Tedarikçi Listesi"),
         ("Açık konu (concern) matrisi oluşturuldu; sorumlu ve termin atandı",
          "0.9", "Proje Ekibi", "", "FR81 Toplantı Tutanağı"),
-        ("Risk değerlendirme ve azaltma planı hazırlandı (REMS)",
-         "1.17", "Proje Ekibi Kalite", "", "Risk Değerlendirme Planı"),
-        ("Değişiklik yönetimi başlatıldı — her APQP çıktısında değişiklik günlüğü "
-         "(neden, talep eden, onaylayan, tarih)",
-         "1.15", "Kalite", "", "Değişiklik Günlüğü"),
+        # FR148 Değişiklik Yönetimi Formu her ikisini de karşılıyor: talep/onay
+        # bilgisi (neden, talep eden, sorumlu, tarih) ve potansiyel riskler
+        # bölümü (olasılık × etki = risk puanı, risk derecesi).
+        ("Risk değerlendirme ve azaltma planı hazırlandı — olasılık/etki, risk "
+         "puanı ve derecesi",
+         "1.17", "Proje Ekibi Kalite", "", "FR148 Değişiklik Yönetimi Formu"),
+        ("Değişiklik yönetimi başlatıldı — değişiklik talebi/onayı FR148 ile, "
+         "her APQP çıktısında revizyon tarihçesi",
+         "1.15", "Kalite", "", "FR148 Değişiklik Yönetimi Formu"),
         ("APQP program metrikleri hazırlandı ve yönetime sunuldu "
          "(kırmızı/sarı/yeşil durum, kapı onayı)",
          "1.16; 1.14", "Proje Yöneticisi", "", "APQP Program Metrikleri"),
