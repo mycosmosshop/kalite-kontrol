@@ -153,8 +153,10 @@ const MODUL = [
   [/eğitim|egitim|fr17/i,         'https://mycosmosshop.github.io/egitim-polivalans/',     'Egitim & Polivalans modulu'],
   [/onaylı tedarikçi|onayli tedarikci|pl11/i,
                                   'https://mycosmosshop.github.io/supplier-system/',       'Onayli Tedarikci modulu'],
-  [/teknik resim|numaralandırılmış|numaralandirilmis/i,
-                                  'https://mycosmosshop.github.io/teknik-resim/',          'Teknik Resim modulu'],
+  // Yalniz BALONLANMIS resim adiminda balonlama modulu; "Musteri Teknik
+  // Resimleri" adimlarinda kanit zaten LeanSys stok dokumani (asil resim).
+  [/numaralandırılmış|numaralandirilmis|balonla/i,
+                                  'https://mycosmosshop.github.io/teknik-resim/',          'Teknik Resim Balonlama modulu'],
 ];
 function modulBaglantisi(form) {
   const f = met(form);
