@@ -350,6 +350,14 @@ async function kodCoz(giris) {
 // Kontrol planindaki olcum yontemi (KOMPARATOR, SERITMETRE, GOZLE...) ile
 // calismanin alet adi/karakteristigi/adi eslesirse o adima baglanir.
 const MSA_ADRES = 'https://mycosmosshop.github.io/msa/results.html?id=';
+// Yeterlilik calismalarinin KENDI sonuc sayfasi var. results.html Gage R&R
+// icin yazilmis ve "en az 2 tekrar gerekli" hatasi veriyor; yeterlilikte
+// parca basina tek olcum olur.
+const MSA_SAYFA = { capability: 'cap-results.html', binomial: 'cap-attributes.html',
+  poisson: 'cap-attributes.html', tolerance: 'cap-tolerance.html',
+  comparison: 'cap-compare.html', multi: 'cap-multi.html' };
+const msaAdres = c => 'https://mycosmosshop.github.io/msa/'
+  + (MSA_SAYFA[met(c.study_type)] || 'results.html') + '?id=' + c.id;
 const MSA_ROZET = { acceptable: '✓ kabul', marginal: '⚠ şartlı', unacceptable: '✗ red' };
 
 // Calisma BU URUNE ait olmali. Yalniz alet adina bakmak, ayni isimli aleti
@@ -471,7 +479,7 @@ async function apqpUret(giris) {
         tur: 'erp',
         ad: on + met(c.study_name)
           + (c.is_acceptable ? ' (' + (MSA_ROZET[c.is_acceptable] || c.is_acceptable) + ')' : ''),
-        adres: MSA_ADRES + c.id,
+        adres: msaAdres(c),
       }));
       if (/msa|gage ?r&?r|fr ?86|ölçüm sistemi/i.test(metin)) ekle(k.msa, 'MSA: ');
       if (/yeterlilik|fr ?88|cp ?, ?cpk|cpk|süreç potansiyeli|varyasyonun azalt/i.test(metin))

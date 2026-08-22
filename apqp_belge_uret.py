@@ -1888,7 +1888,8 @@ def yeterlilik_ozeti(v, hedef, kayitlar):
         return 0
     wb = Workbook(); ws = wb.active; ws.title = "Özet"
     ws.sheet_view.showGridLines = False
-    for h, g in zip("ABCDEFGHIJKL", (8, 14, 26, 20, 9, 9, 9, 9, 9, 12, 34, 12)):
+    # Normallik sutunu 12 karakterde tasiyordu; genislikler icerige gore
+    for h, g in zip("ABCDEFGHIJKL", (6, 10, 24, 16, 7, 9, 9, 9, 9, 26, 40, 11)):
         ws.column_dimensions[h].width = g
     ince = Side(style="thin", color="808080")
     kutu = Border(top=ince, bottom=ince, left=ince, right=ince)
@@ -1920,7 +1921,7 @@ def yeterlilik_ozeti(v, hedef, kayitlar):
         kabul = "KABUL" if s_["cpk"] >= esik else (
             "ŞARTLI" if s_["cpk"] >= 1.33 else "YETERSİZ")
         ad = s_.get("ad")
-        normallik = ("AD %.2f / kritik %.2f — %s" % (ad, s_["ad_kritik"],
+        normallik = ("AD %.2f · kritik %.2f · %s" % (ad, s_["ad_kritik"],
                      "normal" if s_.get("normal") else "normal değil")) if ad else "—"
         deger = [i + 1, k["tur"], k["kar"][:26], k["alet"], len(k["deger"]),
                  round(s_["cp"], 2), round(s_["cpk"], 2), round(s_["pp"], 2),
@@ -1935,7 +1936,10 @@ def yeterlilik_ozeti(v, hedef, kayitlar):
                 c.fill = PatternFill("solid", fgColor="F4F7FB")
         ws.cell(rr, 12).font = Font(size=10, bold=True, color={
             "KABUL": "166534", "ŞARTLI": "92400E"}.get(kabul, "991B1B"))
-        ws.row_dimensions[rr].height = 30
+        # Satir yuksekligi en uzun hucreye gore: yontem metni sigmiyordu
+        uzun = max(len(str(deger[9])) / 26.0, len(str(deger[10])) / 40.0,
+                   len(str(deger[2])) / 24.0)
+        ws.row_dimensions[rr].height = max(30, min(72, 15 * (int(uzun) + 1)))
 
     son = bas + len(kayitlar) + 2
     ws.cell(son, 1, "Kabul kriteri: proses yeterliliği Cpk ≥ 1,33 · makine yeterliliği "
