@@ -221,7 +221,45 @@ def _olcu_disi(s, W, H, capa):
         return True
     if x > W * 0.825 and H * 0.49 < y < H * 0.78:
         return True
-    return any(abs(x - cx) < 380 and abs(y - cy) < 70 for cx, cy in capa)
+    # Etiket cevresindeki notlar ("x2", "©", "Scale: 1:5") olcu degildir;
+    # dikey pencere dardi ve etiketin ALTINDAKI notlar balonlaniyordu.
+    return any(abs(x - cx) < 420 and -80 < (y - cy) < 150 for cx, cy in capa)
+
+
+def _yakinlari_birlestir(kutular, esik=26):
+    """Ayni olcunun parcalanmis kutularini birlestirir.
+    Ornek: "714" bazen "7" + "14" olarak iki kutu cikiyor ve ayni sayiya
+    IKI BALON dusuyordu (kullanicinin gordugu "cift daire")."""
+    kalan = sorted(kutular, key=lambda s: (s["yon"], s["y"], s["x"]))
+    sonuc = []
+    for s in kalan:
+        for g in sonuc:
+            if g["yon"] != s["yon"]:
+                continue
+            # kutular ust uste ya da okuma yonunde bitisikse ayni olcudur
+            ax, ay = g["x"], g["y"]
+            bx, by = s["x"], s["y"]
+            # Yalniz AYNI sayinin parcalari birlesir: ayri olculeri
+            # yutmamak icin esik dar tutulur (rakam araligi ~10-20 px).
+            # Yatayda rakam araligi daha genis olabiliyor ("714" -> "7"+"14");
+            # ama birlesmis kutu 6 haneden genis olmasin ki ayri olculer
+            # yutulmasin.
+            if g["yon"] == "y":
+                yeni_g = max(ax + g["g"], bx + s["g"]) - min(ax, bx)
+                yakin = (abs(ay - by) < 18 and -esik <= (bx - (ax + g["g"])) < esik * 1.6
+                         and yeni_g < 7 * max(18, g["h"] * 0.62))
+            else:
+                yeni_h = max(ay + g["h"], by + s["h"]) - min(ay, by)
+                yakin = (abs(ax - bx) < 18 and -esik <= (by - (ay + g["h"])) < esik * 1.6
+                         and yeni_h < 7 * max(18, g["g"] * 0.62))
+            if yakin:
+                g["g"] = max(ax + g["g"], bx + s["g"]) - min(ax, bx)
+                g["h"] = max(ay + g["h"], by + s["h"]) - min(ay, by)
+                g["x"], g["y"] = min(ax, bx), min(ay, by)
+                break
+        else:
+            sonuc.append(dict(s))
+    return sonuc
 
 
 def _kutu_oku(im, s):
@@ -337,7 +375,8 @@ def tum_olculer(im, capa, plan_degerleri=()):
     import cv2
     import numpy as np
     H, W = im.shape
-    kutu = [s for s in _yazi_kutulari(im) if not _olcu_disi(s, W, H, capa)]
+    kutu = _yakinlari_birlestir(
+        [s for s in _yazi_kutulari(im) if not _olcu_disi(s, W, H, capa)])
     plan = {("%g" % float(d)) for d in plan_degerleri}
     siyah = (im < 128).astype(np.uint8)
     n_bil, etiket, ist, _ = cv2.connectedComponentsWithStats(siyah, 8)
@@ -371,7 +410,10 @@ def balonla(tiff_yolu, hedef_png, atamalar, baslik=""):
         kucuk = ImageFont.truetype("arial.ttf", 30)
     except OSError:
         yazi = kucuk = kucuk_no = ImageFont.load_default()
-    RENK = {"plan": (200, 0, 0), "okundu": (0, 90, 200), "sıradan": (0, 90, 200)}
+    # Tek renk duzeni: okunan KIRMIZI, okunamayan SARI. Once "plan/okundu"
+    # ayrimi icin iki renk vardi, cizimde karisik gorunuyordu; o ayrim
+    # olcusel raporun "Not" sutununda zaten yaziyor.
+    RENK = {"plan": (200, 0, 0), "okundu": (200, 0, 0), "sıradan": (200, 0, 0)}
     for no, x, y, kaynak in atamalar:
         cx, cy = x, y
         boya = RENK.get(kaynak, (215, 150, 0))       # bilinmiyorsa sarı
@@ -482,8 +524,8 @@ def uret(kod, tiff_yolu, klasor, kp_satirlari, sablon_kutusu=None, tam=True):
     ad = "Numaralandırılmış Teknik Resim %s" % kod
     png = os.path.join(klasor, ad + ".png")
     balonla(tiff_yolu, png, atama,
-            "%s — tüm ölçüler balonlu · kırmızı: kontrol planıyla doğrulandı · "
-            "mavi: okundu · sarı: okunamadı (gözden geçirin)" % kod)
+            "%s — tüm ölçüler balonlu · sarı balon: çizimden okunamadı, "
+            "değeri ölçüsel rapora elle girilecek" % kod)
     pdf_yaz(png, os.path.join(klasor, ad + ".pdf"))
 
     dogru = sum(1 for a in atama if a[3] == "plan")

@@ -1203,20 +1203,64 @@ def olcusel_satirlar(kod):
     return satir
 
 
+# Olcum aleti -> cozunurluk (mm / g). Kullanicinin verdigi degerler.
+COZUNURLUK = [
+    (re.compile(r"MİKROMETRE|MIKROMETRE", re.I), 0.001, "mikrometre 0,001 mm"),
+    (re.compile(r"KUMPAS", re.I), 0.01, "kumpas 0,01 mm"),
+    (re.compile(r"GRAMAJ", re.I), 0.01, "gramaj hesap 0,01"),
+    (re.compile(r"KOMPARAT", re.I), 0.1, "komparatör 0,1 mm"),
+    (re.compile(r"TERAZ|AĞIRLIK|AGIRLIK|GRAM\b", re.I), 0.1, "terazi 0,1 g"),
+    (re.compile(r"GÖSTERGE|GOSTERGE", re.I), 0.1, "gösterge 0,1"),
+    (re.compile(r"ŞERİT|SERİT|SERIT|CETVEL|METRE", re.I), 1.0, "şeritmetre 1 mm"),
+]
+NITEL_YONTEM = re.compile(r"GÖZLE|GOZLE|GÖRSEL|GORSEL|^TL\s*\d+", re.I)
+
+
+def alet_cozunurluk(yontem):
+    """(çözünürlük, açıklama). Nitel yöntemde çözünürlük yok."""
+    y = met(yontem)
+    if NITEL_YONTEM.search(y):
+        return None, "görsel/nitel — uygun / uygun değil"
+    for kalip, c, ad in COZUNURLUK:
+        if kalip.search(y):
+            return c, ad
+    return 0.1, "0,1 mm"
+
+
+def baskin_alet(kod):
+    """Ürünün ölçülerinde en çok kullanılan alet (plan eşleşmesi olmayan
+    çizim ölçüleri için varsayılan)."""
+    sayim = {}
+    for x in kp_satirlari(kod):
+        y = met(x.get("yontem"))
+        if y and not NITEL_YONTEM.search(y) and x.get("alt_limit") is not None:
+            sayim[y] = sayim.get(y, 0) + 1
+    return max(sayim, key=sayim.get) if sayim else ""
+
+
 def olcusel_deger(k, adet=5, tohum=0):
     """Ölçülen değerler — yeterlilik çalışmasıyla aynı model (nominal ortalı,
     sigma = T/(6·1,7)); hepsi spec içinde kalır."""
     import random
     rnd = random.Random(9000 + tohum)
+    coz, _ = alet_cozunurluk(k.get("yontem"))
+    if coz is None:                       # görsel kontrol: sayı değil
+        return ["uygun"] * adet
     T = k["ust"] - k["alt"]
     orta = (k["alt"] + k["ust"]) / 2
     nominal = k["nominal"] if abs(k["nominal"] - orta) <= T / 8 else orta
-    basamak = 2 if T < 1 else 1
-    d = []
-    while len(d) < adet:
-        x = round(rnd.gauss(nominal, T / (6 * 1.70)), basamak)
+    # Değerler aletin ÇÖZÜNÜRLÜK IZGARASINA oturur (şeritmetre 1 mm ise
+    # 879,7 diye bir okuma olmaz) ve tolerans içinde kalır.
+    basamak = max(0, -int(round(math.log10(coz))))
+    d, deneme = [], 0
+    while len(d) < adet and deneme < 400:
+        deneme += 1
+        x = round(round(rnd.gauss(nominal, T / (6 * 1.33)) / coz) * coz, basamak)
         if k["alt"] <= x <= k["ust"]:
-            d.append(x)
+            d.append(int(x) if basamak == 0 else x)
+    while len(d) < adet:                  # tolerans çözünürlükten darsa nominal
+        x = round(round(nominal / coz) * coz, basamak)
+        d.append(int(x) if basamak == 0 else x)
     return d
 
 
@@ -1225,6 +1269,7 @@ def balon_satirlari(v, balon):
     Tolerans: kontrol planında varsa plandan, yoksa ürünün kendi sınıfına göre
     DIN ISO 2768 genel toleransından; okunamayan ölçü boş bırakılır."""
     sinif, uyan, toplam = tolerans_sinifi(v["kod"])
+    varsayilan = baskin_alet(v["kod"])          # plan eşleşmesi olmayan ölçüler
     plan = {}
     for no, k in olcusel_satirlar(v["kod"]):
         plan.setdefault(str(no).split(".")[0], []).append(k)
@@ -1239,10 +1284,14 @@ def balon_satirlari(v, balon):
             except ValueError:
                 d = None
             if d is not None:
-                k = next((x for x in plan.get(pos, []) if abs(x["nominal"] - d) < 0.51), None)
+                # Cizim olcusu MAKINE AYARI karakteristigine (sicaklik, hiz,
+                # baski) eslesmemeli: degeri tutsa da farkli seydir.
+                uygun = lambda x: not MAKINE_AYARI.search(x["ad"])
+                k = next((x for x in plan.get(pos, [])
+                          if uygun(x) and abs(x["nominal"] - d) < 0.51), None)
                 if k is None:      # POS eşleşmezse tüm plandan değere göre ara
                     k = next((x for y in plan.values() for x in y
-                              if abs(x["nominal"] - d) < 0.01), None)
+                              if uygun(x) and abs(x["nominal"] - d) < 0.01), None)
         if k:
             satir.append((b["no"], dict(k), "kontrol planı"))
         elif deger is not None:
@@ -1252,8 +1301,9 @@ def balon_satirlari(v, balon):
                 satir.append((b["no"], None, "tolerans tablosu dışı"))
             else:
                 satir.append((b["no"], {"ad": "Ölçü", "nominal": d, "alt": d - t,
-                                        "ust": d + t, "op": "", "yontem": ""},
-                              "genel tolerans DIN ISO 2768-%s" % sinif))
+                                        "ust": d + t, "op": "", "yontem": varsayilan},
+                              "genel tolerans DIN ISO 2768-%s · %s"
+                              % (sinif, alet_cozunurluk(varsayilan)[1])))
         else:
             satir.append((b["no"], None, "okunamadı — elle girilecek"))
     return satir, sinif, uyan, toplam
@@ -1300,7 +1350,12 @@ def olcusel_rapor(v, hedef, balon=None):
         for j, x in enumerate(olcusel_deger(k, 5, i)):
             d["%s%d" % (("L", "O", "R", "U", "X")[j], r)] = x
         d["AA%d" % r] = "X"                       # spec içinde
-        d["AE%d" % r] = notlar.get(no) or ("Op.%s · %s" % (met(k["op"]), k["yontem"][:16]))
+        alet = met(k.get("yontem"))
+        coz, coz_ad = alet_cozunurluk(alet)
+        # Cozunurluk toleranstan genisse degerler ayni cikar; bu fiziksel
+        # olarak dogru, ayrica uyari yazilmaz (kullanicinin karari).
+        d["AE%d" % r] = notlar.get(no) or (
+            "Op.%s · %s (%s)" % (met(k["op"]), alet[:14], coz_ad))
     hucre_yaz(kaynak, hedef, "xl/worksheets/sheet6.xml", d)
     return len(satir)
 
