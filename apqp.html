@@ -59,10 +59,16 @@ a.dosya{color:#1d4ed8;text-decoration:none}a.dosya:hover{text-decoration:underli
       <div><b>Müşteri:</b> <span id="bMusteri">—</span></div>
       <div><b>APQP Tarihi:</b> <span id="bTarih">—</span></div>
       <div><b>Devreye Alma:</b> <span id="bDevreye">—</span></div>
+      <div><b>Kanıt:</b> <span id="bKanit">—</span></div>
       <div><b>Tamamlanma:</b> <span id="bYuzde">—</span></div>
     </div>
     <div class="durumcubugu"><i id="bCubuk" style="width:0%"></i></div>
     <div style="margin-top:10px;font-size:12px;color:var(--soluk)" id="bEkip"></div>
+    <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button id="driveBtn">📁 Drive klasörünü aç</button>
+      <button id="tazeleBtn">Kanıtları tazele</button>
+      <span style="font-size:12px;color:var(--soluk)" id="bDrive"></span>
+    </div>
   </div>
 
   <div class="sekme" id="sekmeler" hidden>
@@ -110,6 +116,8 @@ const MODUL = [
   [/gage ?r&?r|fr86|msa/i,        'https://mycosmosshop.github.io/msa/',                   'MSA modulu'],
   [/fr88|süreç yeterlilik|surec yeterlilik|cp[k]?\b/i,
                                   'https://mycosmosshop.github.io/msa/capability.html',    'Proses Yeterliligi modulu'],
+  [/fr54|kalite kontrol testi|test raporu/i,
+                                  'https://mycosmosshop.github.io/kalite-kontrol/',        'Kalite Kontrol — test raporları'],
   [/kpi|ppm takip|fr100/i,        'https://mycosmosshop.github.io/kpi-takip/',             'KPI Takip modulu'],
   [/eğitim|egitim|fr17/i,         'https://mycosmosshop.github.io/egitim-polivalans/',     'Egitim & Polivalans modulu'],
   [/onaylı tedarikçi|onayli tedarikci|pl11/i,
@@ -123,15 +131,56 @@ function modulBaglantisi(form) {
   return null;
 }
 
-// LeanSys stok dokumani ag yolunda (\\10.11.11.11\...); tarayici acamaz,
+// Dosyalar ag yolunda (\\10.11.11.11\...) veya Drive'da; tarayici acamaz,
 // yerel ajan acar. 127.0.0.1 tarayicilar icin guvenli origin sayilir.
+// NOT: ajanin /open ucu YALNIZ LeanSys pencerelerini acar; dosya icin
+// /dosyaac ucu kullanilir (izinli koklerle sinirli).
+const DRIVE_KOK = "G:\\Drive'\u0131m\\APQP";
+const driveKlasoru = kod => DRIVE_KOK + '\\' + kod;
+
+async function ajanJson(yol) {
+  const r = await fetch(AJAN + yol);
+  if (!r.ok) throw new Error('ajan HTTP ' + r.status);
+  return r.json();
+}
+
 async function dosyaAc(yol) {
   try {
-    const r = await fetch(AJAN + '/open?path=' + encodeURIComponent(yol));
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await ajanJson('/dosyaac?path=' + encodeURIComponent(yol));
+    if (!j.ok) throw new Error(j.hata || 'acilamadi');
+    mesaj('');
   } catch (e) {
-    mesaj('Dosya acilamadi (LeanSys ajani calisiyor mu?). Yol: <code>' + yol + '</code>');
+    mesaj('Dosya açılamadı (' + e.message + '). LeanSys ajanı çalışıyor mu?<br>Yol: <code>' + yol + '</code>');
   }
+}
+
+// Urunun Drive klasorundeki dokumanlar. Ajan yoksa bos doner (uretim durmaz).
+async function driveDosyalari(kod) {
+  try {
+    const j = await ajanJson('/dosyalar?dir=' + encodeURIComponent(driveKlasoru(kod)));
+    return j.ok ? (j.dosyalar || []) : [];
+  } catch { return []; }
+}
+
+// FR91 "Form" metnindeki ve dosya adindaki form kodlari (FR182, PL74, FR34...)
+const formKodlari = x => [...new Set((met(x).toLocaleUpperCase('tr').match(/\b(FR|PL)\s?\d+/g) || [])
+  .map(k => k.replace(/\s+/g, '')))];
+
+// Kod tasimayan dosyalar icin anahtar kelime esleri: [dosya adi, form metni]
+const DOSYA_ANAHTAR = [
+  [/flow ?diagram|ak\u0131\u015f|akis/i,          /ak\u0131\u015f diyagram|akis diyagram/i],
+  [/run.?at.?rate|run ?@ ?rate/i,                    /run ?@ ?rate|run.?at.?rate/i],
+  [/\u00f6l\u00e7\u00fcm aletleri|olcum aletleri/i, /g\u00f6sterge|fikst\u00fcr|test ekipman|\u00f6l\u00e7\u00fcm alet/i],
+  [/capability|kapasite/i,                           /kapasite/i],
+];
+
+// Bir adima ait Drive dokumanlari
+function adimDriveDosyalari(form, dosyalar) {
+  const kodlar = formKodlari(form);
+  return dosyalar.filter(d => {
+    if (kodlar.length && formKodlari(d.ad).some(k => kodlar.includes(k))) return true;
+    return DOSYA_ANAHTAR.some(([dk, fk]) => dk.test(d.ad) && fk.test(met(form)));
+  });
 }
 
 function mesaj(html, tur) {
@@ -222,6 +271,7 @@ async function apqpUret(giris) {
   const kod = k.kod;
   const son = k.devreyeAlma;                       // urun devreye alma
   const bas = gunEkle(son, -TOPLAM_GUN);           // APQP baslangici
+  const drive = await driveDosyalari(kod);         // Drive'daki kanit dokumanlari
   // Teknik resim adimlarina LeanSys stok dokumani baglanir
   const resim = k.dokumanlar.find(d => d.yol) || null;
 
@@ -232,16 +282,20 @@ async function apqpUret(giris) {
       const bitis = gunEkle(son, -(TOPLAM_GUN - (FAZ[b.no] || 56)));
       const mod = modulBaglantisi(a.form);
       const resimAdimi = /teknik resim|şartname|sartname/i.test(met(a.form)) && resim;
+      // KANITLAR: ERP modulu · LeanSys stok dokumani · Drive dokumani
+      const kanitlar = [];
+      if (mod) kanitlar.push({ tur: 'erp', ad: mod.ad, adres: mod.adres });
+      if (resimAdimi) kanitlar.push({ tur: 'leansys', ad: resim.ad + (resim.rev ? ' · ' + resim.rev : ''), yol: resim.yol });
+      adimDriveDosyalari(a.form, drive).forEach(d => kanitlar.push({ tur: 'drive', ad: d.ad, yol: d.yol }));
+      // Kanit varsa adim tamamlanmis sayilir (ERP kaniti ya da dokuman)
+      const tamam = kanitVar || kanitlar.some(x => x.tur !== 'erp');
       return {
         no: a.no, ad: a.ad, aiag: a.aiag, sorumluluk: a.sorumluluk,
         prosedur: a.prosedur, form: a.form, kanit: a.kanit || '',
         bitis,
-        tamamlanma: kanitVar ? bitis : '',
-        durum: kanitVar ? 100 : 0,
-        baglanti: mod ? mod.adres : '',
-        baglantiAd: mod ? mod.ad : '',
-        dosyaYolu: resimAdimi ? resim.yol : '',
-        dosyaAd: resimAdimi ? (resim.ad + (resim.rev ? ' · ' + resim.rev : '')) : '',
+        tamamlanma: tamam ? bitis : '',
+        durum: tamam ? 100 : 0,
+        kanitlar,
       };
     }),
   }));
@@ -292,6 +346,10 @@ function ciz() {
   $('#bYuzde').textContent = '%' + y;
   $('#bCubuk').style.width = y + '%';
   $('#bEkip').innerHTML = aktif.ekip.map(e => '<b>' + e.rol + ':</b> ' + (e.ad || '—')).join(' &nbsp;·&nbsp; ');
+  const hepsi = aktif.bolumler.flatMap(b => b.adimlar);
+  const kanitli = hepsi.filter(a => (a.kanitlar || []).length).length;
+  $('#bKanit').textContent = kanitli + ' / ' + hepsi.length + ' adımda kanıt';
+  $('#bDrive').textContent = driveKlasoru(aktif.stokKodu);
   $('#listeKart').hidden = gorunum !== 'liste';
   $('#ganttKart').hidden = gorunum !== 'gantt';
   if (gorunum === 'liste') cizListe(); else cizGantt();
@@ -309,12 +367,14 @@ function cizListe() {
   aktif.bolumler.forEach(b => {
     h += '<tr class="bolum"><td class="no">' + b.no + '</td><td colspan="8">' + b.ad + '</td></tr>';
     b.adimlar.forEach(a => {
-      const parca = [];
-      parca.push(a.baglanti
-        ? '<a class="dosya" href="' + a.baglanti + '" target="_blank" title="' + a.baglantiAd + '">' + (a.form || '—') + '</a>'
-        : '<span class="form-ad">' + (a.form || '—') + '</span>');
-      if (a.dosyaYolu) parca.push('<a class="dosya" href="#" data-ac="' + encodeURIComponent(a.dosyaYolu)
-        + '" title="LeanSys stok dokümanı — yerel ajanla açılır">📄 ' + a.dosyaAd + '</a>');
+      const parca = ['<span class="form-ad">' + (a.form || '—') + '</span>'];
+      (a.kanitlar || []).forEach(x => {
+        if (x.tur === 'erp') parca.push('<a class="dosya" href="' + x.adres + '" target="_blank" title="ERP modülü">🔗 ' + x.ad + '</a>');
+        else parca.push('<a class="dosya" href="#" data-ac="' + encodeURIComponent(x.yol) + '" title="'
+          + (x.tur === 'drive' ? 'Drive dokümanı' : 'LeanSys stok dokümanı') + ' — yerel ajanla açılır">'
+          + (x.tur === 'drive' ? '📁 ' : '📄 ') + x.ad + '</a>');
+      });
+      if (!(a.kanitlar || []).length) parca.push('<span style="color:#b45309;font-size:11px">kanıt yok</span>');
       const form = parca.join('<br>');
       h += '<tr>'
         + '<td class="no">' + a.no + '</td>'
@@ -408,6 +468,26 @@ $('#uretBtn').addEventListener('click', async () => {
     atlanan.length ? 'Atlandı (APQP&#39;si zaten var): ' + atlanan.join(', ') : '',
     hatali.length ? 'Üretilemeyen: ' + hatali.join(' | ') : '',
   ].filter(Boolean).join('<br>'));
+});
+
+$('#driveBtn').addEventListener('click', () => aktif && dosyaAc(driveKlasoru(aktif.stokKodu)));
+
+// Drive'a yeni dokuman eklenince adimlara yeniden baglanir (durum korunur:
+// elle %100 yapilmis adim geri alinmaz).
+$('#tazeleBtn').addEventListener('click', async () => {
+  if (!aktif) return;
+  const drive = await driveDosyalari(aktif.stokKodu);
+  let eklenen = 0;
+  aktif.bolumler.forEach(b => b.adimlar.forEach(a => {
+    const yeni = adimDriveDosyalari(a.form, drive)
+      .filter(d => !(a.kanitlar || []).some(x => x.yol === d.yol));
+    if (!yeni.length) return;
+    a.kanitlar = (a.kanitlar || []).concat(yeni.map(d => ({ tur: 'drive', ad: d.ad, yol: d.yol })));
+    eklenen += yeni.length;
+    if (!a.durum) { a.durum = 100; a.tamamlanma = a.bitis; }
+  }));
+  await kaydet(aktif); ciz();
+  mesaj(eklenen ? eklenen + ' yeni Drive dokümanı bağlandı.' : 'Drive klasöründe yeni doküman yok.');
 });
 
 $('#silBtn').addEventListener('click', async () => {
