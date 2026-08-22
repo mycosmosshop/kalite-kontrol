@@ -1028,6 +1028,118 @@ def program_metrikleri(v, hedef):
     return len(v["apqp_bolumler"])
 
 
+# ── Alt tedarikçi PPAP ───────────────────────────────────────────────────
+SATIN_ALINAN = re.compile(r"\.(4|10)\.")     # ürün ağacındaki satın alınan malzeme kodları
+
+
+def malzeme_tedarikcisi(kod):
+    """Malzemenin tedarikçisi: mal kabul kayıtlarından (tam kod → ürün ailesi
+    → kök). Onaylı tedarikçi listesiyle doğrulanır."""
+    try:
+        mk = sorgu("/mal_kabul?select=stok_kodu,cari_adi&limit=2000")
+        onayli = {met(x["ad"]).upper(): x for x in
+                  sorgu("/onayli_tedarikci?select=ad,durum,sinif,otomotiv,iatf,iso9001")}
+    except Exception:
+        return None, ""
+    parca = kod.split(".")
+    adaylar = [kod, ".".join(parca[:3]), ".".join(parca[:2]) + "."]
+    for a in adaylar:
+        say = {}
+        for x in mk:
+            if met(x["stok_kodu"]).startswith(a) and met(x["cari_adi"]):
+                ad = met(x["cari_adi"])
+                if "SANIFOAM" in ad.upper():        # kendi şubeleri tedarikçi değil
+                    continue
+                say[ad] = say.get(ad, 0) + 1
+        if say:
+            ad = max(say, key=say.get)
+            kayit = next((v for k, v in onayli.items() if k.startswith(ad.upper()[:18])), None)
+            nasil = "kod" if a == kod else ("ürün ailesi" if a.count(".") == 2 else "ürün kökü")
+            return ad, "%s eşleşmesi%s" % (nasil, "" if kayit else " · onaylı listede bulunamadı")
+    return None, "mal kabul kaydı yok"
+
+
+def alt_tedarikci_ppap(v, klasor, uret):
+    """Her satın alınan malzeme için VDA_2 düzeninde alt tedarikçi PPAP."""
+    kaynak = os.path.join(PPAP_KLASOR, ORTAK_VDA2)
+    if not os.path.exists(kaynak):
+        return []
+    sonuc = []
+    for a in v["agac"]:
+        kod = met(a.get("tuketim_kodu"))
+        if not kod or not SATIN_ALINAN.search(kod):
+            continue
+        kp = kp_satirlari(kod)
+        if not kp:
+            sonuc.append((kod, met(a.get("tuketim_adi")), None, 0, "girdi kontrol planı yok"))
+            continue
+        tedarikci, nasil = malzeme_tedarikcisi(kod)
+        ad = "Alt Tedarikçi PPAP %s.xlsx" % kod
+        n = uret(ad, lambda x, h, k=kod, m_=a, t=tedarikci: alt_ppap_yaz(x, h, k, m_, t),
+                 "Alt Tedarikçi PPAP " + kod)
+        sonuc.append((kod, met(a.get("tuketim_adi")), tedarikci, n or 0, nasil))
+    return sonuc
+
+
+def alt_ppap_yaz(v, hedef, kod, malzeme, tedarikci):
+    """VDA_2 dosyasını TEDARİKÇİ adına doldurur (müşteri = Sanifoam)."""
+    kaynak = os.path.join(PPAP_KLASOR, ORTAK_VDA2)
+    tesis, adres = TESIS.get(v["lokasyon"], ("Sanifoam", ""))
+    ad = met(malzeme.get("tuketim_adi")) or kod
+    rapor = "PPAP %s" % kod
+    org = tedarikci or "(tedarikçi — onaylı listeden seçilecek)"
+
+    kimlik = {"H4": rapor, "AI4": KURULUS, "H6": org, "H7": org, "V7": "",
+              "H8": kod, "H9": ad, "H10": kod, "H11": "-",
+              "AI8": kod, "AI9": ad, "AI10": kod, "AI11": "-"}
+    a2 = {"H5": org, "H6": org, "H7": "", "H8": org, "H9": "",
+          "H10": "", "H11": rapor, "H12": "1",
+          "AB5": KURULUS, "AB6": tesis, "AB7": adres, "AB8": tesis, "AB9": adres}
+    a4 = dict(kimlik)
+    # Ölçüsel rapor: malzemenin KENDİ girdi kontrol karakteristikleri
+    sanal = dict(v, kod=kod, ad=ad, musteri=KURULUS, musteriParca=kod,
+                 resim_no=kod, resim_rev="-", resim_tarih="")
+    olcum = dict(kimlik, U1=rapor)
+    olcum.update(olcusel_hucreler(sanal))
+    olcum.update({"H8": kod, "H9": ad, "AI4": KURULUS, "H6": org, "H7": org})
+    pg = {"H4": KURULUS, "H5": org, "H6": "", "V4": kod, "V5": ad, "V6": kod,
+          "AJ5": KURULUS, "AZ4": kod, "AZ5": ad, "AZ6": kod}
+    for sut in ("D", "F", "K", "M", "R", "U", "AF", "AJ", "AN", "AT"):
+        for r in range(9, 20):
+            pg["%s%d" % (sut, r)] = ""
+    pg.update({"A9": 1, "D9": "-", "F9": kod, "K9": "-", "M9": kod, "R9": "X",
+               "U9": "İlk PPAP — %s ürününde kullanım" % v["kod"],
+               "AF9": v["devreye"], "AJ9": v["devreye"], "AT9": org})
+
+    # İmza bloğu BOŞ: bu beyan tedarikçinin kendi beyanıdır
+    bos = {}
+    for sayfa, satir in VDA2_IMZA:
+        bos.setdefault(sayfa, {}).update(
+            {"I%d" % satir: "", "I%d" % (satir + 1): "", "I%d" % (satir + 2): "",
+             "I%d" % (satir + 3): "", "I%d" % (satir + 4): ""})
+
+    icerik = {"xl/worksheets/sheet1.xml": a2, "xl/worksheets/sheet2.xml": dict(kimlik),
+              "xl/worksheets/sheet3.xml": dict(kimlik), "xl/worksheets/sheet4.xml": a4,
+              "xl/worksheets/sheet6.xml": olcum, "xl/worksheets/sheet10.xml": pg}
+    for sayfa, deger in bos.items():
+        icerik.setdefault(sayfa, {}).update(deger)
+
+    kayn, gecici = kaynak, []
+    sayfalar = list(icerik.items())
+    for i, (sayfa, deger) in enumerate(sayfalar):
+        cikti = hedef if i == len(sayfalar) - 1 else "%s.ara%d" % (hedef, i)
+        hucre_yaz(kayn, cikti, sayfa, deger)
+        if kayn != kaynak:
+            gecici.append(kayn)
+        kayn = cikti
+    for x in gecici:
+        try:
+            os.remove(x)
+        except OSError:
+            pass
+    return len([k for k in olcum if re.fullmatch(r"A\d+", k) and olcum[k] != ""])
+
+
 # ── PPAP belgeleri (müşteri bazlı) ───────────────────────────────────────
 PPAP_KLASOR = r"C:\\Users\\User\\Desktop\\ppap docs"
 
@@ -1658,9 +1770,95 @@ MAKINE_N = 50            # makine yeterliliginde ardisik parca sayisi
 MAKINE_CMK = 1.67        # kabul esigi (kisa donem daha siki)
 
 
+def yeterlilik_ozeti(v, hedef, kayitlar):
+    """Tüm yeterlilik çalışmalarının Excel özeti + ölçüm sayfaları.
+    Sayılar ERP'ye yazılanın aynısıdır (aynı sonuç nesnesinden okunur)."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    if not kayitlar:
+        return 0
+    wb = Workbook(); ws = wb.active; ws.title = "Özet"
+    ws.sheet_view.showGridLines = False
+    for h, g in zip("ABCDEFGHIJKL", (8, 14, 26, 20, 9, 9, 9, 9, 9, 12, 34, 12)):
+        ws.column_dimensions[h].width = g
+    ince = Side(style="thin", color="808080")
+    kutu = Border(top=ince, bottom=ince, left=ince, right=ince)
+    antet(ws, "PROSES VE MAKİNE YETERLİLİĞİ ÖZETİ", "FR 24-Ö", "02.01.2025", "0", "1 / 1", 12)
+    r = 6
+    for etiket, deger in (("Ürün :", "%s — %s" % (v["kod"], v["ad"])),
+                          ("Müşteri :", v["musteri"]), ("Lokasyon :", v["lokasyon_ad"]),
+                          ("Tarih :", v["termin"])):
+        e = ws.cell(r, 1, etiket); e.font = Font(bold=True, size=10)
+        e.alignment = Alignment(horizontal="right")
+        ws.cell(r, 2, deger)
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=12)
+        r += 1
+    r += 1
+
+    basliklar = ["No", "Tür", "Karakteristik", "Ölçüm Aleti", "n", "Cp/Cm", "Cpk/Cmk",
+                 "Pp", "Ppk", "Normallik (AD)", "Kullanılan yöntem", "Sonuç"]
+    for i, b in enumerate(basliklar):
+        c = ws.cell(r, 1 + i, b)
+        c.font = Font(bold=True, size=10, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="1F3864"); c.border = kutu
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.row_dimensions[r].height = 30
+    bas = r
+
+    for i, k in enumerate(kayitlar):
+        s_ = k["sonuc"]
+        esik = s_.get("esik", 1.33)
+        kabul = "KABUL" if s_["cpk"] >= esik else (
+            "ŞARTLI" if s_["cpk"] >= 1.33 else "YETERSİZ")
+        ad = s_.get("ad")
+        normallik = ("AD %.2f / kritik %.2f — %s" % (ad, s_["ad_kritik"],
+                     "normal" if s_.get("normal") else "normal değil")) if ad else "—"
+        deger = [i + 1, k["tur"], k["kar"][:26], k["alet"], len(k["deger"]),
+                 round(s_["cp"], 2), round(s_["cpk"], 2), round(s_["pp"], 2),
+                 round(s_["ppk"], 2), normallik, s_.get("yontem", "normal"), kabul]
+        rr = bas + 1 + i
+        for j, x in enumerate(deger):
+            c = ws.cell(rr, 1 + j, x)
+            c.border = kutu; c.font = Font(size=10)
+            c.alignment = Alignment(wrap_text=True, vertical="center",
+                                    horizontal="left" if j in (2, 3, 9, 10) else "center")
+            if i % 2:
+                c.fill = PatternFill("solid", fgColor="F4F7FB")
+        ws.cell(rr, 12).font = Font(size=10, bold=True, color={
+            "KABUL": "166534", "ŞARTLI": "92400E"}.get(kabul, "991B1B"))
+        ws.row_dimensions[rr].height = 30
+
+    son = bas + len(kayitlar) + 2
+    ws.cell(son, 1, "Kabul kriteri: proses yeterliliği Cpk ≥ 1,33 · makine yeterliliği "
+                    "Cmk ≥ 1,67. Normallik Anderson-Darling ile sınanır; sağlanmazsa "
+                    "çarpık veride Box-Cox, ayrık veride yüzdelik yöntemi (ISO 22514-2) "
+                    "kullanılır. Bu tablodaki değerler ERP'deki çalışmayla aynıdır."
+            ).font = Font(size=8, italic=True, color="808080")
+    ws.merge_cells(start_row=son, start_column=1, end_row=son, end_column=12)
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+
+    # Ölçüm sayfaları — hesabın izlenebilmesi için
+    for k in kayitlar:
+        adi = re.sub(r"[\\/*?:\[\]]", "-", "%s %s" % (k["tur"][:3], k["kar"]))[:28]
+        d = wb.create_sheet(adi)
+        d.sheet_view.showGridLines = False
+        d.cell(1, 1, "%s — %s · %s" % (k["tur"], k["kar"], k["alet"])).font = Font(bold=True, size=12)
+        d.cell(2, 1, "Alt limit %g · Nominal %g · Üst limit %g · n=%d"
+               % (k["alt"], k["nominal"], k["ust"], len(k["deger"]))).font = Font(size=10)
+        for j, x in enumerate(k["deger"]):
+            d.cell(4 + j // 10, 1 + j % 10, x).border = kutu
+        for c in range(1, 11):
+            d.column_dimensions[get_column_letter(c)].width = 11
+    wb.save(hedef)
+    return len(kayitlar)
+
+
 def yeterlilik_uret(v, klasor, uret):
     """Her ürün karakteristiği için FR24 + ERP yeterlilik çalışması."""
-    sonuclar = []
+    sonuclar, kayitlar = [], []
     for i, g in enumerate(yeterlilik_karakteristikleri(v["kod"])):
         # Proses yeterliligi: 125 parca (uzun donem) · Makine: 50 ardisik parca
         for tur, adet, tohum, esik in (("Proses", YETERLILIK_N, i, 1.33),
@@ -1673,6 +1871,12 @@ def yeterlilik_uret(v, klasor, uret):
                      "FR24 %s %s" % (tur, g["alet"]))
             kimlik, yeni = yeterlilik_calismasi_ac(v, g, deger, nominal, sonuc, tur)
             sonuclar.append((g["alet"], g["kar"], n, sonuc, kimlik, yeni))
+            kayitlar.append({"tur": tur, "kar": g["kar"], "alet": g["alet"],
+                             "deger": deger, "nominal": nominal,
+                             "alt": g["alt"], "ust": g["ust"], "sonuc": sonuc})
+    if kayitlar:
+        uret("Yeterlilik Özeti %s.xlsx" % v["kod"],
+             lambda a, b: yeterlilik_ozeti(a, b, kayitlar), "Yeterlilik Özeti")
     return sonuclar
 
 
@@ -3166,6 +3370,11 @@ def main():
     if n: print("   ✓ MSA Planı                         (%d ölçüm aleti)" % n)
     n = uret("FR86 Gage R&R %s.xlsx" % kod, fr86_gage_rr, "FR86 Gage R&R")
     if n: print("   ✓ FR86 Gage R&R                     (%d alet, formüller canlı — ölçüm girilecek)" % n)
+
+    for kod_, ad_, ted, n_, nasil in alt_tedarikci_ppap(v, klasor, uret):
+        print("   %s Alt Tedarikçi PPAP %-16s %-26s %s"
+              % ("✓" if n_ else "!", kod_, (ted or "tedarikçi bulunamadı")[:26],
+                 "%d ölçü · %s" % (n_, nasil) if n_ else nasil))
 
     ppap_belgeleri(v, klasor, uret)
 
