@@ -1181,7 +1181,10 @@ def alt_tedarikci_ppap(v, klasor, uret):
             sonuc.append((kod, met(a.get("tuketim_adi")), None, 0, "girdi kontrol planı yok"))
             continue
         tedarikci, nasil = malzeme_tedarikcisi(kod)
-        ad = "Alt Tedarikçi PPAP %s.xlsx" % kod
+        # Dosya adinda URUN KODU da bulunmali: kanit suzgeci yalniz urune ait
+        # dosyalari kabul ediyor, yalniz malzeme koduyla adlandirilinca
+        # "bu urune ait degil" diye eleniyordu.
+        ad = "Alt Tedarikçi PPAP %s - %s.xlsx" % (v["kod"], kod)
         n = uret(ad, lambda x, h, k=kod, m_=a, t=tedarikci: alt_ppap_yaz(x, h, k, m_, t),
                  "Alt Tedarikçi PPAP " + kod)
         sonuc.append((kod, met(a.get("tuketim_adi")), tedarikci, n or 0, nasil))
