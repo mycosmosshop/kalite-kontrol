@@ -444,6 +444,9 @@ async function apqpUret(giris) {
       return {
         no: a.no, ad: a.ad, aiag: a.aiag, sorumluluk: a.sorumluluk,
         prosedur: a.prosedur, form: a.form, kanit: a.kanit || '',
+        // AIAG 3rd Ed. bayragi YENI kayitta da tasinmali: kopyalanmayinca
+        // rozet cikmiyor ve "Yalniz yeni maddeler" suzgeci bos donuyordu
+        aiag3: a.aiag3 || false,
         bitis,
         tamamlanma: tamam ? bitis : '',
         durum: tamam ? 100 : 0,
