@@ -454,7 +454,14 @@ function yuzde(p) {
 }
 
 function ciz() {
-  if (!aktif) { $('#baslikKart').hidden = $('#sekmeler').hidden = $('#listeKart').hidden = $('#ganttKart').hidden = true; return; }
+  if (!aktif) {
+    $('#baslikKart').hidden = $('#sekmeler').hidden = $('#listeKart').hidden
+      = $('#ganttKart').hidden = $('#tarihceKart').hidden = true;
+    // Pano da tazelenir: son kayıt silindiğinde eski tablo ekranda kalıyordu
+    $('#panoKart').hidden = false;
+    cizPano();
+    return;
+  }
   $('#baslikKart').hidden = $('#sekmeler').hidden = false;
   $('#bParca').textContent = aktif.stokKodu + (aktif.urunAdi ? ' — ' + aktif.urunAdi : '')
     + (aktif.musteriParca && aktif.musteriParca !== aktif.urunAdi ? '  (müşteri: ' + aktif.musteriParca + ')' : '');
@@ -659,11 +666,7 @@ document.addEventListener('click', e => {
     e.preventDefault(); e.stopPropagation();
     const id = psil.dataset.projeSil;
     const kayit = panoKayitlari.find(x => x.id === id);
-    if (!confirm('Bu APQP kaydı silinsin mi?\n\n' + (kayit ? kayit.stokKodu : id)
-        + '\n\nDrive klasöründeki dokümanlar SİLİNMEZ.')) return;
-    sb.from('apqp_projeler').delete().eq('id', id)
-      .then(() => { aktif = null; return projeleriYukle(null); })
-      .then(() => mesaj('APQP kaydı silindi. Drive klasörü olduğu gibi duruyor.'));
+    projeSil(id, kayit);
     return;
   }
   const tr = e.target.closest && e.target.closest('tr[data-ac-proje]');
@@ -709,6 +712,28 @@ document.addEventListener('click', e => {
   e.preventDefault();
   dosyaAc(decodeURIComponent(a.dataset.ac));
 });
+
+// APQP kaydini siler; istenirse Drive klasorunu de Geri Donusum Kutusu'na
+// tasir. Klasor kalirsa yeniden uretimde eski dokumanlar da orada durur —
+// uretim ayni adli dosyalarin uzerine yazar ama artik uretilmeyenler kalir.
+async function projeSil(id, kayit) {
+  const kod = kayit ? kayit.stokKodu : id;
+  if (!confirm('Bu APQP kaydı silinsin mi?\n\n' + kod)) return;
+  const klasor = kayit ? driveKlasoru(kayit.stokKodu) : '';
+  const klasorDe = klasor && confirm('Drive klasörü de kaldırılsın mı?\n\n' + klasor
+    + '\n\nGeri Dönüşüm Kutusu&#39;na taşınır (geri alınabilir).\n'
+    + 'Hayır derseniz dokümanlar kalır; yeniden ürettiğinizde üzerlerine yazılır.');
+  const r = await sb.from('apqp_projeler').delete().eq('id', id);
+  if (r.error) { mesaj('Kayıt silinemedi: ' + r.error.message); return; }
+  let ek = ' Drive klasörü olduğu gibi duruyor.';
+  if (klasorDe) {
+    try { await dosyaYonet('sil', klasor); ek = ' Drive klasörü Geri Dönüşüm Kutusu&#39;na taşındı.'; }
+    catch (err) { ek = ' Drive klasörü kaldırılamadı: ' + err.message; }
+  }
+  aktif = null;
+  await projeleriYukle(null);
+  mesaj(kod + ' APQP kaydı silindi.' + ek);
+}
 
 // Belgeleri + MSA calismalarini uretir (yerel ajan apqp_belge_uret.py'yi calistirir).
 // Uretim uzun surer (Excel COM, MSA hesabi): tek istekte 10 dakikaya kadar.
@@ -924,11 +949,9 @@ $('#tazeleBtn').addEventListener('click', async () => {
   mesaj(p.length ? p.join(' · ') : 'Her şey güncel — yeni adım ya da doküman yok.');
 });
 
-$('#silBtn').addEventListener('click', async () => {
+$('#silBtn').addEventListener('click', () => {
   const id = $('#projeSec').value;
-  if (!id || !confirm('Bu APQP kaydı silinsin mi?')) return;
-  await sb.from('apqp_projeler').delete().eq('id', id);
-  await projeleriYukle(null);
+  if (id) projeSil(id, panoKayitlari.find(x => x.id === id));
 });
 
 $('#projeSec').addEventListener('change', async () => {
