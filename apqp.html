@@ -81,7 +81,7 @@ a.sil-dugme:hover{background:#b91c1c;color:#fff;border-color:#b91c1c}
     <div style="margin-top:10px;font-size:12px;color:var(--soluk)" id="bEkip"></div>
     <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <button id="driveBtn">📁 Drive klasörünü aç</button>
-      <button id="belgeBtn" title="Bu ürünün belgelerini ve MSA çalışmalarını yeniden üretir (Drive klasörüne yazar)">📄 Belgeleri üret</button>
+      <button id="belgeBtn" title="Bu ürünün tüm APQP/PPAP belgelerini yeniden üretir: formlar, kontrol planı, FMEA Excel, MSA ve Cp/Cpk çalışmaları, müşteri PPAP dokümanları">📄 Belgeleri üret</button>
       <button id="tazeleBtn" title="Belge ürettikten sonra basın: Drive'daki yeni dokümanları adımlara bağlar ve FR91'e sonradan eklenen adımları getirir. Kayıt açılırken zaten kendiliğinden çalışır.">🔄 Yenile</button>
       <label style="font-size:12px;display:inline-flex;align-items:center;gap:4px;margin-left:8px" title="AIAG APQP 3rd Edition (Mart 2024) ile eklenen 14 madde bölümlerin SONUNDA durur; bu kutu yalnız onları gösterir">
         <input type="checkbox" id="yeniSuzgec"> Yalnız yeni maddeler (AIAG 3rd Ed.)</label>
@@ -863,10 +863,14 @@ $('#uretBtn').addEventListener('click', async () => {
       await kaydet(p);
       basarili.push(p);
       // Belgeler + MSA calismalari ayni islemde uretilir
-      ilerlemeBasla(p.stokKodu + ' için belgeler ve MSA çalışmaları üretiliyor…');
+      // Uretilenler: formlar, kontrol plani, FMEA, MSA + yeterlilik
+      // calismalari ve musteriye gore PPAP dokumanlari
+      await projeleriYukle(p.id);          // kayit hemen gorunsun ("kayit yok" yazmasin)
+      ilerlemeBasla(p.stokKodu + ' — APQP belgeleri, MSA ve yeterlilik çalışmaları,'
+        + ' PPAP dokümanları üretiliyor…');
       try {
         const satir = await belgeleriUret(p.stokKodu);
-        uretim.push(p.stokKodu + ': ' + uretimSayisi(satir) + ' belge/çalışma');
+        uretim.push(p.stokKodu + ': ' + uretimSayisi(satir) + ' belge ve çalışma');
         uretimAyrinti = uretimAyrinti.concat(satir);
       } catch (err) {
         uretim.push(p.stokKodu + ': belgeler üretilemedi — ' + err.message);
@@ -964,7 +968,7 @@ $('#yeniSuzgec').addEventListener('change', () => { gorunum = 'liste'; ciz(); })
 $('#belgeBtn').addEventListener('click', async () => {
   if (!aktif) return;
   $('#belgeBtn').disabled = true;
-  ilerlemeBasla('Belgeler ve MSA çalışmaları üretiliyor… (pencereyi kapatmayın)');
+  ilerlemeBasla('APQP belgeleri, MSA ve yeterlilik çalışmaları, PPAP dokümanları üretiliyor… (pencereyi kapatmayın)');
   try {
     const satir = await belgeleriUret(aktif.stokKodu);
     await kanitTazele();
