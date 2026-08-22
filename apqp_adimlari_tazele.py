@@ -12,6 +12,83 @@ VARSAYILAN = r"C:\Users\User\Desktop\APQP 36.72010-6345\FR91 APQP-Takip Formu 36
 HEDEF = "apqp.html"
 
 
+# ── AIAG APQP 3rd Edition (Mart 2024) eksikleri ──────────────────────────
+# FR91'de karşılığı olmayan, standardın numaralı maddeleri. Yalnız Sanifoam'da
+# uygulanabilir olanlar alındı: tasarım sorumluluğu müşteride olduğu için
+# DFMEA/tasarım doğrulama maddeleri (2.1–2.4) ve gömülü yazılım maddeleri
+# eklenmedi. Her madde standarttaki numarasını taşır.
+EK_ADIMLAR = {
+    "2": [
+        ("Proje kapsamı ve APQP ekibi tanımlandı (roller, yetkiler, toplantı düzeni)",
+         "0.1; 0.2", "Proje Ekibi", "", "FR81 Toplantı Tutanağı"),
+        ("Tedarikçi seçimi ve onayı tamamlandı — sourcing kontrol listesi",
+         "0.5", "Satınalma", "", "PL11 Onaylı Tedarikçi Listesi"),
+        ("Açık konu (concern) matrisi oluşturuldu; sorumlu ve termin atandı",
+         "0.9", "Proje Ekibi", "", "FR81 Toplantı Tutanağı"),
+        ("Risk değerlendirme ve azaltma planı hazırlandı (REMS)",
+         "1.17", "Proje Ekibi Kalite", "", "Risk Değerlendirme Planı"),
+        ("Değişiklik yönetimi başlatıldı — her APQP çıktısında değişiklik günlüğü "
+         "(neden, talep eden, onaylayan, tarih)",
+         "1.15", "Kalite", "", "Değişiklik Günlüğü"),
+        ("APQP program metrikleri hazırlandı ve yönetime sunuldu "
+         "(kırmızı/sarı/yeşil durum, kapı onayı)",
+         "1.16; 1.14", "Proje Yöneticisi", "", "APQP Program Metrikleri"),
+    ],
+    "3": [
+        ("Ürün/proses kalite sistemi gözden geçirmesi yapıldı",
+         "3.2", "Kalite", "", "FR81 Toplantı Tutanağı"),
+        ("Yerleşim planı (floor plan layout) hazırlandı — malzeme akışı, kontrol "
+         "noktaları, ara stok alanları",
+         "3.4", "Üretim", "", "Yerleşim Planı"),
+    ],
+    "5": [
+        ("Safe Launch / güçlendirilmiş kontrol dönemi planlandı ve uygulandı "
+         "(seri üretim başlangıcında ilave muhafaza)",
+         "4.7", "Kalite Üretim", "", "Leansys Kontrol Planı"),
+        ("Faz çıkış onayı alındı — yönetim desteği / kapı gözden geçirmesi",
+         "4.8; Ek B", "Proje Yöneticisi", "", "FR91 APQP Takip Formu"),
+    ],
+    "8": [
+        ("Varyasyonun azaltılması — proses yeterliliği izlemeye alındı, "
+         "iyileştirme planı yapıldı",
+         "5.1", "Kalite", "", "FR88 Süreç Yeterlilik Ölçümü Formu"),
+        ("Müşteri memnuniyeti izleniyor (şikâyet, PPM, skorkart)",
+         "5.2", "Kalite Satış", "", "PPM Takip FR100 KPI"),
+        ("Müşteri hizmeti ve teslimat performansı izleniyor (termin, eksik/fazla)",
+         "5.3", "Lojistik", "", "PPM Takip FR100 KPI"),
+        ("Öğrenilmiş dersler kaydedildi ve benzer ürünlere aktarıldı "
+         "(TGR/TGW, hataya dayanıklı çözümlerin kalıcı kaydı)",
+         "5.4", "Kalite", "", "FR181 Öğrenilmiş Dersler"),
+    ],
+}
+EK_BOLUM = {"8": "Geri Besleme, Değerlendirme ve Düzeltici Faaliyet"}
+
+
+def ek_adimlari_uygula(bolumler):
+    """AIAG 3rd Ed. eksiklerini ilgili bölümlerin sonuna ekler."""
+    var = {b["no"]: b for b in bolumler}
+    for bno, maddeler in EK_ADIMLAR.items():
+        b = var.get(bno)
+        if not b:
+            b = {"no": bno, "ad": EK_BOLUM.get(bno, "Ek"), "adimlar": []}
+            bolumler.append(b)
+            var[bno] = b
+        mevcut = len(b["adimlar"])
+        for i, (ad, aiag, sorumluluk, prosedur, form) in enumerate(maddeler):
+            adim = {"no": "%s.%d" % (bno, mevcut + i + 1), "ad": ad, "aiag": aiag,
+                    "sorumluluk": sorumluluk, "prosedur": prosedur, "form": form,
+                    "aiag3": True}
+            f = form.lower()
+            for anahtar, kanit in (("fmea", "fmea"), ("kontrol plan", "plan"),
+                                   ("operasyon kart", "opkart"),
+                                   ("akış diyagram", "akis")):
+                if anahtar in f:
+                    adim["kanit"] = kanit
+                    break
+            b["adimlar"].append(adim)
+    return bolumler
+
+
 def cikar(sablon):
     wb = openpyxl.load_workbook(sablon, data_only=True)
     ws = wb[wb.sheetnames[0]]
@@ -51,7 +128,7 @@ def cikar(sablon):
 
 def main():
     sablon = sys.argv[1] if len(sys.argv) > 1 else VARSAYILAN
-    bolumler = cikar(sablon)
+    bolumler = ek_adimlari_uygula(cikar(sablon))
     toplam = sum(len(b["adimlar"]) for b in bolumler)
     if not toplam:
         raise SystemExit("Şablondan adım çıkarılamadı: " + sablon)
@@ -67,7 +144,9 @@ def main():
     for b in bolumler:
         print("   %-3s %-50s %2d adım" % (b["no"], b["ad"][:50], len(b["adimlar"])))
     kanitli = sum(1 for b in bolumler for a in b["adimlar"] if a.get("kanit"))
+    ek = sum(1 for b in bolumler for a in b["adimlar"] if a.get("aiag3"))
     print("   ERP'den otomatik işaretlenebilen: %d adım" % kanitli)
+    print("   AIAG APQP 3rd Ed. (Mart 2024) ile eklenen: %d adım" % ek)
 
 
 if __name__ == "__main__":
