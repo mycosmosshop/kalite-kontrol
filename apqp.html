@@ -58,6 +58,7 @@ a.dosya{color:#1d4ed8;text-decoration:none}a.dosya:hover{text-decoration:underli
       <div><b>Parça Numarası:</b> <span id="bParca">—</span></div>
       <div><b>Müşteri:</b> <span id="bMusteri">—</span></div>
       <div><b>APQP Tarihi:</b> <span id="bTarih">—</span></div>
+      <div><b>Devreye Alma:</b> <span id="bDevreye">—</span></div>
       <div><b>Tamamlanma:</b> <span id="bYuzde">—</span></div>
     </div>
     <div class="durumcubugu"><i id="bCubuk" style="width:0%"></i></div>
@@ -86,8 +87,52 @@ const met = x => (x == null ? '' : String(x).trim());
 const bugun = () => new Date().toISOString().slice(0, 10);
 const gunEkle = (t, g) => { const d = new Date(t); d.setDate(d.getDate() + g); return d.toISOString().slice(0, 10); };
 
-// Bolum bazli faz penceresi (hafta): planlama once, PPAP en sonda
-const FAZ = { '2': 2, '3': 6, '4': 8, '5': 12, '6': 14, '7': 16 };
+// Bolum bazli faz penceresi (hafta). APQP urun devreye alma tarihinde BITER,
+// cizelge oradan GERIYE kurulur: adim tarihi = devreye alma - (16 - FAZ) hafta.
+// Olcu FR91 ornegine dayaniyor: 2018-11-05 basladi, 2019-02-13 (operasyon
+// karti kayit tarihi) bitti.
+// Gun cinsinden, FR91 ornegindeki GERCEK takvimden olculdu:
+//   baslangic 2018-11-05, bolum2 11-19 (+14), bolum3 12-10 (+35),
+//   bolum5 2019-01-21 (+77), bolum6 02-04 (+91), devreye alma 02-13 (+100)
+const FAZ = { '2': 14, '3': 35, '4': 56, '5': 77, '6': 91, '7': 100 };
+const TOPLAM_GUN = 100;
+
+// Yerel LeanSys ajani (Kalite Kontrol modulu de ayni ucu kullaniyor)
+const AJAN = 'http://127.0.0.1:17777';
+
+// FR91'in "Form" sutunundaki dokuman adi -> ERP modulu.
+// Adresler portaldaki gercek kayitlardan alindi (uydurma yok).
+const MODUL = [
+  [/p-?fmea|fmea/i,               'https://mycosmosshop.github.io/pfmea/',                 'PFMEA modulu'],
+  [/akış diyagram|akis diyagram/i,'https://mycosmosshop.github.io/pfmea/',                 'Akis semasi (PFMEA modulu)'],
+  [/kontrol plan/i,               'https://mycosmosshop.github.io/kalite-kontrol/',        'Kalite Kontrol modulu'],
+  [/operasyon kart/i,             'https://mycosmosshop.github.io/kalite-kontrol/',        'Kalite Kontrol modulu'],
+  [/gage ?r&?r|fr86|msa/i,        'https://mycosmosshop.github.io/msa/',                   'MSA modulu'],
+  [/fr88|süreç yeterlilik|surec yeterlilik|cp[k]?\b/i,
+                                  'https://mycosmosshop.github.io/msa/capability.html',    'Proses Yeterliligi modulu'],
+  [/kpi|ppm takip|fr100/i,        'https://mycosmosshop.github.io/kpi-takip/',             'KPI Takip modulu'],
+  [/eğitim|egitim|fr17/i,         'https://mycosmosshop.github.io/egitim-polivalans/',     'Egitim & Polivalans modulu'],
+  [/onaylı tedarikçi|onayli tedarikci|pl11/i,
+                                  'https://mycosmosshop.github.io/supplier-system/',       'Onayli Tedarikci modulu'],
+  [/teknik resim|numaralandırılmış|numaralandirilmis/i,
+                                  'https://mycosmosshop.github.io/teknik-resim/',          'Teknik Resim modulu'],
+];
+function modulBaglantisi(form) {
+  const f = met(form);
+  for (const [kalip, adres, ad] of MODUL) if (kalip.test(f)) return { adres, ad };
+  return null;
+}
+
+// LeanSys stok dokumani ag yolunda (\\10.11.11.11\...); tarayici acamaz,
+// yerel ajan acar. 127.0.0.1 tarayicilar icin guvenli origin sayilir.
+async function dosyaAc(yol) {
+  try {
+    const r = await fetch(AJAN + '/open?path=' + encodeURIComponent(yol));
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+  } catch (e) {
+    mesaj('Dosya acilamadi (LeanSys ajani calisiyor mu?). Yol: <code>' + yol + '</code>');
+  }
+}
 
 function mesaj(html, tur) {
   $('#mesaj').innerHTML = html ? '<div class="uyari">' + html + '</div>' : '';
@@ -122,10 +167,11 @@ async function kodCoz(giris) {
 async function erpKanit(giris) {
   const coz = await kodCoz(giris);
   const kod = coz.kod;
-  const [rota, agac, fmea] = await Promise.all([
-    sb.from('operasyon_kartlari').select('stok_kodu').eq('stok_kodu', kod).limit(50),
-    sb.from('urun_agaclari').select('urun_kodu').eq('urun_kodu', kod).limit(50),
+  const [rota, agac, fmea, dok] = await Promise.all([
+    sb.from('operasyon_kartlari').select('stok_kodu,kayit_tarihi,gecerlilik_tarihi').eq('stok_kodu', kod).limit(50),
+    sb.from('urun_agaclari').select('urun_kodu,kayit_tarihi').eq('urun_kodu', kod).limit(50),
     sb.from('pfmea_projects').select('id,name,data').limit(500),
+    sb.from('stok_dokumanlari').select('doc_adi,link,rev_no,yayin_tarihi,tip,aktif').eq('stok_kodu', kod).limit(50),
   ]);
   const planSatir = coz.satir;
   const urunAdi = met((planSatir[0] || {}).stok_adi) || kod;
@@ -140,9 +186,26 @@ async function erpKanit(giris) {
     const metin = buyuk(f.project) + ' ' + buyuk(f.productName) + ' ' + buyuk(p.name);
     return aranan.some(a => metin.includes(a));
   });
+  // ── Cizelge capasi: URUN DEVREYE ALMA tarihi ──────────────────────────
+  // Urun zaten seri uretimde; APQP gelecege degil, devreye alma tarihine
+  // dogru GERIYE kurulur. Oncelik: operasyon karti kayit tarihi (FR91'de son
+  // adimin tarihiyle birebir ayni), sonra kontrol plani revizyonu, sonra
+  // urun agaci kaydi. Hicbiri yoksa bugun.
+  const tarihAdayi = [
+    met((rota.data || [])[0] && (rota.data[0].kayit_tarihi || rota.data[0].gecerlilik_tarihi)),
+    met((planSatir.find(x => met(x.tr_revtarih)) || {}).tr_revtarih),
+    met((agac.data || [])[0] && agac.data[0].kayit_tarihi),
+  ].map(t => t.slice(0, 10)).filter(t => /^\d{4}-\d{2}-\d{2}$/.test(t));
+  const devreyeAlma = tarihAdayi[0] || bugun();
+
+  const dokumanlar = (dok.data || []).filter(d => met(d.aktif) !== 'False').map(d => ({
+    ad: met(d.doc_adi), yol: met(d.link), rev: met(d.rev_no), tarih: met(d.yayin_tarihi).slice(0, 10),
+  }));
+
   return {
     kod, musteriParca: coz.musteriParca || '',
-    urunAdi,
+    urunAdi, devreyeAlma, tarihKaynagi: tarihAdayi.length ? (rota.data || []).length ? 'operasyon kartı' : 'kontrol planı' : 'bugün',
+    dokumanlar,
     musteri: met((planSatir[0] || {}).cari_adi),
     plan: planSatir.length > 0,
     opkart: (rota.data || []).length > 0,
@@ -153,32 +216,32 @@ async function erpKanit(giris) {
   };
 }
 
-// Kanit -> adima baglanti (tiklayinca kaynagina gitsin)
-function kanitBaglanti(k, kod, kanitlar) {
-  if (k === 'fmea' && kanitlar.fmeaId) return 'https://mycosmosshop.github.io/AIAG-VDA-PFMEA/';
-  if (k === 'akis' && kanitlar.fmeaId) return 'https://mycosmosshop.github.io/AIAG-VDA-PFMEA/';
-  if (k === 'plan') return 'https://mycosmosshop.github.io/kalite-kontrol/#plan=' + encodeURIComponent(kod);
-  if (k === 'opkart') return 'https://mycosmosshop.github.io/kalite-kontrol/#op=' + encodeURIComponent(kod);
-  return '';
-}
-
 // ── APQP kaydi uret ──────────────────────────────────────────────────────
 async function apqpUret(giris) {
   const k = await erpKanit(giris);
   const kod = k.kod;
-  const bas = bugun();
+  const son = k.devreyeAlma;                       // urun devreye alma
+  const bas = gunEkle(son, -TOPLAM_GUN);           // APQP baslangici
+  // Teknik resim adimlarina LeanSys stok dokumani baglanir
+  const resim = k.dokumanlar.find(d => d.yol) || null;
+
   const bolumler = FR91.map(b => ({
     no: b.no, ad: b.ad,
     adimlar: b.adimlar.map(a => {
-      const kanitVar = a.kanit && k[a.kanit];
+      const kanitVar = !!(a.kanit && k[a.kanit]);
+      const bitis = gunEkle(son, -(TOPLAM_GUN - (FAZ[b.no] || 56)));
+      const mod = modulBaglantisi(a.form);
+      const resimAdimi = /teknik resim|şartname|sartname/i.test(met(a.form)) && resim;
       return {
         no: a.no, ad: a.ad, aiag: a.aiag, sorumluluk: a.sorumluluk,
         prosedur: a.prosedur, form: a.form, kanit: a.kanit || '',
-        bitis: gunEkle(bas, (FAZ[b.no] || 8) * 7),
-        tamamlanma: kanitVar ? bas : '',
+        bitis,
+        tamamlanma: kanitVar ? bitis : '',
         durum: kanitVar ? 100 : 0,
-        baglanti: kanitVar ? kanitBaglanti(a.kanit, kod, k) : '',
-        dosya: '',
+        baglanti: mod ? mod.adres : '',
+        baglantiAd: mod ? mod.ad : '',
+        dosyaYolu: resimAdimi ? resim.yol : '',
+        dosyaAd: resimAdimi ? (resim.ad + (resim.rev ? ' · ' + resim.rev : '')) : '',
       };
     }),
   }));
@@ -186,6 +249,7 @@ async function apqpUret(giris) {
     id: 'apqp_' + kod.replace(/[.\-]/g, '_'),
     stokKodu: kod, musteriParca: k.musteriParca || k.urunAdi,
     urunAdi: k.urunAdi, musteri: k.musteri, tarih: bas,
+    devreyeAlma: son, tarihKaynagi: k.tarihKaynagi, dokumanlar: k.dokumanlar,
     ekip: EKIP, bolumler,
     kaynak: { fmea: k.fmea, kontrolPlani: k.plan, operasyonKarti: k.opkart, urunAgaci: k.agac },
   };
@@ -222,6 +286,8 @@ function ciz() {
     + (aktif.musteriParca && aktif.musteriParca !== aktif.urunAdi ? '  (müşteri: ' + aktif.musteriParca + ')' : '');
   $('#bMusteri').textContent = aktif.musteri || '—';
   $('#bTarih').textContent = aktif.tarih;
+  $('#bDevreye').textContent = (aktif.devreyeAlma || '—')
+    + (aktif.tarihKaynagi ? ' (' + aktif.tarihKaynagi + ')' : '');
   const y = yuzde(aktif);
   $('#bYuzde').textContent = '%' + y;
   $('#bCubuk').style.width = y + '%';
@@ -243,9 +309,13 @@ function cizListe() {
   aktif.bolumler.forEach(b => {
     h += '<tr class="bolum"><td class="no">' + b.no + '</td><td colspan="8">' + b.ad + '</td></tr>';
     b.adimlar.forEach(a => {
-      const form = a.baglanti
-        ? '<a class="dosya" href="' + a.baglanti + '" target="_blank">' + (a.form || '—') + '</a>'
-        : '<span class="form-ad">' + (a.form || '—') + '</span>';
+      const parca = [];
+      parca.push(a.baglanti
+        ? '<a class="dosya" href="' + a.baglanti + '" target="_blank" title="' + a.baglantiAd + '">' + (a.form || '—') + '</a>'
+        : '<span class="form-ad">' + (a.form || '—') + '</span>');
+      if (a.dosyaYolu) parca.push('<a class="dosya" href="#" data-ac="' + encodeURIComponent(a.dosyaYolu)
+        + '" title="LeanSys stok dokümanı — yerel ajanla açılır">📄 ' + a.dosyaAd + '</a>');
+      const form = parca.join('<br>');
       h += '<tr>'
         + '<td class="no">' + a.no + '</td>'
         + '<td>' + a.ad + (a.kanit && a.durum >= 100 ? '<span class="kanit">ERP&#39;den</span>' : '') + '</td>'
@@ -298,6 +368,13 @@ document.addEventListener('change', async e => {
   if (t.dataset.alan === 'durum' && a.durum >= 100 && !a.tamamlanma) a.tamamlanma = bugun();
   if (t.dataset.alan === 'durum' && a.durum < 100) a.tamamlanma = '';
   try { await kaydet(aktif); ciz(); } catch (err) { mesaj('Kaydedilemedi: ' + err.message); }
+});
+
+document.addEventListener('click', e => {
+  const a = e.target.closest && e.target.closest('a[data-ac]');
+  if (!a) return;
+  e.preventDefault();
+  dosyaAc(decodeURIComponent(a.dataset.ac));
 });
 
 $('#sekmeler').addEventListener('click', e => {
