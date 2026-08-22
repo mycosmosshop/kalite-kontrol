@@ -357,12 +357,19 @@ function msaEslesir(c, kod, parca) {
     .some(a => metin.includes(b(a)));
 }
 
+// Yeterlilik calismasi turleri: bunlar MSA degil, proses/makine yeterliligi
+const YETERLILIK_TURU = ['capability', 'multi', 'comparison'];
+
 async function msaCalismalari(kod, parca) {
   const r = await sb.from('msa_studies')
     .select('id,study_name,study_type,status,is_acceptable,gauge_name,gauge_number,'
       + 'characteristic,part_name,study_date,location')
     .is('copied_from_id', null).limit(500);
-  return (r.data || []).filter(c => msaEslesir(c, kod, parca));
+  const hepsi = (r.data || []).filter(c => msaEslesir(c, kod, parca));
+  return {
+    msa: hepsi.filter(c => !YETERLILIK_TURU.includes(met(c.study_type))),
+    yeterlilik: hepsi.filter(c => YETERLILIK_TURU.includes(met(c.study_type))),
+  };
 }
 
 // ── ERP verisinden kanit topla ───────────────────────────────────────────
@@ -407,10 +414,11 @@ async function erpKanit(giris) {
     ad: met(d.doc_adi), yol: met(d.link), rev: met(d.rev_no), tarih: met(d.yayin_tarihi).slice(0, 10),
   }));
 
+  const calismalar = await msaCalismalari(kod, coz.musteriParca);
   const makineler = (rota.data || []).map(x => met(x.makine_adi)).filter(Boolean);
   return {
     kod, musteriParca: coz.musteriParca || '', aletler,
-    msa: await msaCalismalari(kod, coz.musteriParca),
+    msa: calismalar.msa, yeterlilik: calismalar.yeterlilik,
     lokasyon: lokasyonCoz(makineler),
     urunAdi, devreyeAlma, tarihKaynagi: tarihAdayi.length ? (rota.data || []).length ? 'operasyon kartı' : 'kontrol planı' : 'bugün',
     dokumanlar,
@@ -449,15 +457,18 @@ async function apqpUret(giris) {
           ? mod.adres + '?proje=' + encodeURIComponent(k.fmeaId) : mod.adres;
         kanitlar.push({ tur: 'erp', ad: mod.ad, adres });
       }
-      // MSA adimlarina modulun genel baglantisi degil, GERCEK calismalar baglanir
-      if (/msa|gage ?r&?r|fr ?86|ölçüm sistemi/i.test(met(a.form) + ' ' + met(a.ad))) {
-        (k.msa || []).forEach(c => kanitlar.push({
-          tur: 'erp',
-          ad: 'MSA: ' + met(c.study_name)
-            + (c.is_acceptable ? ' (' + (MSA_ROZET[c.is_acceptable] || c.is_acceptable) + ')' : ''),
-          adres: MSA_ADRES + c.id,
-        }));
-      }
+      // ERP calismalari dogru adima: MSA adimina olcum sistemi analizleri,
+      // yeterlilik adimina Cp/Cpk ve Cm/Cmk calismalari.
+      const metin = met(a.form) + ' ' + met(a.ad);
+      const ekle = (liste, on) => (liste || []).forEach(c => kanitlar.push({
+        tur: 'erp',
+        ad: on + met(c.study_name)
+          + (c.is_acceptable ? ' (' + (MSA_ROZET[c.is_acceptable] || c.is_acceptable) + ')' : ''),
+        adres: MSA_ADRES + c.id,
+      }));
+      if (/msa|gage ?r&?r|fr ?86|ölçüm sistemi/i.test(metin)) ekle(k.msa, 'MSA: ');
+      if (/yeterlilik|fr ?88|cp ?, ?cpk|cpk|süreç potansiyeli|varyasyonun azalt/i.test(metin))
+        ekle(k.yeterlilik, 'Yeterlilik: ');
       if (resimAdimi) kanitlar.push({ tur: 'leansys', ad: resim.ad + (resim.rev ? ' · ' + resim.rev : ''), yol: resim.yol });
       adimDriveDosyalari(a.form, drive).forEach(d => kanitlar.push({ tur: 'drive', ad: d.ad, yol: d.yol }));
       // Kanit varsa adim tamamlanmis sayilir (ERP kaniti ya da dokuman)
