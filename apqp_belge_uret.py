@@ -22,7 +22,9 @@ ANON = ("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im
         "dWVpeGJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1NjI2MDIsImV4cCI6MjA5NjEzODYwMn0"
         ".CHZUOylf_q8kkOQbFf9VWZ6-doUTlynmAhahM2EuImE")
 DRIVE = r"G:\Drive'ım\APQP"
-SABLON = os.path.join(DRIVE, "205.0.214-C")     # ornek/kaynak belge seti
+# Sablonlar URUN klasorunde DURMAZ: APQP kaydi silinirken urun klasoru de
+# kaldirilabiliyor ve sablonlar onunla birlikte gidiyordu. Ayri klasor.
+SABLON = os.path.join(DRIVE, "_Şablonlar")
 
 # Lokasyona gore APQP ekibi (FR91 sablonundaki roller)
 EKIP = {
@@ -115,8 +117,12 @@ def hucre_yaz(kaynak, hedef, sayfa_dosyasi, degerler, ek_xml=None, yeni_parcalar
             zout.writestr(e, ek_xml[e.filename].encode("utf-8"))
         else:
             zout.writestr(e, zin.read(e.filename))
+    varolan = {e.filename for e in zin.infolist()}
     for yol, veri in (yeni_parcalar or {}).items():      # yeni görseller
-        zout.writestr(yol, veri)
+        # Kaynakta zaten varsa ikinci kez YAZILMAZ: zip'te yinelenen giriş
+        # oluşuyor ve Excel dosyayı bozuk sayabiliyor.
+        if yol not in varolan:
+            zout.writestr(yol, veri)
     zout.close()
     zin.close()
 
