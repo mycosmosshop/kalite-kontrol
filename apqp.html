@@ -27,6 +27,11 @@ td.durum{width:110px;text-align:center}
 .rozet{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:700}
 .r0{background:#fee2e2;color:#991b1b}.r50{background:#fef3c7;color:#92400e}.r100{background:#dcfce7;color:#166534}
 .kanit{font-size:11px;color:#166534;background:#dcfce7;border-radius:4px;padding:1px 5px;margin-left:4px}
+.ilerleme{height:8px;border-radius:4px;background:#e5e7eb;overflow:hidden;margin-top:7px}
+.ilerleme i{display:block;height:100%;width:32%;border-radius:4px;
+  background:linear-gradient(90deg,#1d4ed8,#60a5fa);animation:ilerKay 1.15s infinite ease-in-out}
+@keyframes ilerKay{0%{margin-left:-32%}100%{margin-left:100%}}
+.iler-sure{color:#64748b;font-size:11px}
 .yukle-dugme{font-size:11px;color:#166534;background:#dcfce7;border-radius:4px;padding:1px 6px;
   margin-left:4px;text-decoration:none;white-space:nowrap}
 .yukle-dugme:hover{background:#bbf7d0}
@@ -250,6 +255,22 @@ function adimDriveDosyalari(form, dosyalar) {
     return DOSYA_ANAHTAR.some(([dk, fk]) => dk.test(d.ad) && fk.test(met(form)));
   });
 }
+
+// Uretim suresince ilerleme cubugu + gecen sure. Ajan ara bilgi vermedigi
+// icin yuzde YAZILMAZ; cubuk belirsiz (surekli akan) tiptedir.
+let ilerlemeSayac = null;
+function ilerlemeBasla(metin) {
+  const t0 = Date.now();
+  mesaj(metin + ' <span class="iler-sure" id="ilerSure">0 sn</span><div class="ilerleme"><i></i></div>');
+  clearInterval(ilerlemeSayac);
+  ilerlemeSayac = setInterval(() => {
+    const el = $('#ilerSure');
+    if (!el) { clearInterval(ilerlemeSayac); ilerlemeSayac = null; return; }
+    const g = Math.round((Date.now() - t0) / 1000);
+    el.textContent = g < 60 ? g + ' sn' : Math.floor(g / 60) + ' dk ' + (g % 60) + ' sn';
+  }, 1000);
+}
+function ilerlemeBitir() { clearInterval(ilerlemeSayac); ilerlemeSayac = null; }
 
 function mesaj(html, tur) {
   $('#mesaj').innerHTML = html ? '<div class="uyari">' + html + '</div>' : '';
@@ -735,6 +756,13 @@ async function projeSil(id, kayit) {
   mesaj(kod + ' APQP kaydı silindi.' + ek);
 }
 
+// Uretim ciktisindaki "uretildi" satirlarini sayar. Cikti kodlamasi bozulursa
+// isaretler eslesmeyebilir; o durumda satir sayisina duser (0 yazmaz).
+function uretimSayisi(satir) {
+  const n = satir.filter(x => /^\s*[✓+]/.test(x)).length;
+  return n || satir.filter(x => /^\s*[^\s]/.test(x)).length;
+}
+
 // Belgeleri + MSA calismalarini uretir (yerel ajan apqp_belge_uret.py'yi calistirir).
 // Uretim uzun surer (Excel COM, MSA hesabi): tek istekte 10 dakikaya kadar.
 async function belgeleriUret(kod) {
@@ -760,7 +788,7 @@ function dokumanYukle(bno, ano) {
       const nk = ad.lastIndexOf('.');
       ad = (nk > 0 ? ad.slice(0, nk) : ad) + ' ' + aktif.stokKodu + (nk > 0 ? ad.slice(nk) : '');
     }
-    mesaj('Yükleniyor: ' + ad + ' …');
+    ilerlemeBasla('Yükleniyor: ' + ad);
     try {
       const tampon = await f.arrayBuffer();
       const bayt = new Uint8Array(tampon);
@@ -781,7 +809,7 @@ function dokumanYukle(bno, ano) {
       mesaj('Yüklendi: ' + j.ad + ' — adım ' + ano + ' tamamlandı olarak işaretlendi.');
     } catch (err) {
       mesaj('Yüklenemedi: ' + err.message + ' (yerel ajan çalışıyor mu?)');
-    }
+    } finally { ilerlemeBitir(); }
   };
   sec.click();
 }
@@ -802,7 +830,7 @@ $('#uretBtn').addEventListener('click', async () => {
   let uretimAyrinti = [];
   for (const kod of kodlar) {
     try {
-      mesaj(kod + ' için ERP verisi okunuyor…');
+      ilerlemeBasla(kod + ' için ERP verisi okunuyor…');
       const p = await apqpUret(kod);
       // Tekrar kontrolu COZULMUS stok koduna gore: ayni urune musteri
       // numarasindan da girilse ikinci kayit acilmasin.
@@ -810,16 +838,17 @@ $('#uretBtn').addEventListener('click', async () => {
       await kaydet(p);
       basarili.push(p);
       // Belgeler + MSA calismalari ayni islemde uretilir
-      mesaj(p.stokKodu + ' için belgeler ve MSA çalışmaları üretiliyor… (1–2 dk)');
+      ilerlemeBasla(p.stokKodu + ' için belgeler ve MSA çalışmaları üretiliyor…');
       try {
         const satir = await belgeleriUret(p.stokKodu);
-        uretim.push(p.stokKodu + ': ' + satir.filter(x => /^[✓+]/.test(x)).length + ' belge/çalışma');
+        uretim.push(p.stokKodu + ': ' + uretimSayisi(satir) + ' belge/çalışma');
         uretimAyrinti = uretimAyrinti.concat(satir);
       } catch (err) {
         uretim.push(p.stokKodu + ': belgeler üretilemedi — ' + err.message);
       }
     } catch (err) { hatali.push(kod + ': ' + err.message); }
   }
+  ilerlemeBitir();
   $('#uretBtn').disabled = false;
   await projeleriYukle(basarili.length ? basarili[0].id : null);
   if (basarili.length) await kanitTazele();      // yeni belgeler adımlara bağlansın
@@ -910,16 +939,17 @@ $('#yeniSuzgec').addEventListener('change', () => { gorunum = 'liste'; ciz(); })
 $('#belgeBtn').addEventListener('click', async () => {
   if (!aktif) return;
   $('#belgeBtn').disabled = true;
-  mesaj('Belgeler ve MSA çalışmaları üretiliyor… (1–2 dk, pencereyi kapatmayın)');
+  ilerlemeBasla('Belgeler ve MSA çalışmaları üretiliyor… (pencereyi kapatmayın)');
   try {
     const satir = await belgeleriUret(aktif.stokKodu);
     await kanitTazele();
-    mesaj(satir.filter(x => /^[✓+]/.test(x)).length + ' belge/çalışma üretildi.'
+    mesaj(uretimSayisi(satir) + ' belge/çalışma üretildi.'
       + '<details><summary>ayrıntı</summary><pre style="white-space:pre-wrap;font-size:11px;'
       + 'margin:6px 0 0">' + satir.join('\n').replace(/</g, '&lt;') + '</pre></details>');
   } catch (err) {
     mesaj('Üretilemedi: ' + err.message + ' (yerel ajan çalışıyor mu?)');
   }
+  ilerlemeBitir();
   $('#belgeBtn').disabled = false;
 });
 

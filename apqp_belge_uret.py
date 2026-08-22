@@ -1452,8 +1452,8 @@ MSA_ADRES = "https://mycosmosshop.github.io/msa/results.html?id="
 
 KULLANICI = "volkanpekatik@gmail.com"
 # MSA çalışmalarını fiilen yapan operatörler (kullanıcının verdiği liste)
-MSA_OPERATOR = {"ankara": ["Emre", "Mete", "Taner"],
-                "cerkezkoy": ["Umut", "Burak", "Çetin"]}
+MSA_OPERATOR = {"ankara": ["Emre Biçer", "Mete Yılmaz", "Taner Şeşenoğlu"],
+                "cerkezkoy": ["Umut Çiftçiogulları", "Burak", "Çetin"]}
 
 
 def calisma_metni(c):
@@ -2326,7 +2326,32 @@ def apqp_bolum_ozeti(v):
     return ozet
 
 
+class Gunluk:
+    """Çıktıyı hem konsola hem UTF-8 dosyaya yazar. Ajan konsol kod sayfasına
+    bağlı kalmasın diye dosyadan okur (Türkçe karakterler bozulmuyor)."""
+
+    def __init__(self, akis, yol):
+        self.akis, self.dosya = akis, io.open(yol, "a", encoding="utf-8")
+
+    def write(self, x):
+        try:
+            self.akis.write(x)
+        except Exception:
+            pass
+        self.dosya.write(x); self.dosya.flush()
+
+    def flush(self):
+        try:
+            self.akis.flush()
+        except Exception:
+            pass
+
+
 def main():
+    gunluk = os.environ.get("APQP_LOG")
+    if gunluk:
+        sys.stdout = Gunluk(sys.stdout, gunluk)
+        sys.stderr = sys.stdout
     if len(sys.argv) < 2:
         raise SystemExit("kullanım: python apqp_belge_uret.py <stok kodu>")
     kod = sys.argv[1]
