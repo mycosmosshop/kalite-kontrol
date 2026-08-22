@@ -1429,8 +1429,36 @@ def msa_aletleri(kod):
     return list(gruplar.values())
 
 
+# MSA modülünün (GageAI) verisi AYNI Supabase'de durur: msa_studies.
+# Ürünün aletiyle eşleşen GERÇEK çalışma varsa plana sonucuyla yazılır.
+MSA_SONUC = {"acceptable": "KABUL", "marginal": "ŞARTLI", "unacceptable": "RED"}
+MSA_ADRES = "https://mycosmosshop.github.io/msa/results.html?id="
+
+
+def msa_calismalari(v, aletler):
+    """Alet adı / karakteristik / parça adı üzerinden eşleşen ERP çalışmaları."""
+    try:
+        hepsi = sorgu("/msa_studies?select=id,study_name,study_type,status,is_acceptable,"
+                      "gauge_name,gauge_number,characteristic,part_name,study_date"
+                      "&copied_from_id=is.null&limit=500")
+    except Exception:
+        return {}
+    esler = {}
+    anahtar = [v["kod"]] + ([met(v.get("musteriParca"))] if met(v.get("musteriParca")) else [])
+    for c in hepsi:
+        metin = " ".join(met(c.get(k)).upper() for k in
+                         ("gauge_name", "gauge_number", "characteristic", "part_name", "study_name"))
+        if any(a and a.upper() in metin for a in anahtar):
+            esler.setdefault("__urun__", []).append(c)
+        for g in aletler:
+            if len(g["alet"]) > 3 and g["alet"].upper() in metin:
+                esler.setdefault(g["alet"].upper(), []).append(c)
+    return esler
+
+
 def msa_plani(v, hedef):
-    """MSA Planı: hangi alet, hangi karakteristik, hangi MSA tipi, kim, ne zaman."""
+    """MSA Planı: hangi alet, hangi karakteristik, hangi MSA tipi, kim, ne zaman,
+    ve ERP MSA modülünde o alete ait çalışma var mı / sonucu ne."""
     from openpyxl import Workbook
     from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
     from openpyxl.utils import get_column_letter
@@ -1442,7 +1470,7 @@ def msa_plani(v, hedef):
     ws.sheet_view.showGridLines = False
     ince = Side(style="thin", color="808080")
     kutu = Border(top=ince, bottom=ince, left=ince, right=ince)
-    for h, g in zip("ABCDEFGHI", (6, 22, 34, 12, 26, 26, 16, 14, 20)):
+    for h, g in zip("ABCDEFGHIJK", (6, 20, 30, 10, 22, 24, 30, 14, 13, 30, 11)):
         ws.column_dimensions[h].width = g
 
     antet(ws, "ÖLÇÜM SİSTEMİ ANALİZİ (MSA) PLANI", "FR 86-P",
@@ -1455,13 +1483,14 @@ def msa_plani(v, hedef):
         e = ws.cell(r, 1, etiket); e.font = Font(bold=True, size=10)
         e.alignment = Alignment(horizontal="right")
         g = ws.cell(r, 2, deger); g.alignment = Alignment(vertical="center")
-        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=9)
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=11)
         r += 1
     r += 1
 
+    esler = msa_calismalari(v, aletler)
     basliklar = ["No", "Ölçüm Aleti", "Ölçülen Karakteristik(ler)", "Op No",
                  "En Dar Tolerans", "MSA Tipi (AIAG MSA 4. Baskı)", "Kabul Kriteri",
-                 "Sorumlu", "Planlanan Tarih"]
+                 "Sorumlu", "Planlanan Tarih", "ERP'deki Çalışma", "Sonuç"]
     for i, b in enumerate(basliklar):
         h = ws.cell(r, 1 + i, b)
         h.font = Font(bold=True, size=10, color="FFFFFF")
@@ -1481,16 +1510,27 @@ def msa_plani(v, hedef):
             tip = ("Type-1 (Cg/Cgk) + Type-2 Gage R&R\n(3 operatör × 10 parça × 3 tekrar, ANOVA)")
             kriter = "Cg/Cgk ≥ 1,33 ; %GRR ≤ %10 kabul, %10–30 şartlı, ndc ≥ 5"
             tol = "%s  (%s)" % (("%g" % g["tol"]), g.get("dar_kar", "")[:26])
+        c = (esler.get(g["alet"].upper()) or esler.get("__urun__") or [None])[0]
         deger = [i + 1, g["alet"], ", ".join(g["kar"])[:220], ", ".join(sorted(g["op"])),
-                 tol, tip, kriter, sorumlu, v["termin"]]
+                 tol, tip, kriter, sorumlu, v["termin"],
+                 met(c.get("study_name")) + " (" + met(c.get("study_date"))[:10] + ")" if c
+                 else "çalışma yok — MSA modülünde açılacak",
+                 MSA_SONUC.get(met(c.get("is_acceptable")), met(c.get("status"))) if c else "—"]
         rr = bas + 1 + i
         for j, x in enumerate(deger):
             h = ws.cell(rr, 1 + j, x)
             h.border = kutu; h.font = Font(size=9)
             h.alignment = Alignment(wrap_text=True, vertical="center",
-                                    horizontal="center" if j in (0, 3, 8) else "left")
+                                    horizontal="center" if j in (0, 3, 8, 10) else "left")
             if i % 2:
                 h.fill = PatternFill("solid", fgColor="F4F7FB")
+        if c:                       # ERP calismasi varsa dogrudan acilsin
+            ws.cell(rr, 10).hyperlink = MSA_ADRES + met(c.get("id"))
+            ws.cell(rr, 10).font = Font(size=9, color="1D4ED8", underline="single")
+            ws.cell(rr, 11).font = Font(size=9, bold=True, color={
+                "KABUL": "166534", "ŞARTLI": "92400E", "RED": "991B1B"}.get(deger[10], "1F2937"))
+        else:
+            ws.cell(rr, 10).font = Font(size=9, italic=True, color="B45309")
         ws.row_dimensions[rr].height = 40
 
     rr = bas + len(aletler) + 2

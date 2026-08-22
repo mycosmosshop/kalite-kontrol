@@ -279,6 +279,28 @@ async function kodCoz(giris) {
   return { kod: kodlar[0], satir, musteriParca: giris };
 }
 
+// ── MSA calismalari (GageAI modulu, ayni Supabase) ───────────────────────
+// Kontrol planindaki olcum yontemi (KOMPARATOR, SERITMETRE, GOZLE...) ile
+// calismanin alet adi/karakteristigi/adi eslesirse o adima baglanir.
+const MSA_ADRES = 'https://mycosmosshop.github.io/msa/results.html?id=';
+const MSA_ROZET = { acceptable: '✓ kabul', marginal: '⚠ şartlı', unacceptable: '✗ red' };
+
+function msaEslesir(c, aletler, kod, parca) {
+  const b = x => met(x).toLocaleUpperCase('tr');
+  const metin = [c.gauge_name, c.gauge_number, c.characteristic, c.part_name, c.study_name]
+    .map(b).join(' ');
+  if ([kod, parca].filter(Boolean).some(x => x && metin.includes(b(x)))) return true;
+  return aletler.some(a => a.length > 3 && metin.includes(b(a)));
+}
+
+async function msaCalismalari(kod, parca, aletler) {
+  const r = await sb.from('msa_studies')
+    .select('id,study_name,study_type,status,is_acceptable,gauge_name,gauge_number,'
+      + 'characteristic,part_name,study_date,location')
+    .is('copied_from_id', null).limit(500);
+  return (r.data || []).filter(c => msaEslesir(c, aletler, kod, parca));
+}
+
 // ── ERP verisinden kanit topla ───────────────────────────────────────────
 async function erpKanit(giris) {
   const coz = await kodCoz(giris);
@@ -291,6 +313,9 @@ async function erpKanit(giris) {
   ]);
   const planSatir = coz.satir;
   const urunAdi = met((planSatir[0] || {}).stok_adi) || kod;
+  // Kontrol planindaki olcum yontemleri — MSA calismalariyla eslestirmek icin
+  const yont = await sb.from('leansys_kontrol_plani').select('yontem').eq('stok_kodu', kod).limit(400);
+  const aletler = [...new Set((yont.data || []).map(x => met(x.yontem).trim()).filter(Boolean))];
   // FMEA eslesmesi: proje kimligi, proje adi VEYA urun adi (musteri parca
   // numarasi "36.72010-6345 INDEX C" gibi) uzerinden.
   const kimlik = 'proj_' + kod.replace(/[.\-]/g, '_');
@@ -320,7 +345,8 @@ async function erpKanit(giris) {
 
   const makineler = (rota.data || []).map(x => met(x.makine_adi)).filter(Boolean);
   return {
-    kod, musteriParca: coz.musteriParca || '',
+    kod, musteriParca: coz.musteriParca || '', aletler,
+    msa: await msaCalismalari(kod, coz.musteriParca, aletler),
     lokasyon: lokasyonCoz(makineler),
     urunAdi, devreyeAlma, tarihKaynagi: tarihAdayi.length ? (rota.data || []).length ? 'operasyon kartı' : 'kontrol planı' : 'bugün',
     dokumanlar,
@@ -354,6 +380,15 @@ async function apqpUret(giris) {
       // KANITLAR: ERP modulu · LeanSys stok dokumani · Drive dokumani
       const kanitlar = [];
       if (mod) kanitlar.push({ tur: 'erp', ad: mod.ad, adres: mod.adres });
+      // MSA adimlarina modulun genel baglantisi degil, GERCEK calismalar baglanir
+      if (/msa|gage ?r&?r|fr ?86|ölçüm sistemi/i.test(met(a.form) + ' ' + met(a.ad))) {
+        (k.msa || []).forEach(c => kanitlar.push({
+          tur: 'erp',
+          ad: 'MSA: ' + met(c.study_name)
+            + (c.is_acceptable ? ' (' + (MSA_ROZET[c.is_acceptable] || c.is_acceptable) + ')' : ''),
+          adres: MSA_ADRES + c.id,
+        }));
+      }
       if (resimAdimi) kanitlar.push({ tur: 'leansys', ad: resim.ad + (resim.rev ? ' · ' + resim.rev : ''), yol: resim.yol });
       adimDriveDosyalari(a.form, drive).forEach(d => kanitlar.push({ tur: 'drive', ad: d.ad, yol: d.yol }));
       // Kanit varsa adim tamamlanmis sayilir (ERP kaniti ya da dokuman)
