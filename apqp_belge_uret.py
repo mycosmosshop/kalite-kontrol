@@ -176,7 +176,8 @@ def hucre_stil_no(xml, ref):
 # ── ERP verisi ───────────────────────────────────────────────────────────
 def urun_verisi(kod):
     k = urllib.parse.quote(kod)
-    plan = sorgu("/leansys_kontrol_plani?stok_kodu=eq.%s&select=stok_adi,cari_adi,tr_revno,tr_revtarih&limit=200" % k)
+    plan = sorgu("/leansys_kontrol_plani?stok_kodu=eq.%s"
+                 "&select=stok_adi,cari_adi,rev_no,tr_revno,tr_revtarih&limit=200" % k)
     rota = sorgu("/operasyon_kartlari?stok_kodu=eq.%s&select=op_no,makine_adi,makine_kodu,std_zaman,"
                  "kapasite,kapasite_sure,personel,talimat,kayit_tarihi,varsayilan,header_id&order=op_no" % k)
     # Bir urunun birden fazla ROTASI olabilir (farkli lokasyon/hat). Yalniz
@@ -200,6 +201,8 @@ def urun_verisi(kod):
         "musteri": met((plan[0] if plan else {}).get("cari_adi")),
         # Teknik resim no (FR24'te "drawing" alani) — musteri parca no degil
         "resim_no": met(next((p for p in plan if met(p.get("tr_revno"))), {}).get("tr_revno")),
+        "resim_rev": met((plan[0] if plan else {}).get("rev_no")),
+        "resim_tarih": met(next((p for p in plan if met(p.get("tr_revtarih"))), {}).get("tr_revtarih"))[:10],
         "rota": rota, "agac": agac, "dok": dok,
         "lokasyon": lokasyon, "devreye": devreye,
         "ekip": EKIP[lokasyon],
@@ -1044,19 +1047,63 @@ def parts_history(v, hedef):
     return 1
 
 
+# Sanifoam tesis bilgileri (kalibrasyon sertifikasindaki adres)
+TESIS = {
+    "cerkezkoy": ("Sanifoam Çerkezköy",
+                  "Gaziosmanpaşa O.S.B Mah. 21. Sokak No:6/A Çerkezköy / Tekirdağ"),
+    "ankara": ("Sanifoam Ankara", ""),
+    "eskisehir": ("Sanifoam Eskişehir", ""),
+}
+KURULUS = "Sanifoam Endüstri ve Tüketim Ürünleri San. Tic. A.Ş."
+DUNS = "50-460-2883"
+
+
 def vda2(v, hedef):
-    """VDA_2 Anlagen: PPA Agreement sayfasındaki kuruluş/ürün bilgileri."""
+    """VDA_2 Anlagen: PPA Agreement (Anlage 2), Cover sheet (Anlage 4) ve
+    Parça Geçmişi sayfalarını bu ürünle doldurur."""
     kaynak = os.path.join(PPAP_KLASOR, ORTAK_VDA2)
     if not os.path.exists(kaynak):
         return 0
-    rols = dict(v["ekip"])
-    d = {"B5": "Sanifoam Endüstri ve Tüketim Ürünleri San. Tic. A.Ş.",
-         "B6": v["lokasyon_ad"],
-         "B11": "PPAP " + v["kod"],
-         "B12": "1",
-         "H23": rols.get("Kalite Güvence Müdürü", ""),
-         "H25": rols.get("AR&GE Proje Yöneticisi", "")}
-    hucre_yaz(kaynak, hedef, "xl/worksheets/sheet1.xml", d)
+    tesis, adres = TESIS.get(v["lokasyon"], ("Sanifoam", ""))
+    rapor = "PPAP %s" % v["kod"]
+    musteriParca = met(v.get("musteriParca")) or v["ad"]
+    resim = met(v.get("resim_no")) or v["resim"]
+    surum = "%s / %s" % (met(v.get("resim_rev")) or "-", met(v.get("resim_tarih")) or v["termin"])
+
+    # ── Anlage 2 PPF Abstimmung: kuruluş solda, müşteri sağda
+    a2 = {"H5": KURULUS, "H6": tesis, "H7": adres, "H8": tesis, "H9": adres,
+          "H10": DUNS, "H11": rapor, "H12": "1",
+          "AB5": v["musteri"]}
+    # ── Anlage 4 Deckblatt: PSW kapağı
+    a4 = {"H16": rapor, "H17": "1", "H18": tesis, "H19": tesis,
+          "H20": v["kod"], "H21": v["ad"], "H22": resim, "H23": surum,
+          "V19": "",                       # numune ağırlığı başka ürüne aitti
+          "AI16": v["musteri"], "AI20": musteriParca, "AI21": v["ad"],
+          "AI22": resim, "AI23": surum}
+    # ── Parça Geçmişi: kimlik satırları
+    pg = {"H4": v["musteri"], "H5": KURULUS, "H6": DUNS,
+          "V4": v["kod"], "V5": v["ad"], "V6": resim,
+          "AJ5": v["musteri"], "AZ4": musteriParca, "AZ5": v["ad"], "AZ6": resim}
+    # Şablondaki eski değişiklik satırları (başka ürünün) temizlenir; yerine
+    # ürünün ilk devreye alma kaydı yazılır.
+    for sut in ("D", "F", "K", "M", "R", "U", "AF", "AJ", "AN", "AT"):
+        for r in range(9, 20):
+            pg["%s%d" % (sut, r)] = ""
+    pg.update({"A9": 1, "D9": met(v.get("resim_rev")) or "-", "F9": resim,
+               "K9": "-", "M9": resim, "R9": "X",
+               "U9": "İlk devreye alma — APQP %s" % v["kod"],
+               "AF9": v["devreye"], "AJ9": v["devreye"], "AT9": KURULUS})
+
+    ara = hedef + ".ara"
+    hucre_yaz(kaynak, ara, "xl/worksheets/sheet1.xml", a2)
+    ara2 = hedef + ".ara2"
+    hucre_yaz(ara, ara2, "xl/worksheets/sheet4.xml", a4)
+    hucre_yaz(ara2, hedef, "xl/worksheets/sheet10.xml", pg)
+    for x in (ara, ara2):
+        try:
+            os.remove(x)
+        except OSError:
+            pass
     return 1
 
 
