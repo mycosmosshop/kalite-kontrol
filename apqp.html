@@ -253,6 +253,10 @@ const DOSYA_ANAHTAR = [
   [/msa|gage ?r&?r/i,                                /msa|gage ?r&?r|fr ?86|\u00f6l\u00e7\u00fcm sistemi/i],
   [/kontrol plan/i,                                  /kontrol plan/i],
   [/p-?fmea|pfmea/i,                                 /fmea/i],
+  // Yeterlilik belgeleri FR24 kodlu, adim ise FR88'e atif yapiyor: kod
+  // eslesmesi olmuyordu, anahtar kelimeyle baglanir.
+  [/yeterlilik|fr ?24|cp ?k|cm ?k/i,
+   /yeterlilik|fr ?88|süreç potansiyeli|surec potansiyeli|cpk|varyasyonun azalt/i],
   // MAN'de kapak belgesi VDA_2 Anlagen; Mercedes'te ayri Cover Sheet var
   [/cover ?sheet|vda[ _]?2/i,                        /cover ?sheet|kapak|psw|part submission/i],
 ];
