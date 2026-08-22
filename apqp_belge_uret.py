@@ -110,6 +110,15 @@ def hucre_yaz(kaynak, hedef, sayfa_dosyasi, degerler, ek_xml=None, yeni_parcalar
                 ek_xml[e.filename] = d
 
     for ref, deger in degerler.items():
+        # None -> hucreyi BOSALT (bicim korunur). Bos dize yazmak yetmez:
+        # satir sayan formuller (COUNT/Anzahl) metni de sayabiliyor.
+        if deger is None:
+            kalip = re.compile(r'<c r="%s"([^>/]*)(/>|>.*?</c>)' % ref, re.S)
+            m = kalip.search(xml)
+            if m:
+                oz = re.sub(r'\st="[^"]*"', "", m.group(1))
+                xml = xml[:m.start()] + '<c r="%s"%s/>' % (ref, oz) + xml[m.end():]
+            continue
         sayi = isinstance(deger, (int, float))
         icerik = (('<v>%s</v>' % deger) if sayi
                   else ('<is><t xml:space="preserve">%s</t></is>' % _xml_kacir(str(deger))))
@@ -524,6 +533,15 @@ def fr182(v, hedef):
 FR81_SUTUN = ["NO", "APQP MADDE", "KONU", "SORUMLU", "TERMİN", "AÇIKLAMA", "DURUM"]
 
 
+def cizim_var(v):
+    """ERP stok dokümanlarında açılabilir bir teknik resim dosyası var mı?"""
+    try:
+        import balonla
+        return bool(balonla.cizim_yolu(v.get("dok")))
+    except Exception:
+        return False
+
+
 def fr81_gundem(v):
     """APQP maddesi -> (konu, rol, açıklama). FR91'de FR81'e bağlanan maddeler."""
     hammadde = ", ".join(met(a.get("tuketim_kodu")) for a in v["agac"][:5]) or "ürün ağacında hammadde yok"
@@ -544,7 +562,11 @@ def fr81_gundem(v):
         ("2.7", "Hammadde ve alt tedarikçi durumu",
          "Satın Alma", "Ürün ağacı: %s — tedarikçiler PL11 onaylı listeden seçilecek" % hammadde[:110]),
         ("2.8", "Müşteri teknik resmi ve şartnamelerinin incelenmesi (%s)" % v["resim"],
-         "AR&GE Proje Yöneticisi", "Teknik resim ve şartname ERP stok dokümanlarında kayıtlı"),
+         "AR&GE Proje Yöneticisi",
+         "Teknik resim ve şartname ERP stok dokümanlarında kayıtlı" if cizim_var(v) else
+         "TALEP — Teknik resim dosyası LeanSys stok dokümanlarına yüklenmeli; "
+         "numaralandırılmış (balonlu) teknik resim ve PPAP 2.2.1 ancak resim "
+         "yüklendikten sonra üretilebilir. Şimdilik ölçüler kontrol planından alındı."),
         ("2.9", "Fizibilite kararı",
          "Kalite Güvence Müdürü", "FR90 Fizibilite Taahhüdü ekip tarafından imzalanacak"),
         ("2.10", "Paketleme planı ve ambalaj standardı",
@@ -1255,33 +1277,262 @@ PPAP_KLASOR = r"C:\\Users\\User\\Desktop\\ppap docs"
 
 # Müşteri anahtar kelimesi -> o müşteriye ait şablonlar
 MUSTERI_BELGE = {
-    "MERCEDES": ["Cover Sheet Mercedes.doc"],
-    "VW":       ["Flammability Test Report VW.xlsx", "Sanifoam_D_TLD_audit_VW.xlsm"],
-    "VOLKSWAGEN": ["Flammability Test Report VW.xlsx", "Sanifoam_D_TLD_audit_VW.xlsm"],
+    "MERCEDES": ["Cover Sheet Mercedes.doc", "Ölçü Kontrol Raporu Mercedes.xls"],
     "MAN":      ["VDA_2_2020_Anlagen_Attachments_2-6_7 MAN.xlsx"],
+    "LEAR":     ["PPA COVER SHEET LEAR.xlsx"],
 }
+# VW grubuna giden parçalarda VDA_2'ye EK olarak istenen formlar
+VW_BELGE = ["PPF Coversheet.docx", "Dimension Report VW.xlsx",
+            "Flammability Test Report VW.xlsx", "Sanifoam_D_TLD_audit_VW.xlsm"]
+# VW grubu parça numarası: 3 karakterlik proje öneki + 3 + 3 hane (5NA 881 989).
+# Tier-1 (Faurecia, Magna, Lear...) adı tek başına VW demek değil — o firmalar
+# Mercedes'e de üretiyor; belirleyici işaret parça numarasıdır.
+VW_PARCA = re.compile(r"\b\d[A-Z0-9]{2}[\s.]\d{3}[\s.]\d{3}\b")
+# Ad üzerinden yalnız TARTIŞMASIZ VW grubu şirketleri (SITECH, VW'nin koltuk
+# iskeleti iştirakidir). "SKODA" tek başına eşleştirilmez: TEMSA SKODA
+# otobüs ortaklığı VW grubu değildir.
+VW_MUSTERI = re.compile(r"VOLKSWAGEN|\bVW\b|\bAUDI\b|PORSCHE|SKODA AUTO|SITECH", re.I)
 # Müşteriye özel kapak/ölçü/parça geçmişi yoksa bu şablon kullanılır
 ORTAK_VDA2 = "VDA_2_2020_Anlagen_Attachments_2-6_7 MAN.xlsx"
 # Her müşteride ortak belgeler
 ORTAK_BELGE = ["Parts History.xlsx", "ISO 845 Density&Weight Test Report.xlsx"]
 
-# Ölçüsel rapor kullanıcının vereceği formatla yapılacak; şimdilik üretilmiyor
-URETILMEYEN = ("Dimension Report", "Ölçü Kontrol Raporu")
+
+def vw_grubu(v):
+    """Parça VW grubuna mı gidiyor? Parça numarası kalıbı birincil işarettir
+    (ör. 5NA 881 989); ürün adında yoksa stok dokümanlarının adlarına da
+    bakılır (700.0.444'te resim adı 5NA.881.989). Müşteri adı yalnız açık
+    VW grubu şirketlerinde tek başına sayılır."""
+    if VW_MUSTERI.search(met(v.get("musteri"))):
+        return True
+    metin = met(v.get("ad")) + " " + " ".join(
+        met(d.get("doc_adi")) + " " + met(d.get("link")) for d in (v.get("dok") or []))
+    return bool(VW_PARCA.search(metin.upper()))
 
 
-def musteri_belgeleri(musteri):
-    """Müşteriye ait şablon listesi + ortak belgeler. Müşteriye özel kapak
-    yoksa VDA_2 şablonu eklenir (kullanıcının kuralı)."""
-    m = met(musteri).upper()
+def musteri_belgeleri(v):
+    """Ürüne ait şablon listesi + ortak belgeler. Müşteriye özel kapak yoksa
+    VDA_2 eklenir; VW grubunda VDA_2'ye EK olarak VW formları da gelir."""
+    m = met(v.get("musteri")).upper()
     ozel = []
     for anahtar, dosyalar in MUSTERI_BELGE.items():
         if anahtar in m:
             ozel += dosyalar
+    if vw_grubu(v):
+        # MAN VDA_2 kullanılır, VW formları buna EKtir (kullanıcının kuralı)
+        ozel = [ORTAK_VDA2] + ozel + VW_BELGE
     kapak_var = any("Cover Sheet" in d or "VDA_2" in d for d in ozel)
     if not kapak_var:
         ozel.append(ORTAK_VDA2)
-    return [d for d in dict.fromkeys(ozel + ORTAK_BELGE)
-            if not any(u in d for u in URETILMEYEN)]
+    return list(dict.fromkeys(ozel + ORTAK_BELGE))
+
+
+def musteri_parca_no(v):
+    """Müşteri parça no: ürün adındaki VW/OEM parça numarası, yoksa alan."""
+    g = VW_PARCA.search(met(v.get("ad")).upper())
+    return g.group(0) if g else (met(v.get("musteriParca")) or v["kod"])
+
+
+def _docx_degistir(d, harita):
+    """Şablondaki örnek değerleri bu ürünün değerleriyle değiştirir.
+    Metin run'lara bölünmüş olabildiği için paragraf düzeyinde birleştirilip
+    yazılır; kutucuklar ve biçim korunur."""
+    sayac = 0
+
+    def paragraf(p):
+        nonlocal sayac
+        tam = "".join(r.text for r in p.runs)
+        yeni = tam
+        for eski, taze in harita.items():
+            if eski and eski in yeni:
+                yeni = yeni.replace(eski, str(taze))
+        if yeni != tam and p.runs:
+            p.runs[0].text = yeni
+            for r in p.runs[1:]:
+                r.text = ""
+            sayac += 1
+
+    for p in d.paragraphs:
+        paragraf(p)
+    for t in d.tables:
+        for satir in t.rows:
+            for h in satir.cells:
+                for p in h.paragraphs:
+                    paragraf(p)
+    return sayac
+
+
+def ppf_coversheet(v, hedef):
+    """VDA PPF kapak sayfası (VW grubu). Şablondaki örnek parçanın bilgileri
+    bu ürünün bilgileriyle değiştirilir; kutucuklar ve biçim korunur."""
+    import docx
+    kaynak = os.path.join(PPAP_KLASOR, "PPF Coversheet.docx")
+    if not os.path.exists(kaynak):
+        return 0
+    d = docx.Document(kaynak)
+    ad, posta = IMZA.get(v["lokasyon"], IMZA["eskisehir"])
+    tesis, adres = TESIS.get(v["lokasyon"], ("Sanifoam", ""))
+    mp = musteri_parca_no(v)
+    resim = met(v.get("resim_no")) or mp
+    tarih = datetime.date.fromisoformat(v["termin"]).strftime("%d.%m.%Y")
+    # Şablondaki örnek (Magna / 700.0.444) değerleri -> bu ürün
+    harita = {
+        "Magna Automotive (CZ) s.r.o.": v["musteri"],
+        "Repov 174": "", "293 01 Mlada Boleslav": "",
+        "LEHNENABDECKUNG": v["ad"][:60],
+        "700.0.444/5NA.881.989": "%s / %s" % (v["kod"], mp),
+        "5NA.881.989": resim,
+        "15.11.2018": tarih, "Date:11.11.2019": "Date:" + tarih,
+        "Mustafa AYDEMİR": ad,
+        "maydemir": posta.split("@")[0],
+        "+90(282)7252725": "",
+        "Sanifoam Sünger San. Ve Tic. AŞ. Çerkezköy/Tekirdağ":
+            "%s — %s" % (tesis, adres or v["lokasyon_ad"]),
+        "02/S": "01",
+        "67 Gram/Item": "",
+    }
+    n = _docx_degistir(d, harita)
+    d.save(hedef)
+    return n or 1
+
+
+def lear_kapak(v, hedef):
+    """PPA Cover sheet (Lear düzeni) — kuruluş/numune/müşteri blokları."""
+    kaynak = os.path.join(PPAP_KLASOR, "PPA COVER SHEET LEAR.xlsx")
+    if not os.path.exists(kaynak):
+        return 0
+    ad, posta = IMZA.get(v["lokasyon"], IMZA["eskisehir"])
+    tesis, adres = TESIS.get(v["lokasyon"], ("Sanifoam", ""))
+    mp = musteri_parca_no(v)
+    resim = met(v.get("resim_no")) or mp
+    surum = "%s / %s" % (met(v.get("resim_rev")) or "-",
+                         met(v.get("resim_tarih")) or v["termin"])
+    d = {
+        "C16": "PPAP %s" % v["kod"], "C17": "01",          # rapor no / sürüm
+        "C18": adres or v["lokasyon_ad"], "C19": tesis,     # sevk / üretim yeri
+        "C20": v["kod"], "C21": v["ad"][:60],
+        "C22": resim, "C23": surum,
+        "H23": DUNS,                                        # Identification/DUNS
+        "L16": v["musteri"], "L20": mp, "L21": v["ad"][:60],
+        "L22": resim, "L23": surum,
+        "D28": ad, "D29": "Quality department",
+        "D31": posta, "D32": v["termin"],
+    }
+    hucre_yaz(kaynak, hedef, "xl/worksheets/sheet1.xml", d)
+    return len(d)
+
+
+def flammability(v, hedef):
+    """FR54 Yanmazlık Test Raporu (VW TL 1010) — başlık bilgileri."""
+    kaynak = os.path.join(PPAP_KLASOR, "Flammability Test Report VW.xlsx")
+    if not os.path.exists(kaynak):
+        return 0
+    ham = ", ".join("%s (%s)" % (met(a.get("tuketim_kodu")), met(a.get("tuketim_adi"))[:22])
+                    for a in v["agac"][:3]) or "—"
+    d = {"E7": musteri_parca_no(v), "E8": v["kod"],
+         "E9": v["ad"][:60], "E10": ham[:90],
+         "K5": "REPORT NO.\nTST%s/%s" % (v["termin"][:4], v["termin"])}
+    hucre_yaz(kaynak, hedef, "xl/worksheets/sheet1.xml", d)
+    return len(d)
+
+
+def vw_olcu_raporu(v, hedef, balon=None):
+    """Dimension Report (VW düzeni): her ölçü için 5 numune, ölçüm aleti ve
+    sonuç. Değerler aletin çözünürlüğünde; kaynak balonlu çizim, yoksa
+    kontrol planı (kullanıcının kuralı)."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+
+    if balon:
+        ham, sinif, _, _ = balon_satirlari(v, balon)
+        satir = [(no, k, n) for no, k, n in ham]
+    else:
+        satir = [(no, k, "kontrol planı") for no, k in olcusel_satirlar(v["kod"])]
+    if not satir:
+        return 0
+    ad, _ = IMZA.get(v["lokasyon"], IMZA["eskisehir"])
+    rolAd = dict((rol, a) for rol, a in v["ekip"])
+
+    wb = Workbook(); ws = wb.active; ws.title = "Dimension Report"
+    ws.sheet_view.showGridLines = False
+    for h, g in zip("ABCDEFGHIJK", (6, 26, 16, 10, 10, 10, 10, 10, 18, 10, 26)):
+        ws.column_dimensions[h].width = g
+    ince = Side(style="thin", color="808080")
+    kutu = Border(top=ince, bottom=ince, left=ince, right=ince)
+    antet(ws, "DIMENSION REPORT — ÖLÇÜM SONUÇLARI", "FR 24-VW", "02.01.2025", "0", "1 / 1", 11)
+    r = 6
+    tarih = datetime.date.fromisoformat(v["termin"]).strftime("%d.%m.%Y")
+    for etiket, deger in (("Part No / Parça No :", "%s / %s" % (v["kod"], musteri_parca_no(v))),
+                          ("Drawing No :", met(v.get("resim_no")) or musteri_parca_no(v)),
+                          ("Customer :", v["musteri"]),
+                          ("Test Date :", tarih)):
+        e = ws.cell(r, 1, etiket); e.font = Font(bold=True, size=10)
+        e.alignment = Alignment(horizontal="right")
+        ws.cell(r, 2, deger)
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=11)
+        r += 1
+    ws.cell(r + 1, 1, "Teknik resimde tanımlı tüm boyutsal parametreler kontrol "
+                      "edilerek 5 numune üzerinden ölçülmüştür.").font = \
+        Font(size=9, italic=True, color="808080")
+    ws.merge_cells(start_row=r + 1, start_column=1, end_row=r + 1, end_column=11)
+    r += 3
+
+    basliklar = ["No", "Dimension / Ölçü", "Nominal ± Tol", "1", "2", "3", "4", "5",
+                 "Measuring Tool", "Result", "Not"]
+    for i, b in enumerate(basliklar):
+        c = ws.cell(r, 1 + i, b)
+        c.font = Font(bold=True, size=10, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="1F3864"); c.border = kutu
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.row_dimensions[r].height = 28
+    bas = r + 1
+    yazilan = 0
+    for i, (no, k, notu) in enumerate(satir):
+        rr = bas + i
+        if not k:                       # okunamayan ölçü: satır açık bırakılır
+            deger = [no, "— (çizimden okunamadı)", "", "", "", "", "", "",
+                     "", "", notu]
+        else:
+            tol = (k["ust"] - k["alt"]) / 2
+            olculer = olcusel_deger(k, 5, i)
+            sayisal = [x for x in olculer if not isinstance(x, str)]
+            coz, coz_ad = alet_cozunurluk(k.get("yontem"))
+            icinde = not sayisal or all(k["alt"] <= x <= k["ust"] for x in sayisal)
+            # Okuma tolerans dışıysa sebebi ayırt edilir: aletin okuma
+            # ızgarasında bandın İÇİNE düşen hiçbir değer yoksa bu bir ret
+            # değil, ölçülemezliktir (ör. 12,5 ±0,3 · şeritmetre 1 mm →
+            # ızgara 12 ve 13, ikisi de dışarıda). "NOk" yazmak yanıltır.
+            izgara = (not coz) or math.floor(k["ust"] / coz) * coz >= k["alt"] - 1e-9
+            if icinde:
+                sonuc = "Ok"
+            elif not izgara:
+                sonuc = "—"
+                notu = "ölçülemez: %s ızgarası tolerans bandına (±%g) düşmüyor" % (coz_ad, tol)
+            else:
+                sonuc = "NOk"
+            deger = [no, k["ad"][:26], "%g ± %g" % (k["nominal"], tol)] + list(olculer) + \
+                    [met(k.get("yontem"))[:18], sonuc, notu]
+            yazilan += 1
+        for j, x in enumerate(deger):
+            c = ws.cell(rr, 1 + j, x)
+            c.border = kutu; c.font = Font(size=10)
+            c.alignment = Alignment(horizontal="left" if j in (1, 8, 10) else "center",
+                                    vertical="center", wrap_text=j in (1, 10))
+        ws.cell(rr, 10).font = Font(size=10, bold=True,
+                                    color="166534" if deger[9] == "Ok" else "991B1B")
+        ws.row_dimensions[rr].height = 22
+    son = bas + len(satir) + 2
+    for etiket, kisi, unvan in (("Tested by", rolAd.get("Kalite Mühendisi", ad), "Quality Engineer"),
+                                ("Approved by", rolAd.get("Kalite Güvence Müdürü", ad),
+                                 "Quality Assurance Manager")):
+        ws.cell(son, 1, etiket).font = Font(bold=True, size=10)
+        ws.cell(son, 2, "%s — %s" % (kisi, unvan)).font = Font(size=10)
+        ws.merge_cells(start_row=son, start_column=2, end_row=son, end_column=6)
+        son += 1
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+    wb.save(hedef)
+    return yazilan or len(satir)
 
 
 def parts_history(v, hedef):
@@ -1450,6 +1701,11 @@ def olcusel_satirlar(kod):
         alt, ust = x.get("alt_limit"), x.get("ust_limit")
         if alt is None or ust is None:
             continue
+        # Makine ayarları (tambur ısısı, kesim hızı, tabla hizası — hepsi
+        # makine göstergesinden okunur) ÜRÜN ölçüsü değildir; ölçü raporunda
+        # ve kalıp doğrulamada yer almaz.
+        if MAKINE_AYARI.search(met(x.get("yontem"))) or MAKINE_AYARI.search(ad):
+            continue
         try:
             alt, ust = float(alt), float(ust)
         except (TypeError, ValueError):
@@ -1492,6 +1748,17 @@ COZUNURLUK = [
 NITEL_YONTEM = re.compile(r"GÖZLE|GOZLE|GÖRSEL|GORSEL|^TL\s*\d+", re.I)
 
 
+# Türkçe harf duyarsız karşılaştırma: kontrol planında aynı alet
+# "Şeritmetre" ve "Seritmetre" diye iki yazımla geçebiliyor. Ayrı sayılırsa
+# aynı alet için mükerrer MSA/FR24 dosyası üretiliyor.
+_SADE = str.maketrans("ŞşĞğİıÜüÖöÇçÂâÎîÛû", "SsGgIiUuOoCcAaIiUu")
+
+
+def alet_sade(ad):
+    """Alet adının karşılaştırma anahtarı (Türkçe harf ve boşluk duyarsız)."""
+    return re.sub(r"\s+", " ", met(ad).translate(_SADE).upper()).strip()
+
+
 def alet_cozunurluk(yontem):
     """(çözünürlük, açıklama). Nitel yöntemde çözünürlük yok."""
     y = met(yontem)
@@ -1506,12 +1773,14 @@ def alet_cozunurluk(yontem):
 def baskin_alet(kod):
     """Ürünün ölçülerinde en çok kullanılan alet (plan eşleşmesi olmayan
     çizim ölçüleri için varsayılan)."""
-    sayim = {}
+    sayim, ad = {}, {}
     for x in kp_satirlari(kod):
         y = met(x.get("yontem"))
         if y and not NITEL_YONTEM.search(y) and x.get("alt_limit") is not None:
-            sayim[y] = sayim.get(y, 0) + 1
-    return max(sayim, key=sayim.get) if sayim else ""
+            a = alet_sade(y)                  # "Şeritmetre"/"Seritmetre" aynı alet
+            sayim[a] = sayim.get(a, 0) + 1
+            ad.setdefault(a, y)
+    return ad[max(sayim, key=sayim.get)] if sayim else ""
 
 
 def olcusel_deger(k, adet=5, tohum=0):
@@ -1648,23 +1917,30 @@ def ppap_belgeleri(v, klasor, uret):
     """Müşterinin formatındaki PPAP belgelerini ürün klasörüne getirir."""
     import shutil
     sayac = 0
-    for dosya in musteri_belgeleri(v["musteri"]):
-        kaynak = os.path.join(PPAP_KLASOR, dosya)
-        if not os.path.exists(kaynak):
-            print("   ! %-34s şablon bulunamadı" % dosya[:34])
-            continue
+    # Doldurulan belgeler: dosya adı -> (üretici, açıklama)
+    DOLDURULAN = {
+        "Parts History.xlsx": (parts_history, "ürün bilgisi dolduruldu"),
+        ORTAK_VDA2: (vda2, "kuruluş bilgisi dolduruldu"),
+        "PPF Coversheet.docx": (ppf_coversheet, "VW grubu — PPA kapak dolduruldu"),
+        "PPA COVER SHEET LEAR.xlsx": (lear_kapak, "Lear PPA kapak dolduruldu"),
+        "Flammability Test Report VW.xlsx": (flammability, "TL 1010 başlık dolduruldu"),
+        "Dimension Report VW.xlsx": (
+            lambda a, b: vw_olcu_raporu(a, b, a.get("balon")), "VW düzeni, 5 numune"),
+    }
+    for dosya in musteri_belgeleri(v):
         kok, uzanti = os.path.splitext(dosya)
         hedef_ad = "%s %s%s" % (kok, v["kod"], uzanti)
+        uretici = DOLDURULAN.get(dosya)
+        # Dimension Report'un şablonu yok — tamamen üretilir
+        kaynak = os.path.join(PPAP_KLASOR, dosya)
+        if not os.path.exists(kaynak) and dosya != "Dimension Report VW.xlsx":
+            print("   ! %-34s şablon bulunamadı" % dosya[:34])
+            continue
         hedef = os.path.join(klasor, hedef_ad)
         # Doldurulabilenler doldurulur; eski biçimler (.doc/.xls) kopyalanır
-        if dosya == "Parts History.xlsx":
-            if uret(hedef_ad, parts_history, "Parts History"):
-                print("   ✓ Parts History                     (ürün bilgisi dolduruldu)")
-                sayac += 1
-            continue
-        if dosya == ORTAK_VDA2:
-            if uret(hedef_ad, vda2, "VDA_2 Anlagen"):
-                print("   ✓ VDA_2 Anlagen (kapak/ölçü/geçmiş)  (kuruluş bilgisi dolduruldu)")
+        if uretici:
+            if uret(hedef_ad, uretici[0], kok[:24]):
+                print("   ✓ %-33s (%s)" % (kok[:33], uretici[1]))
                 sayac += 1
             continue
         try:
@@ -1710,7 +1986,7 @@ def yeterlilik_karakteristikleri(kod):
         hedef = x.get("hedef_nicel")
         g = {"alet": alet, "kar": kar, "alt": alt, "ust": ust, "op": x.get("op_no"),
              "nominal": float(hedef) if hedef not in (None, "") else (alt + ust) / 2}
-        gruplar.setdefault(alet.upper(), []).append(g)
+        gruplar.setdefault(alet_sade(alet), []).append(g)
     secim = []
     for adaylar in gruplar.values():
         coz, _ = alet_cozunurluk(adaylar[0]["alet"])
@@ -1837,12 +2113,18 @@ def fr24_yeterlilik(v, hedef, g, deger, nominal):
         "O10": rolAd.get("Kalite Mühendisi", ""),
         "O11": cihaz, "O12": seri_gun,
         "O13": "%s (Op.%s)" % (g["kar"], g["op"]), "O14": "mm",
-        "O15": nominal, "O16": g["alt"], "O17": g["ust"], "O18": 10,
+        # DİKKAT: nominal/LSL/USL değerleri P sütunundadır. N15:O15 gibi
+        # birleşik hücreler ETİKETtir; oraya yazmak görünmez kalır ve
+        # şablonun kendi örnek limitleri (40 / 39,2 / 40,8) durur — Cpk
+        # o zaman veriyle alakasız çıkar.
+        "P15": nominal, "P16": g["alt"], "P17": g["ust"], "P18": 10,
     }
-    # Ölçüm değerleri: C/F/I/L sütunlarında 50'şer blok, satır 5'ten başlar
-    for i, x in enumerate(deger[:200]):
+    # Ölçüm değerleri: C/F/I/L sütunlarında 50'şer blok, satır 5'ten başlar.
+    # Şablonda 125 örnek değer var; yazılmayan hücreler BOŞALTILIR, yoksa
+    # 50 ölçümlük makine çalışmasına şablonun 75 değeri karışır.
+    for i in range(200):
         sutun = "CFIL"[i // 50]
-        d["%s%d" % (sutun, 5 + i % 50)] = x
+        d["%s%d" % (sutun, 5 + i % 50)] = deger[i] if i < len(deger) else None
     hucre_yaz(kaynak, hedef, "xl/worksheets/sheet2.xml", d)
     return len(deger)
 
@@ -2059,7 +2341,7 @@ def eski_yeterlilik_temizle(v, secim):
 
 def yeterlilik_uret(v, klasor, uret):
     """Her ürün karakteristiği için FR24 + ERP yeterlilik çalışması."""
-    sonuclar, kayitlar = [], []
+    sonuclar, kayitlar, uretilen = [], [], set()
     secim = yeterlilik_karakteristikleri(v["kod"])
     eski_yeterlilik_temizle(v, secim)
     for i, g in enumerate(secim):
@@ -2070,6 +2352,7 @@ def yeterlilik_uret(v, klasor, uret):
             sonuc = yeterlilik_analiz(deger, g["alt"], g["ust"])
             sonuc["tur"], sonuc["esik"] = tur, esik
             ad = "FR24 %s Yeterliliği %s - %s.xlsm" % (tur, v["kod"], g["alet"])
+            uretilen.add(ad)
             n = uret(ad, lambda a, b, d=deger, nm=nominal: fr24_yeterlilik(a, b, g, d, nm),
                      "FR24 %s %s" % (tur, g["alet"]))
             kimlik, yeni = yeterlilik_calismasi_ac(v, g, deger, nominal, sonuc, tur)
@@ -2077,6 +2360,18 @@ def yeterlilik_uret(v, klasor, uret):
             kayitlar.append({"tur": tur, "kar": g["kar"], "alet": g["alet"],
                              "deger": deger, "nominal": nominal,
                              "alt": g["alt"], "ust": g["ust"], "sonuc": sonuc})
+    # Artık üretilmeyen FR24 dosyaları silinir (ör. aynı aletin "Şeritmetre" /
+    # "Seritmetre" iki yazımından kalan mükerrer dosyalar). Yalnız üretecin
+    # kendi ad kalıbındakiler; kullanıcının dosyalarına dokunulmaz.
+    kalip = re.compile(r"^FR24 (Proses|Makine) Yeterliliği %s - .+\.xlsm$"
+                       % re.escape(v["kod"]))
+    for f in os.listdir(klasor):
+        if kalip.match(f) and f not in uretilen:
+            try:
+                os.remove(os.path.join(klasor, f))
+                print("   − Eski FR24 silindi: %s" % f[:56])
+            except OSError:
+                pass
     if kayitlar:
         uret("Yeterlilik Özeti %s.xlsx" % v["kod"],
              lambda a, b: yeterlilik_ozeti(a, b, kayitlar), "Yeterlilik Özeti")
@@ -2418,7 +2713,7 @@ def msa_aletleri(kod):
         alet = met(x.get("yontem")).strip()
         if not alet:
             continue
-        anahtar = alet.upper()
+        anahtar = alet_sade(alet)
         g = gruplar.setdefault(anahtar, {"alet": alet, "kar": [], "tol": None, "op": set()})
         g["kar"].append(met(x.get("olculecek")))
         g["op"].add(str(x.get("op_no")))
@@ -2588,9 +2883,7 @@ def kalibrasyon_esle(alet):
 
 def cihaz_kodu(v, alet):
     """Ölçüm cihazı tanıtım kodu: LOKASYON-ALET (kontrol planındaki yöntem adı)."""
-    sade = re.sub(r"[^A-Z0-9]+", "-",
-                  alet.upper().replace("Ç", "C").replace("Ğ", "G").replace("İ", "I")
-                  .replace("Ö", "O").replace("Ş", "S").replace("Ü", "U")).strip("-")
+    sade = re.sub(r"[^A-Z0-9]+", "-", alet_sade(alet)).strip("-")
     return "%s-%s" % (LOK_KISA.get(v["lokasyon"], "SNF"), sade[:22])
 
 
@@ -2825,7 +3118,8 @@ def msa_olcumleri_yaz(v, aletler):
     for c in mevcut:
         if met(c.get("status")) != "draft":
             continue
-        g = next((x for x in aletler if x["alet"].upper() in calisma_metni(c)), None)
+        g = next((x for x in aletler
+                  if alet_sade(x["alet"]) in alet_sade(calisma_metni(c))), None)
         if not g:
             continue
         kimlik = c["id"]
@@ -3336,8 +3630,13 @@ def fr86_gage_rr(v, hedef):
 # ── Türetilen alanlar ────────────────────────────────────────────────────
 def zenginlestir(v):
     v["lokasyon_ad"] = "Ankara" if v["lokasyon"] == "ankara" else "Çerkezköy"
-    v["resim"] = next((met(x.get("doc_adi")) + (" / " + met(x.get("rev_no")) if met(x.get("rev_no")) else "")
-                       for x in v["dok"] if met(x.get("link"))), "teknik resim ERP'de kayıtlı değil")
+    # Resim adı, balonlamanın seçtiği DOSYANIN adıdır. Eskiden ilk dokümanın
+    # adı alınıyordu ve 700.0.444'te "Part History" teknik resim gibi yazıyordu.
+    try:
+        import balonla
+        v["resim"] = balonla.cizim_adi(v["dok"]) or "teknik resim ERP'de kayıtlı değil"
+    except Exception:
+        v["resim"] = "teknik resim ERP'de kayıtlı değil"
     d = datetime.date.fromisoformat(v["devreye"])
     v["devreye_baslangic"] = (d - datetime.timedelta(days=100)).isoformat()   # APQP başlangıcı
     v["termin"] = (d - datetime.timedelta(days=86)).isoformat()               # bölüm 2 termini

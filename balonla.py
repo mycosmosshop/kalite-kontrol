@@ -458,14 +458,54 @@ def pdf_yaz(png_yolu, pdf_yolu):
     Image.open(png_yolu).convert("RGB").save(pdf_yolu, "PDF", resolution=200.0)
 
 
+# Stok dokümanlarında teknik resmin yanında parça geçmişi, IMDS, test
+# raporu, sertifika gibi ONLARCA PDF duruyor. Sırf "ilk PDF" almak
+# 700.0.444'te Part History'yi teknik resim sanmaya yol açtı.
+CIZIM_DISI = re.compile(
+    r"HISTORY|IMDS|PPAP|TEST|REPORT|RAPOR|SGS|MSDS|SERTIF|CERTIF|PACKAG|"
+    r"AMBALAJ|PAKET|TALIMAT|FIZIB|RELEASE|COVER|FORM|EMISSION|ODOUR|"
+    r"FORMALDEH|DENSITY|WEIGHT|DEGIS|DEVREYE|DATA\s*SHEET|TL\s*\d", re.I)
+CIZIM_ADI = re.compile(
+    r"TEKN[İI]K\s*RES[İI]M|TECHNICAL\s*DRAWING|DRAWING|ZEICHNUNG|"
+    r"^RES[İI]M\b|^TR\b", re.I)
+# Zaten numaralandırılmış (balonlanmış) resim: kendi numaralamamızla
+# çakışmasın diye düz teknik resim varken tercih edilmez.
+NUMARALI_ADI = re.compile(r"NUMBERED|NUMARAL", re.I)
+
+
 def cizim_yolu(dokumanlar):
-    """ERP stok dokümanları arasından teknik resim dosyası (raster ya da PDF)."""
-    aday = [str(d.get("link") or "") for d in (dokumanlar or [])]
-    # Vektor PDF varsa once o kullanilir: metin ve cizgiler temiz
-    for uzanti in ((".pdf",), (".tif", ".tiff", ".png", ".jpg", ".jpeg")):
-        for yol in aday:
-            if yol.lower().endswith(uzanti):
-                return yol
+    """ERP stok dokümanları arasından TEKNİK RESİM dosyası (raster ya da PDF).
+    Seçim belge ADINA göre yapılır; resim dışı belgeler elenir."""
+    aday = [(str(d.get("doc_adi") or ""), str(d.get("link") or ""))
+            for d in (dokumanlar or []) if str(d.get("link") or "")]
+
+    def dosya(liste):
+        # Vektör PDF varsa önce o kullanılır: metin ve çizgiler temiz
+        for uzanti in ((".pdf",), (".tif", ".tiff", ".png", ".jpg", ".jpeg")):
+            for _, yol in liste:
+                if yol.lower().endswith(uzanti):
+                    return yol
+        return None
+
+    resim = [(a, y) for a, y in aday if CIZIM_ADI.search(a) and not CIZIM_DISI.search(a)]
+    for kume in (
+            [(a, y) for a, y in resim if not NUMARALI_ADI.search(a)],   # düz teknik resim
+            resim,                                                      # numaralı da olur
+            [(a, y) for a, y in aday if not CIZIM_DISI.search(a)]):     # parça no adlı belge
+        y = dosya(kume)
+        if y:
+            return y
+    return None
+
+
+def cizim_adi(dokumanlar):
+    """Seçilen teknik resmin belge adı + revizyonu (rapor başlıkları için)."""
+    yol = cizim_yolu(dokumanlar)
+    for d in (dokumanlar or []):
+        if str(d.get("link") or "") == yol:
+            ad = str(d.get("doc_adi") or "").strip()
+            rev = str(d.get("rev_no") or "").strip()
+            return (ad + (" / " + rev if rev else "")) if ad else None
     return None
 
 
