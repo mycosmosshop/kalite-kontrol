@@ -76,6 +76,7 @@ a.sil-dugme:hover{background:#b91c1c;color:#fff;border-color:#b91c1c}
     <div style="margin-top:10px;font-size:12px;color:var(--soluk)" id="bEkip"></div>
     <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <button id="driveBtn">📁 Drive klasörünü aç</button>
+      <button id="belgeBtn" title="Bu ürünün belgelerini ve MSA çalışmalarını yeniden üretir (Drive klasörüne yazar)">📄 Belgeleri üret</button>
       <button id="tazeleBtn" title="Belge ürettikten sonra basın: Drive'daki yeni dokümanları adımlara bağlar ve FR91'e sonradan eklenen adımları getirir. Kayıt açılırken zaten kendiliğinden çalışır.">🔄 Yenile</button>
       <label style="font-size:12px;display:inline-flex;align-items:center;gap:4px;margin-left:8px" title="AIAG APQP 3rd Edition (Mart 2024) ile eklenen 14 madde bölümlerin SONUNDA durur; bu kutu yalnız onları gösterir">
         <input type="checkbox" id="yeniSuzgec"> Yalnız yeni maddeler (AIAG 3rd Ed.)</label>
@@ -709,6 +710,15 @@ document.addEventListener('click', e => {
   dosyaAc(decodeURIComponent(a.dataset.ac));
 });
 
+// Belgeleri + MSA calismalarini uretir (yerel ajan apqp_belge_uret.py'yi calistirir).
+// Uretim uzun surer (Excel COM, MSA hesabi): tek istekte 10 dakikaya kadar.
+async function belgeleriUret(kod) {
+  const c = await fetch(AJAN + '/apqpuret?kod=' + encodeURIComponent(kod));
+  const j = await c.json();
+  if (!j.ok) throw new Error(j.hata || 'üretilemedi');
+  return j.satirlar || [];
+}
+
 // Bilgisayardan doküman secip urunun Drive klasorune yazar, adima baglar.
 // Ad, urun kodunu tasimazsa eklenir: kanit suzgeci yalniz urune ait dosyalari
 // kabul ediyor, aksi halde yuklenen dosya bir sonraki yenilemede dusuyordu.
@@ -763,7 +773,8 @@ $('#uretBtn').addEventListener('click', async () => {
   if (!kodlar.length) { mesaj('Önce bir ürün kodu girin.'); return; }
   $('#uretBtn').disabled = true;
   const olan = await hepsiniOku();
-  const basarili = [], atlanan = [], hatali = [];
+  const basarili = [], atlanan = [], hatali = [], uretim = [];
+  let uretimAyrinti = [];
   for (const kod of kodlar) {
     try {
       mesaj(kod + ' için ERP verisi okunuyor…');
@@ -773,14 +784,28 @@ $('#uretBtn').addEventListener('click', async () => {
       if (olan.some(x => x.stokKodu === p.stokKodu)) { atlanan.push(kod + ' → ' + p.stokKodu); continue; }
       await kaydet(p);
       basarili.push(p);
+      // Belgeler + MSA calismalari ayni islemde uretilir
+      mesaj(p.stokKodu + ' için belgeler ve MSA çalışmaları üretiliyor… (1–2 dk)');
+      try {
+        const satir = await belgeleriUret(p.stokKodu);
+        uretim.push(p.stokKodu + ': ' + satir.filter(x => /^[✓+]/.test(x)).length + ' belge/çalışma');
+        uretimAyrinti = uretimAyrinti.concat(satir);
+      } catch (err) {
+        uretim.push(p.stokKodu + ': belgeler üretilemedi — ' + err.message);
+      }
     } catch (err) { hatali.push(kod + ': ' + err.message); }
   }
   $('#uretBtn').disabled = false;
   await projeleriYukle(basarili.length ? basarili[0].id : null);
+  if (basarili.length) await kanitTazele();      // yeni belgeler adımlara bağlansın
   mesaj([
     basarili.length ? basarili.length + ' APQP oluşturuldu: ' + basarili.map(p => p.stokKodu).join(', ') : '',
+    uretim.length ? 'Belgeler: ' + uretim.join(' · ') : '',
     atlanan.length ? 'Atlandı (APQP&#39;si zaten var): ' + atlanan.join(', ') : '',
     hatali.length ? 'Üretilemeyen: ' + hatali.join(' | ') : '',
+    uretimAyrinti.length ? '<details><summary>ayrıntı</summary><pre style="white-space:pre-wrap;'
+      + 'font-size:11px;margin:6px 0 0">' + uretimAyrinti.join('\n').replace(/</g, '&lt;')
+      + '</pre></details>' : '',
   ].filter(Boolean).join('<br>'));
 });
 
@@ -856,6 +881,22 @@ async function kanitTazele() {
 }
 
 $('#yeniSuzgec').addEventListener('change', () => { gorunum = 'liste'; ciz(); });
+
+$('#belgeBtn').addEventListener('click', async () => {
+  if (!aktif) return;
+  $('#belgeBtn').disabled = true;
+  mesaj('Belgeler ve MSA çalışmaları üretiliyor… (1–2 dk, pencereyi kapatmayın)');
+  try {
+    const satir = await belgeleriUret(aktif.stokKodu);
+    await kanitTazele();
+    mesaj(satir.filter(x => /^[✓+]/.test(x)).length + ' belge/çalışma üretildi.'
+      + '<details><summary>ayrıntı</summary><pre style="white-space:pre-wrap;font-size:11px;'
+      + 'margin:6px 0 0">' + satir.join('\n').replace(/</g, '&lt;') + '</pre></details>');
+  } catch (err) {
+    mesaj('Üretilemedi: ' + err.message + ' (yerel ajan çalışıyor mu?)');
+  }
+  $('#belgeBtn').disabled = false;
+});
 
 $('#tazeleBtn').addEventListener('click', async () => {
   if (!aktif) return;

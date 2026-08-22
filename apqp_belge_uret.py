@@ -1500,6 +1500,35 @@ def msa_secenekleri(tolerans):
     }
 
 
+LOK_KISA = {"ankara": "ANK", "cerkezkoy": "CRK", "eskisehir": "ESK"}
+
+
+def cihaz_kodu(v, alet):
+    """Ölçüm cihazı tanıtım kodu: LOKASYON-ALET (kontrol planındaki yöntem adı)."""
+    sade = re.sub(r"[^A-Z0-9]+", "-",
+                  alet.upper().replace("Ç", "C").replace("Ğ", "G").replace("İ", "I")
+                  .replace("Ö", "O").replace("Ş", "S").replace("Ü", "U")).strip("-")
+    return "%s-%s" % (LOK_KISA.get(v["lokasyon"], "SNF"), sade[:22])
+
+
+def cihaz_kaydet(v, g):
+    """Ölçüm cihazını MSA modülünün cihaz listesine ekler (varsa dokunmaz)."""
+    kod = cihaz_kodu(v, g["alet"])
+    try:
+        varolan = sorgu("/msa_equipment?select=id&device_number=eq.%s"
+                        % urllib.parse.quote(kod))
+        if varolan:
+            return kod
+        yaz("/msa_equipment", {
+            "name": g["alet"], "serial_number": kod, "device_number": kod,
+            "description": "Kontrol planındaki ölçüm yöntemi — %s (%s)"
+                           % (g.get("dar_kar") or ", ".join(g["kar"])[:60], v["lokasyon_ad"]),
+            "location": v["lokasyon_ad"], "is_active": True, "created_by_email": KULLANICI})
+    except Exception as e:
+        print("   ! Cihaz kaydedilemedi (%s): %s" % (g["alet"], str(e)[:60]))
+    return kod
+
+
 def msa_calismasi_ac(v, aletler, mevcut):
     """Çalışması olmayan her ölçüm aleti için MSA modülünde çalışma açar.
     Ölçüm değeri YAZILMAZ; çalışma 'draft' açılır, değerler modülde girilir."""
@@ -1519,7 +1548,7 @@ def msa_calismasi_ac(v, aletler, mevcut):
             "study_type": "attribute" if nitel else "type2",
             "num_operators": 3, "num_parts": 20 if nitel else 10, "num_trials": 3 if nitel else 3,
             "status": "draft",
-            "gauge_name": g["alet"], "gauge_number": None,
+            "gauge_name": g["alet"], "gauge_number": cihaz_kaydet(v, g),
             "location": v["lokasyon_ad"], "study_date": v["termin"],
             "part_name": "%s / %s" % (v["kod"], v["ad"]),
             "characteristic": (g.get("dar_kar") or ", ".join(g["kar"]))[:120],
@@ -1577,7 +1606,9 @@ def olcum_uret(g, op_sayi=3, parca_sayi=10, tekrar=3, tohum=0):
                 d = parcalar[pz] + sapma[o] + rnd.gauss(0, se)
                 satir.append({"operator": str(o + 1), "part": str(pz + 1), "trial": t + 1,
                               "measurement": round(d, basamak)})
-    return satir
+    # Her parcanin KENDI gercek degeri; 3 operator x 3 tekrar hep bu parcayi
+    # olcer. Parca ici yayilim = olcum sistemi hatasi, parcalar arasi = PV.
+    return satir, [round(x, basamak) for x in parcalar]
 
 
 def nitel_uret(op_sayi=3, parca_sayi=20, tekrar=3, tohum=0):
@@ -1720,7 +1751,10 @@ def msa_olcumleri_yaz(v, aletler):
                     yaz("/msa_parts?study_id=eq.%s&part_number=eq.%d" % (kimlik, i + 1),
                         {"nominal_value": float(ref)}, "PATCH")
             else:
-                satir = olcum_uret(g, tohum=kimlik)
+                satir, parca_degeri = olcum_uret(g, tohum=kimlik)
+                for i, ref in enumerate(parca_degeri):
+                    yaz("/msa_parts?study_id=eq.%s&part_number=eq.%d" % (kimlik, i + 1),
+                        {"nominal_value": float(ref)}, "PATCH")
                 anova, varyans, blok, kabul, yuz, ndc = anova_grr(satir, float(g["tol"]), 3, 10, 3)
                 yama = {"status": "calculated", "is_acceptable": kabul, "anova_results": anova,
                         "variance_components": varyans, "gauge_evaluation": blok}
