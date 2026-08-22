@@ -706,6 +706,203 @@ def pl11(v, hedef):
     return len(liste)
 
 
+# ── FR228 Ambalaj Standardı Formu (docx) ─────────────────────────────────
+# Şablon kopyalanır, tablodaki ürün/müşteri alanları güncellenir. Yeni ürün
+# için ambalaj FOTOĞRAFI yoktur; şablondaki görseller kaldırılır, yerine
+# "fotoğraf eklenecek" notu yazılır (uydurma görsel konmaz).
+FR228_SABLON = "FR228 Ambalaj Standartı Formu.docx"
+
+
+def fr228(v, hedef):
+    import docx
+    kaynak = os.path.join(SABLON, FR228_SABLON)
+    d = docx.Document(kaynak)
+    if not d.tables:
+        return 0
+    t = d.tables[0]
+    rols = dict(v["ekip"])
+
+    def yaz(satir, sutun, deger):
+        try:
+            h = t.cell(satir, sutun)
+        except IndexError:
+            return
+        if h.paragraphs and h.paragraphs[0].runs:
+            h.paragraphs[0].runs[0].text = str(deger)
+            for r in h.paragraphs[0].runs[1:]:
+                r.text = ""
+        else:
+            h.text = str(deger)
+
+    # Şablondaki hücreleri metinlerinden bul (satır/sütun sabit varsayılmaz)
+    for r in range(len(t.rows)):
+        for c in range(len(t.columns)):
+            try:
+                metin = t.cell(r, c).text.strip()
+            except IndexError:
+                continue
+            if metin.startswith("Parça Adı"):
+                yaz(r, c + 1, v["ad"])
+            elif metin.startswith("Müşteri Adı"):
+                yaz(r, c + 1, v["musteri"])
+            elif metin.startswith("Parça No"):
+                yaz(r, c + 1, (v.get("musteriParca") or "") + " / " + v["kod"])
+            elif metin.startswith("Proje Adı"):
+                yaz(r, c + 1, "APQP " + v["kod"])
+            elif metin.startswith("Proje Sorumlusu"):
+                yaz(r, c + 1, rols.get("Üretim", ""))
+            elif metin in ("PROJE",):
+                yaz(r + 1, c, rols.get("AR&GE Proje Yöneticisi", ""))
+            elif metin in ("KALİTE", "KALITE"):
+                yaz(r + 1, c, rols.get("Kalite Güvence Müdürü", ""))
+            elif metin in ("ÜRETİM", "URETIM"):
+                yaz(r + 1, c, rols.get("Üretim", ""))
+
+    # Şablondaki ambalaj fotoğraflarını kaldır: bu ürüne ait değiller
+    silinen = 0
+    for sekil in list(d.inline_shapes):
+        try:
+            sekil._inline.getparent().remove(sekil._inline)
+            silinen += 1
+        except Exception:
+            pass
+    if silinen:
+        d.add_paragraph("NOT: Ambalaj fotoğrafları bu ürün için henüz çekilmemiştir; "
+                        "paketleme yapıldıktan sonra eklenecektir.")
+    d.save(hedef)
+    return 1
+
+
+# ── FR148 Değişiklik Yönetimi Formu ──────────────────────────────────────
+# AIAG APQP 3rd Ed. 1.15 (değişiklik yönetimi) ve 1.17 (risk değerlendirme)
+# bu formla karşılanıyor. Üretim yalnız başlığı ve ilk kaydı doldurur;
+# risk satırlarını ekip doldurur.
+FR148_SABLON = r"C:\Users\User\Desktop\IATF 16949 URS Denetim 14.08.2026 Ankara\FR148 Değişiklik Yönetimi Formu-TA.2022025-IZOLASYON.xlsx"
+
+
+def fr148(v, hedef):
+    if not os.path.exists(FR148_SABLON):
+        return 0
+    rols = dict(v["ekip"])
+    d = {
+        "B11": "APQP %s — %s" % (v["kod"], v["ad"]),
+        "B13": rols.get("AR&GE Proje Yöneticisi", ""),
+        "B14": v["devreye_baslangic"],
+        "B24": rols.get("Kalite Güvence Müdürü", ""),
+    }
+    hucre_yaz(FR148_SABLON, hedef, "xl/worksheets/sheet1.xml", d)
+    return 1
+
+
+# ── FR181 Öğrenilmiş Dersler ─────────────────────────────────────────────
+# Kayıt defteri ortaktır; ürünün KENDİ proseslerine/makinelerine değen
+# satırlar işaretlenerek kopyalanır (AIAG 5.4 "read across").
+FR181_SABLON = r"C:\Users\User\Desktop\IATF 16949 URS Denetim 14.08.2026 Ankara\FR181 Öğrenilmiş Dersler Lessons Learned.xlsx"
+
+
+def fr181(v, hedef):
+    if not os.path.exists(FR181_SABLON):
+        return 0
+    import openpyxl
+    from openpyxl.styles import PatternFill, Font
+    wb = openpyxl.load_workbook(FR181_SABLON)
+    ws = wb[wb.sheetnames[0]]
+    makineler = {met(r.get("makine_adi")).upper() for r in v["rota"] if met(r.get("makine_adi"))}
+    anahtar = set()
+    for m in makineler:
+        anahtar.update(x for x in re.split(r"[^A-ZÇĞİÖŞÜ0-9]+", m) if len(x) > 3)
+
+    ilgili = 0
+    sari = PatternFill("solid", fgColor="FFF2CC")
+    for r in range(8, ws.max_row + 1):
+        proses = met(ws.cell(r, 5).value).upper()
+        makine = met(ws.cell(r, 6).value).upper()
+        if not proses and not makine:
+            continue
+        if any(a in proses or a in makine for a in anahtar):
+            ilgili += 1
+            for c in range(1, 11):
+                ws.cell(r, c).fill = sari
+    ws.cell(6, 1, "Gözden Geçirme Tarihi : %s   |   %s (%s) için ilgili kayıtlar sarı işaretli (%d kayıt)"
+            % (datetime.date.today().strftime("%d.%m.%Y"), v["kod"], v["ad"][:30], ilgili)).font = Font(bold=True)
+    wb.save(hedef)
+    return ilgili or 1
+
+
+# ── FR91 APQP Takip Formu (ürün başlığıyla) ──────────────────────────────
+FR91_SABLON = "FR91 APQP-Takip Formu (AIAG 3rd Ed) ŞABLON.xlsx"
+
+
+def fr91(v, hedef):
+    kaynak = os.path.join(SABLON, FR91_SABLON)
+    if not os.path.exists(kaynak):
+        kaynak = os.path.join(SABLON, "FR91 APQP-Takip Formu 36.72010-6345.xlsx")
+    rols = dict(v["ekip"])
+    d = {"I6": (v.get("musteriParca") or v["ad"]) + " / " + v["kod"],
+         "F8": v["musteri"], "I10": v["devreye_baslangic"]}
+    # Ekip satırları (şablonda 14–20)
+    for i, (rol, ad) in enumerate(v["ekip"][:7]):
+        d["L%d" % (14 + i)] = ad
+    hucre_yaz(kaynak, hedef, "xl/worksheets/sheet1.xml", d)
+    return 1
+
+
+# ── APQP Program Metrikleri (şablon yok — AIAG 1.16) ─────────────────────
+# Bölüm bazlı kırmızı/sarı/yeşil durum. AIAG: "metrikler programın dürüst
+# durumunu yansıtmalı; kırmızı = başlamadı/gecikti, sarı = sürüyor,
+# yeşil = tamam."
+def program_metrikleri(v, hedef):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill
+
+    wb = Workbook(); ws = wb.active; ws.title = "Program Metrikleri"
+    ws.sheet_view.showGridLines = False
+    for h, g in zip("ABCDEF", (10, 52, 14, 14, 14, 30)):
+        ws.column_dimensions[h].width = g
+    kutu = antet(ws, "APQP PROGRAM METRİKLERİ", "FR91-M",
+                 datetime.date.today().strftime("%d.%m.%Y"), son_sutun=6)
+
+    for i, (e, dg) in enumerate([("Parça Kodu :", v["kod"]), ("Parça Adı :", v["ad"]),
+                                 ("Müşteri :", v["musteri"]), ("Lokasyon :", v["lokasyon_ad"]),
+                                 ("Devreye Alma :", v["devreye"])]):
+        c = ws.cell(6 + i, 1, e); c.font = Font(bold=True, size=10)
+        c.alignment = Alignment(horizontal="right")
+        ws.cell(6 + i, 2, dg)
+
+    ust = 12
+    for i, b in enumerate(["Bölüm", "Faz", "Adım", "Tamamlanan", "Durum", "Açıklama"]):
+        c = ws.cell(ust, 1 + i, b)
+        c.font = Font(bold=True, size=10, color="FFFFFF")
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.fill = PatternFill("solid", fgColor="1F3864"); c.border = kutu
+    renk = {"Yeşil": "C6EFCE", "Sarı": "FFEB9C", "Kırmızı": "FFC7CE"}
+    yazi = {"Yeşil": "006100", "Sarı": "9C6500", "Kırmızı": "9C0006"}
+
+    satir = ust + 1
+    for b in v["apqp_bolumler"]:
+        toplam, tamam = b["adim"], b["tamam"]
+        durum = "Yeşil" if toplam and tamam == toplam else ("Sarı" if tamam else "Kırmızı")
+        aciklama = {"Yeşil": "Tamamlandı", "Sarı": "Sürüyor",
+                    "Kırmızı": "Başlamadı / kanıt yok"}[durum]
+        for j, deger in enumerate([b["no"], b["ad"], toplam, tamam, durum, aciklama]):
+            c = ws.cell(satir, 1 + j, deger)
+            c.border = kutu; c.font = Font(size=10, bold=(j == 4), color=yazi[durum] if j == 4 else "000000")
+            c.alignment = Alignment(wrap_text=(j in (1, 5)), vertical="center",
+                                    horizontal="left" if j in (1, 5) else "center")
+            if j == 4:
+                c.fill = PatternFill("solid", fgColor=renk[durum])
+        ws.row_dimensions[satir].height = 22
+        satir += 1
+
+    ws.cell(satir + 1, 1, "AIAG APQP 3rd Ed. 1.16 — metrikler programın dürüst durumunu yansıtmalıdır. "
+                          "Kırmızı: başlamadı veya hedef kaçtı · Sarı: sürüyor · Yeşil: tamamlandı."
+            ).font = Font(size=8, italic=True, color="808080")
+    ws.merge_cells(start_row=satir + 1, start_column=1, end_row=satir + 1, end_column=6)
+    ws.page_setup.orientation = "landscape"
+    wb.save(hedef)
+    return len(v["apqp_bolumler"])
+
+
 # ── Türetilen alanlar ────────────────────────────────────────────────────
 def zenginlestir(v):
     v["lokasyon_ad"] = "Ankara" if v["lokasyon"] == "ankara" else "Çerkezköy"
@@ -785,7 +982,30 @@ def zenginlestir(v):
                          "kap": "", "gunluk": ""}
     v["kapasite_veri_yok"] = not any(x["darbogaz"] for x in satirlar)
     v["kapasite_satirlari"] = satirlar
+
+    # APQP bölüm özeti (Program Metrikleri için) — adım listesi apqp.html'deki
+    # FR91 verisinden okunur, tek kaynak orası.
+    v["apqp_bolumler"] = apqp_bolum_ozeti(v)
     return v
+
+
+def apqp_bolum_ozeti(v):
+    """apqp.html içindeki FR91 listesinden bölüm/adım sayıları; kanıtı ERP'den
+    gelen adımlar 'tamamlanan' sayılır."""
+    try:
+        h = io.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "apqp.html"),
+                    encoding="utf-8").read()
+        m = re.search(r"const FR91 = (\[.*?\]);", h, re.S)
+        bolumler = json.loads(m.group(1)) if m else []
+    except Exception:
+        bolumler = []
+    kanit = {"fmea": bool(v.get("fmea_not", "").startswith("P-FMEA mevcut")),
+             "plan": True, "opkart": bool(v["rota"]), "akis": True}
+    ozet = []
+    for b in bolumler:
+        tamam = sum(1 for a in b["adimlar"] if a.get("kanit") and kanit.get(a["kanit"]))
+        ozet.append({"no": b["no"], "ad": b["ad"], "adim": len(b["adimlar"]), "tamam": tamam})
+    return ozet
 
 
 def main():
@@ -841,6 +1061,17 @@ def main():
     n = uret("PL11 Onaylı Tedarikçi Listesi %s.xlsx" % kod, pl11, "PL11 Onaylı Tedarikçi Listesi")
     if n:
         print("   ✓ PL11 Onaylı Tedarikçi Listesi     (%d otomotiv tedarikçi, %s)" % (n, v["lokasyon_ad"]))
+
+    if uret("FR228 Ambalaj Standardı Formu %s.docx" % kod, fr228, "FR228 Ambalaj Standardı"):
+        print("   ✓ FR228 Ambalaj Standardı Formu     (fotoğraflar kaldırıldı — bu ürüne ait değil)")
+    if uret("FR148 Değişiklik Yönetimi Formu %s.xlsx" % kod, fr148, "FR148 Değişiklik Yönetimi"):
+        print("   ✓ FR148 Değişiklik Yönetimi Formu   (başlık dolduruldu, risk satırları ekipte)")
+    n = uret("FR181 Öğrenilmiş Dersler %s.xlsx" % kod, fr181, "FR181 Öğrenilmiş Dersler")
+    if n: print("   ✓ FR181 Öğrenilmiş Dersler          (%d ilgili kayıt işaretlendi)" % n)
+    if uret("FR91 APQP-Takip Formu %s.xlsx" % kod, fr91, "FR91 APQP Takip Formu"):
+        print("   ✓ FR91 APQP-Takip Formu             (77 adım, ürün başlığıyla)")
+    n = uret("APQP Program Metrikleri %s.xlsx" % kod, program_metrikleri, "APQP Program Metrikleri")
+    if n: print("   ✓ APQP Program Metrikleri           (%d bölüm, kırmızı/sarı/yeşil)" % n)
 
     n = uret("Kapasite Takip Formu %s.xlsx" % kod, kapasite, "Kapasite Takip Formu")
     if n: print("   ✓ Kapasite Takip Formu             (%d operasyon, darboğaz: %s / %s adet)"

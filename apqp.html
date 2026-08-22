@@ -30,8 +30,11 @@ td.durum{width:110px;text-align:center}
 .aiag3{font-size:11px;color:#1e40af;background:#dbeafe;border-radius:4px;padding:1px 5px;margin-left:4px}
 .form-ad{font-size:12px;color:var(--soluk)}
 a.dosya{color:#1d4ed8;text-decoration:none}a.dosya:hover{text-decoration:underline}
-a.ikon{color:#6b7280;text-decoration:none;font-size:12px;padding:0 2px}
-a.ikon:hover{color:#b91c1c}
+a.ikon{color:#6b7280;text-decoration:none;font-size:11px;padding:1px 5px;border:1px solid var(--kenar);border-radius:4px}
+a.ikon:hover{color:#1e3c72;border-color:#1e3c72}
+a.sil-dugme{color:#b91c1c;font-weight:700;font-size:11px;text-decoration:none;padding:1px 8px;
+  border:1px solid #f0a8a8;border-radius:4px;background:#fee2e2;white-space:nowrap}
+a.sil-dugme:hover{background:#b91c1c;color:#fff;border-color:#b91c1c}
 .gantt{overflow-x:auto}
 .gantt table{font-size:11px}
 .gantt td.hf{padding:0;height:20px;min-width:16px}
@@ -71,6 +74,7 @@ a.ikon:hover{color:#b91c1c}
     <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <button id="driveBtn">📁 Drive klasörünü aç</button>
       <button id="tazeleBtn">Kanıtları tazele</button>
+      <button id="adimBtn" title="FR91 listesine sonradan eklenen adımları bu kayda getirir; mevcut durum ve tarihler korunur">Adımları güncelle</button>
       <span style="font-size:12px;color:var(--soluk)" id="bDrive"></span>
     </div>
   </div>
@@ -431,8 +435,8 @@ function cizPano() {
       + '<td class="no">' + (p.devreyeAlma || '') + '</td>'
       + '<td class="durum">' + kanitli + ' / ' + hepsi.length + '</td>'
       + '<td class="durum">' + rozet(y) + '</td>'
-      + '<td class="durum"><a href="#" class="ikon" data-proje-sil="' + p.id
-      + '" title="Bu APQP kaydını sil">🗑</a></td>'
+      + '<td class="durum"><a href="#" class="sil-dugme" data-proje-sil="' + p.id
+      + '" title="Bu APQP kaydını sil">Sil</a></td>'
       + '</tr>';
   }).join('');
   $('#panoKart').innerHTML =
@@ -453,7 +457,7 @@ function cizTarihce() {
     '<tr>' + alan(i, 'rev', x.rev) + alan(i, 'tarih', x.tarih, 'type="date"')
     + alan(i, 'aciklama', x.aciklama) + alan(i, 'neden', x.neden)
     + alan(i, 'talep', x.talep) + alan(i, 'onay', x.onay)
-    + '<td class="durum"><a href="#" class="ikon" data-tarihce-sil="' + i + '" title="Satırı sil">🗑</a></td></tr>'
+    + '<td class="durum"><a href="#" class="sil-dugme" data-tarihce-sil="' + i + '" title="Satırı sil">Sil</a></td></tr>'
   ).join('');
   $('#tarihceKart').innerHTML =
     '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">'
@@ -482,8 +486,8 @@ function cizListe() {
             + (x.tur === 'drive' ? '📁 ' : '📄 ') + x.ad + '</a>';
           // Drive dokümanı düzenlenebilir/silinebilir; LeanSys dokümanına dokunulmaz
           const dugme = x.tur === 'drive'
-            ? ' <a href="#" class="ikon" data-ad="' + encodeURIComponent(x.yol) + '" title="Yeniden adlandır">✎</a>'
-              + ' <a href="#" class="ikon" data-sil="' + encodeURIComponent(x.yol) + '" title="Geri Dönüşüm Kutusu&#39;na taşı">🗑</a>'
+            ? ' <a href="#" class="ikon" data-ad="' + encodeURIComponent(x.yol) + '" title="Yeniden adlandır">ad değiştir</a>'
+              + ' <a href="#" class="sil-dugme" data-sil="' + encodeURIComponent(x.yol) + '" title="Geri Dönüşüm Kutusu&#39;na taşı">sil</a>'
             : '';
           parca.push(ac + dugme);
         }
@@ -658,6 +662,49 @@ $('#uretBtn').addEventListener('click', async () => {
 });
 
 $('#driveBtn').addEventListener('click', () => aktif && dosyaAc(driveKlasoru(aktif.stokKodu)));
+
+// FR91 listesi revize olduğunda eski kayıtlara eksik adımları getirir.
+// Mevcut adımların durumu, tarihleri ve kanıtları OLDUĞU GİBİ kalır.
+$('#adimBtn').addEventListener('click', async () => {
+  if (!aktif) return;
+  const son = aktif.devreyeAlma || bugun();
+  let eklenen = 0, yeniBolum = 0;
+  FR91.forEach(fb => {
+    let b = aktif.bolumler.find(x => x.no === fb.no);
+    if (!b) {
+      b = { no: fb.no, ad: fb.ad, adimlar: [] };
+      aktif.bolumler.push(b);
+      yeniBolum++;
+    }
+    fb.adimlar.forEach(fa => {
+      if (b.adimlar.some(x => x.no === fa.no)) return;
+      b.adimlar.push({
+        no: fa.no, ad: fa.ad, aiag: fa.aiag, sorumluluk: fa.sorumluluk,
+        prosedur: fa.prosedur, form: fa.form, kanit: fa.kanit || '', aiag3: fa.aiag3 || false,
+        bitis: gunEkle(son, -(TOPLAM_GUN - (FAZ[fb.no] || 56))),
+        tamamlanma: '', durum: 0, kanitlar: [],
+      });
+      eklenen++;
+    });
+    b.adimlar.sort((x, y) => {
+      const s1 = String(x.no).split('.'), s2 = String(y.no).split('.');
+      return (Number(s1[0]) - Number(s2[0])) || (Number(s1[1] || 0) - Number(s2[1] || 0));
+    });
+  });
+  aktif.bolumler.sort((x, y) => Number(x.no) - Number(y.no));
+  if (!eklenen) { mesaj('Kayıt zaten güncel — eklenecek adım yok.'); return; }
+  aktif.tarihce = (aktif.tarihce || []).concat([{
+    rev: String((aktif.tarihce || []).length), tarih: bugun(),
+    aciklama: eklenen + ' adım eklendi' + (yeniBolum ? ', ' + yeniBolum + ' yeni bölüm' : ''),
+    neden: 'FR91 listesi AIAG APQP 3rd Edition (Mart 2024) ile revize edildi',
+    talep: '', onay: '',
+  }]);
+  await kaydet(aktif);
+  await kanitTazele();      // yeni adımlara kanıt varsa bağlansın
+  ciz();
+  mesaj(eklenen + ' adım eklendi' + (yeniBolum ? ' (' + yeniBolum + ' yeni bölüm)' : '')
+    + '. Mevcut durum ve tarihler korundu.');
+});
 
 // Drive'a yeni dokuman eklenince adimlara yeniden baglanir (durum korunur:
 // elle %100 yapilmis adim geri alinmaz).
