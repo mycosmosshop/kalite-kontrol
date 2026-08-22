@@ -1028,6 +1028,113 @@ def program_metrikleri(v, hedef):
     return len(v["apqp_bolumler"])
 
 
+# ── FR176 Kalıp Doğrulama Formu ──────────────────────────────────────────
+FR176_SABLON = "FR176 Validation Form of Checking Fixture.xls"
+# Kalıplı üretim göstergesi makineler
+KALIPLI = re.compile(r"VARGEL|KP\s*[24]|PRES|KALIP|KESIM KALIB", re.I)
+
+
+def kalipli_mi(v):
+    """Rotada kalıplı üretim yapan makine var mı? (varsa makine adları)."""
+    mak = [met(r.get("makine_adi")) for r in v["rota"] if KALIPLI.search(met(r.get("makine_adi")))]
+    return list(dict.fromkeys(mak))
+
+
+def fr176_satirlari(v):
+    """Kalıpta doğrulanacak ölçüler: balonlu çizimden gelen tüm ölçüler,
+    yoksa kontrol planı karakteristikleri."""
+    satir = []
+    for no, k in olcusel_satirlar(v["kod"]):
+        alet = met(k.get("yontem"))
+        satir.append((no, k["ad"], k["nominal"], (k["ust"] - k["alt"]) / 2, alet))
+    return satir
+
+
+def fr176_kalip(v, hedef):
+    """FR176'yı Excel COM ile doldurur (şablon .xls)."""
+    import shutil
+    import subprocess
+    kaynak = os.path.join(SABLON, FR176_SABLON)
+    if not os.path.exists(kaynak):
+        return 0
+    makineler = kalipli_mi(v)
+    if not makineler:
+        return 0                       # kalıplı üretim yok, form gerekmez
+    satir = fr176_satirlari(v)
+    if not satir:
+        return 0
+    shutil.copy2(kaynak, hedef)
+    rolAd = dict((rol, ad) for rol, ad in v["ekip"])
+    hazir = rolAd.get("Kalite Mühendisi", "")
+    onay = rolAd.get("Kalite Güvence Müdürü", "")
+    musteriParca = met(v.get("musteriParca")) or v["ad"]
+    resim = "%s / %s" % (met(v.get("resim_no")) or v["resim"], met(v.get("resim_rev")) or "-")
+
+    def kacir(x):
+        return str(x).replace("'", "''")
+
+    veri = ";".join("%s|%s|%s|%s|%s" % (n, met(a).replace("|", "-")[:40],
+                                        ("%g" % d) if d is not None else "",
+                                        ("%g" % t) if t is not None else "",
+                                        met(al).replace("|", "-")[:24])
+                    for n, a, d, t, al in satir[:120])
+
+    betik = (
+        "$ErrorActionPreference='Stop'\n"
+        "$x=New-Object -ComObject Excel.Application; $x.Visible=$false; $x.DisplayAlerts=$false\n"
+        "try{\n"
+        "  $wb=$x.Workbooks.Open('" + kacir(hedef) + "')\n"
+        "  $ws=$wb.Worksheets.Item(1)\n"
+        "  $ws.Name='" + kacir(v["kod"])[:30] + "'\n"
+        "  $ws.Range('A5').Value2='Date: " + kacir(v["termin"]) + "'\n"
+        "  $ws.Range('D5').Value2='Customer: " + kacir(v["musteri"]) + "'\n"
+        "  $ws.Range('J5').Value2='Drawing /Rev No: " + kacir(resim) + "'\n"
+        "  $ws.Range('Q5').Value2='Sanifoam/Customer Part Number: " + kacir(v["kod"])
+        + " / " + kacir(musteriParca) + "'\n"
+        # Tek tirnakli PowerShell dizesinde `n kacisi CALISMAZ
+        "  $ws.Range('A18').Value2='" + kacir(hazir)
+        + "'+[char]10+'Quality Assurance Engineer'\n"
+        "  $ws.Range('R18').Value2='" + kacir(onay)
+        + "'+[char]10+'Quality Assurance Manager'\n"
+        "  $sat='" + kacir(veri) + "' -split ';'\n"
+        "  # Sablonda 10 veri satiri var (7-16); daha fazlasi icin satir eklenir\n"
+        "  $ilk=7; $mevcut=10\n"
+        "  if($sat.Count -gt $mevcut){\n"
+        "    $ek=$sat.Count-$mevcut\n"
+        "    $ws.Rows.Item(($ilk+$mevcut)).Resize($ek).Insert(-4121) | Out-Null\n"
+        "    $ws.Rows.Item($ilk+$mevcut-1).Copy() | Out-Null\n"
+        "    $ws.Rows.Item(($ilk+$mevcut)).Resize($ek).PasteSpecial(-4122) | Out-Null\n"
+        "    $x.CutCopyMode=0\n"
+        "  }\n"
+        # Sablondaki fazla veri satirlari (baska urunun olculeri) silinir
+        "  if($sat.Count -lt $mevcut){\n"
+        "    $ws.Rows.Item(($ilk+$sat.Count)).Resize($mevcut-$sat.Count).Delete() | Out-Null\n"
+        "  }\n"
+        "  for($i=0;$i -lt $sat.Count;$i++){\n"
+        "    $p=$sat[$i] -split [regex]::Escape('|')\n"
+        "    $r=$ilk+$i\n"
+        "    $ws.Cells.Item($r,1).Value2=$p[0]\n"
+        "    $ws.Cells.Item($r,2).Value2=$p[1]\n"
+        "    $ws.Cells.Item($r,7).Value2=$p[2]\n"
+        "    $ws.Cells.Item($r,13).Value2=$p[3]\n"
+        "    $ws.Cells.Item($r,18).Value2=$p[4]\n"
+        "  }\n"
+        "  $wb.Save(); $wb.Close($false)\n"
+        "  Write-Output ('{\"satir\":' + $sat.Count + '}')\n"
+        "} finally { $x.Quit(); [void][Runtime.InteropServices.Marshal]::ReleaseComObject($x) }\n")
+
+    try:
+        c = subprocess.run(["powershell", "-NoProfile", "-Command", betik],
+                           capture_output=True, text=True, timeout=300)
+        if any(x.strip().startswith("{") for x in c.stdout.splitlines()):
+            return len(satir)
+        print("   ! FR176 doldurulamadı:", (c.stderr or c.stdout).strip()[:90].replace("\n", " "))
+        return 0
+    except Exception as e:
+        print("   ! FR176 doldurulamadı:", str(e)[:80])
+        return 0
+
+
 # ── Alt tedarikçi PPAP ───────────────────────────────────────────────────
 SATIN_ALINAN = re.compile(r"\.(4|10)\.")     # ürün ağacındaki satın alınan malzeme kodları
 
@@ -3370,6 +3477,15 @@ def main():
     if n: print("   ✓ MSA Planı                         (%d ölçüm aleti)" % n)
     n = uret("FR86 Gage R&R %s.xlsx" % kod, fr86_gage_rr, "FR86 Gage R&R")
     if n: print("   ✓ FR86 Gage R&R                     (%d alet, formüller canlı — ölçüm girilecek)" % n)
+
+    mak = kalipli_mi(v)
+    if mak:
+        n = uret("FR176 Kalıp Doğrulama Formu %s.xls" % kod, fr176_kalip, "FR176 Kalıp Doğrulama")
+        if n:
+            print("   ✓ FR176 Kalıp Doğrulama Formu       (%d ölçü · kalıplı: %s)"
+                  % (n, ", ".join(mak)[:40]))
+    else:
+        print("   · FR176 Kalıp Doğrulama Formu       gerekmiyor (rotada kalıplı makine yok)")
 
     for kod_, ad_, ted, n_, nasil in alt_tedarikci_ppap(v, klasor, uret):
         print("   %s Alt Tedarikçi PPAP %-16s %-26s %s"

@@ -259,6 +259,9 @@ const DOSYA_ANAHTAR = [
    /yeterlilik|fr ?88|süreç potansiyeli|surec potansiyeli|cpk|varyasyonun azalt/i],
   // MAN'de kapak belgesi VDA_2 Anlagen; Mercedes'te ayri Cover Sheet var
   [/cover ?sheet|vda[ _]?2/i,                        /cover ?sheet|kapak|psw|part submission/i],
+  // FR176 kalip dogrulama: adim "kontrol mastarlari / fikstur" diye geciyor
+  [/fr ?176|kalıp doğrulama|kalip dogrulama/i,
+   /fr ?176|kalıp|kontrol mastar|fikstür|fikstur|checking fixture/i],
 ];
 
 // Klasordeki her dosya bu urune ait DEGIL: sablonlar ("FR90 Fizibilite
