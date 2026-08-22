@@ -176,45 +176,93 @@ def fr90(v, hedef):
     hucre_yaz(kaynak, hedef, "xl/worksheets/sheet1.xml", d)
 
 
+# ── Sanifoam antet blogu (kullanicinin kendi formlarindaki duzen) ────────
+# Sol: SaniFoam / SÜNGER SAN.TİC.A.Ş.  Orta: form adi  Sag: cerceveli
+# dokuman kutusu (DOK.NO / Y.TRH / REV.NO / SAYFA).
+def antet(ws, baslik, dok_no, y_trh, rev_no="00", sayfa="1 / 1", son_sutun=5):
+    from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    ince = Side(style="thin", color="7F7F7F")
+    kalin = Side(style="medium", color="404040")
+    kutu = Border(left=ince, right=ince, top=ince, bottom=ince)
+
+    sag_e = son_sutun - 1          # etiket sutunu
+    sag_d = son_sutun              # deger sutunu
+    orta_son = sag_e - 1
+
+    ws.merge_cells(start_row=1, start_column=1, end_row=3, end_column=1)
+    a = ws.cell(1, 1, "SaniFoam")
+    a.font = Font(size=20, bold=True, color="1F3864")
+    a.alignment = Alignment(horizontal="center", vertical="center")
+    ws.cell(4, 1, "SÜNGER SAN.TİC.A.Ş.").font = Font(size=8, color="595959")
+    ws.cell(4, 1).alignment = Alignment(horizontal="center")
+
+    ws.merge_cells(start_row=1, start_column=2, end_row=1, end_column=orta_son)
+    u = ws.cell(1, 2, "KALİTE YÖNETİM SİSTEMİ DOKÜMANTASYONU")
+    u.font = Font(size=9, color="595959"); u.alignment = Alignment(horizontal="center")
+
+    ws.merge_cells(start_row=2, start_column=2, end_row=4, end_column=orta_son)
+    b = ws.cell(2, 2, baslik)
+    b.font = Font(size=20, bold=True, color="1F3864")
+    b.alignment = Alignment(horizontal="center", vertical="center")
+
+    for i, (e, d) in enumerate([("DOK.NO", dok_no), ("Y.TRH", y_trh),
+                                ("REV.NO", rev_no), ("SAYFA", sayfa)]):
+        ce = ws.cell(1 + i, sag_e, e); cd = ws.cell(1 + i, sag_d, d)
+        ce.font = Font(size=9, bold=True); cd.font = Font(size=9)
+        ce.alignment = Alignment(horizontal="left", vertical="center")
+        cd.alignment = Alignment(horizontal="center", vertical="center")
+        ce.fill = PatternFill("solid", fgColor="F2F2F2")
+        ce.border = kutu; cd.border = kutu
+
+    for c in range(1, son_sutun + 1):          # antet alt cizgisi
+        ws.cell(4, c).border = Border(bottom=kalin)
+    ws.row_dimensions[1].height = 20
+    ws.row_dimensions[2].height = 20
+    ws.row_dimensions[3].height = 20
+    return kutu
+
+
 # ── FR81 Toplantı Tutanağı (şablon yok — Sanifoam antet düzeninde üretilir) ──
 # Konular APQP başlangıç toplantısının standart gündemi: altyapı/ekipman,
 # tedarikçi, şartname, teknik resim, benzer parça geçmişi, fizibilite.
 def fr81(v, hedef):
     from openpyxl import Workbook
-    from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
-    from openpyxl.utils import get_column_letter
+    from openpyxl.styles import Font, Alignment, PatternFill
 
-    ince = Side(style="thin", color="808080")
-    kenar = Border(left=ince, right=ince, top=ince, bottom=ince)
     wb = Workbook(); ws = wb.active; ws.title = "Toplantı Tutanağı"
-    for h, g in zip("ABCDE", (6, 62, 20, 14, 34)):
+    ws.sheet_view.showGridLines = False
+    for h, g in zip("ABCDE", (13, 58, 20, 14, 42)):
         ws.column_dimensions[h].width = g
 
-    ws["A1"] = "SaniFoam"; ws["A1"].font = Font(size=18, bold=True)
-    ws["B1"] = "TOPLANTI TUTANAĞI"
-    ws["B1"].font = Font(size=20, bold=True); ws["B1"].alignment = Alignment(horizontal="center")
-    ws["A2"] = "SÜNGER SAN.TİC.A.Ş."; ws["A2"].font = Font(size=8)
-    for i, (e, d) in enumerate([("DOK.NO", "FR 81"), ("Y.TRH", "01.09.2004"),
-                                ("REV.NO", "00"), ("SAYFA", "1 / 1")]):
-        ws.cell(1 + i, 4, e).font = Font(size=9, bold=True)
-        ws.cell(1 + i, 5, d).font = Font(size=9)
+    kutu = antet(ws, "TOPLANTI TUTANAĞI", "FR 81", "01.09.2004", son_sutun=5)
 
-    ws["A5"] = "TOPLANTI TARİHİ :"; ws["A5"].font = Font(bold=True)
-    ws["B5"] = v["devreye_baslangic"]
-    ws["C5"] = "TOPLANTI SAATİ :"; ws["C5"].font = Font(bold=True)
-    ws["D5"] = "14:00"
-    ws["A6"] = "KONU :"; ws["A6"].font = Font(bold=True)
-    ws["B6"] = "%s (%s) — APQP başlangıç / fizibilite değerlendirmesi" % (v["ad"], v["kod"])
-    ws["A7"] = "KATILIMCILAR :"; ws["A7"].font = Font(bold=True)
-    ws["B7"] = ", ".join("%s (%s)" % (ad, rol) for rol, ad in v["ekip"])
-    ws["B7"].alignment = Alignment(wrap_text=True, vertical="top")
-    ws.row_dimensions[7].height = 30
+    def alan(satir, etiket, deger, birlestir_son=None):
+        c = ws.cell(satir, 1, etiket)
+        c.font = Font(bold=True, size=10)
+        c.alignment = Alignment(horizontal="right", vertical="center")
+        d = ws.cell(satir, 2, deger)
+        d.alignment = Alignment(vertical="center", wrap_text=True)
+        if birlestir_son:
+            ws.merge_cells(start_row=satir, start_column=2, end_row=satir, end_column=birlestir_son)
+        return d
 
-    basliklar = ["NO", "KONU", "SORUMLU", "TERMİN", "AÇIKLAMA"]
-    for i, b in enumerate(basliklar):
-        c = ws.cell(9, 1 + i, b)
-        c.font = Font(bold=True); c.alignment = Alignment(horizontal="center")
-        c.fill = PatternFill("solid", fgColor="DCE6F1"); c.border = kenar
+    alan(6, "TOPLANTI TARİHİ :", v["devreye_baslangic"])
+    ws.cell(6, 3, "TOPLANTI SAATİ :").font = Font(bold=True, size=10)
+    ws.cell(6, 3).alignment = Alignment(horizontal="right")
+    ws.cell(6, 4, "14:00").alignment = Alignment(horizontal="center")
+    alan(7, "KONU :", "%s (%s) — APQP başlangıç / fizibilite değerlendirmesi" % (v["ad"], v["kod"]), 5)
+    k = alan(8, "KATILIMCILAR :", ", ".join("%s (%s)" % (ad, rol) for rol, ad in v["ekip"]), 5)
+    k.alignment = Alignment(wrap_text=True, vertical="top")
+    ws.row_dimensions[8].height = 34
+
+    for i, b in enumerate(["NO", "KONU", "SORUMLU", "TERMİN", "AÇIKLAMA"]):
+        c = ws.cell(10, 1 + i, b)
+        c.font = Font(bold=True, size=11, color="FFFFFF")
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.fill = PatternFill("solid", fgColor="1F3864"); c.border = kutu
+    ws.row_dimensions[10].height = 24
 
     hammadde = ", ".join(met(a.get("tuketim_kodu")) for a in v["agac"][:5]) or "ürün ağacında hammadde yok"
     makineler = ", ".join(sorted({met(r.get("makine_adi")) for r in v["rota"] if met(r.get("makine_adi"))})) or "—"
@@ -225,11 +273,11 @@ def fr81(v, hedef):
         ("Özel/kritik karakteristiklerin belirlenmesi",
          rolAd["Kalite Güvence Müdürü"], "Kontrol planındaki özel karakteristikler PFMEA'ya aktarılacak"),
         ("Altyapı, ekipman ve tesis yeterliliği değerlendirmesi",
-         rolAd["Üretim"], "Kullanılacak hat: %s" % makineler[:120]),
+         rolAd["Üretim"], "Kullanılacak hat: %s" % makineler[:150]),
         ("Ölçüm/test ekipmanı ve kalibrasyon ihtiyacı",
          rolAd["Kalite Mühendisi"], "Kontrol planındaki ölçüm yöntemleri için ekipman uygunluğu"),
         ("Hammadde ve alt tedarikçi durumu",
-         rolAd["Satın Alma"], "Ürün ağacı: %s — tedarikçiler onaylı tedarikçi listesinden seçilecek" % hammadde[:90]),
+         rolAd["Satın Alma"], "Ürün ağacı: %s — tedarikçiler onaylı tedarikçi listesinden seçilecek" % hammadde[:110]),
         ("Benzer/karşılaştırılabilir parça geçmişi",
          rolAd["AR&GE Proje Yöneticisi"], v["benzer"]),
         ("Kapasite değerlendirmesi (ilk)",
@@ -240,15 +288,24 @@ def fr81(v, hedef):
          rolAd["Kalite Güvence Müdürü"], "FR90 Fizibilite Taahhüdü ekip tarafından imzalanacak"),
     ]
     for i, (konu, sorumlu, aciklama) in enumerate(gundem):
-        r = 10 + i
+        r = 11 + i
         for j, deger in enumerate([i + 1, konu, sorumlu, v["termin"], aciklama]):
             c = ws.cell(r, 1 + j, deger)
-            c.border = kenar
+            c.border = kutu
+            c.font = Font(size=10)
             c.alignment = Alignment(wrap_text=True, vertical="center",
                                     horizontal="center" if j in (0, 2, 3) else "left")
-            if j == 1:
-                c.font = Font(size=10)
-        ws.row_dimensions[r].height = 32
+            if i % 2:
+                c.fill = PatternFill("solid", fgColor="F7F9FC")
+        ws.row_dimensions[r].height = 34
+
+    r = 11 + len(gundem) + 1
+    ws.cell(r, 1, "Kaynak: ERP ürün ağacı, operasyon kartı, kontrol planı ve stok dokümanları."
+            ).font = Font(size=8, italic=True, color="808080")
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=5)
+    ws.print_area = "A1:E%d" % r
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
     wb.save(hedef)
     return len(gundem)
 
@@ -258,55 +315,66 @@ def fr81(v, hedef):
 # hesaplanır. Darboğaz = en düşük vardiya kapasitesi olan operasyon.
 def kapasite(v, hedef):
     from openpyxl import Workbook
-    from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+    from openpyxl.styles import Font, Alignment, PatternFill
 
-    ince = Side(style="thin", color="808080")
-    kenar = Border(left=ince, right=ince, top=ince, bottom=ince)
     wb = Workbook(); ws = wb.active; ws.title = "Kapasite"
-    for h, g in zip("ABCDEFGH", (7, 34, 13, 13, 13, 13, 13, 26)):
+    ws.sheet_view.showGridLines = False
+    for h, g in zip("ABCDEFGH", (13, 34, 14, 11, 12, 15, 16, 46)):
         ws.column_dimensions[h].width = g
 
-    ws["A1"] = "SaniFoam"; ws["A1"].font = Font(size=16, bold=True)
-    ws["B1"] = "KAPASİTE TAKİP FORMU"
-    ws["B1"].font = Font(size=16, bold=True); ws["B1"].alignment = Alignment(horizontal="center")
-    for i, (e, d) in enumerate([("DOK.NO", "FR 24-K"), ("Y.TRH", datetime.date.today().strftime("%d.%m.%Y")),
-                                ("REV.NO", "00"), ("SAYFA", "1 / 1")]):
-        ws.cell(1 + i, 7, e).font = Font(size=9, bold=True)
-        ws.cell(1 + i, 8, d).font = Font(size=9)
+    kutu = antet(ws, "KAPASİTE TAKİP FORMU", "FR 24-K",
+                 datetime.date.today().strftime("%d.%m.%Y"), son_sutun=8)
 
-    for i, (e, d) in enumerate([("Parça Kodu:", v["kod"]), ("Parça Adı:", v["ad"]),
-                                ("Müşteri:", v["musteri"]), ("Lokasyon:", v["lokasyon_ad"]),
-                                ("Vardiya Süresi:", "%s %s (%.2f saat)" % (v["vardiya_sure"], v["birim"], v["vardiya_saat"]))]):
-        ws.cell(4 + i, 1, e).font = Font(bold=True)
-        ws.cell(4 + i, 2, d)
+    bilgi = [("Parça Kodu :", v["kod"]), ("Parça Adı :", v["ad"]),
+             ("Müşteri :", v["musteri"]), ("Lokasyon :", v["lokasyon_ad"]),
+             ("Vardiya Süresi :", "%s %s  (%.2f saat)" % (v["vardiya_sure"], v["birim"], v["vardiya_saat"]))]
+    for i, (e, d) in enumerate(bilgi):
+        c = ws.cell(6 + i, 1, e)
+        c.font = Font(bold=True, size=10); c.alignment = Alignment(horizontal="right")
+        ws.cell(6 + i, 2, d).alignment = Alignment(vertical="center")
 
+    ust = 12
     basliklar = ["Op", "Operasyon / Makine", "Std. Zaman (%s)" % v["birim"], "Personel",
-                 "Vardiya (%s)" % v["birim"], "Vardiya Kap. (adet)", "Günlük (3 vardiya)", "Not"]
+                 "Vardiya (%s)" % v["birim"], "Vardiya Kapasitesi (adet)",
+                 "Günlük (3 vardiya)", "Operasyon Talimatı"]
     for i, b in enumerate(basliklar):
-        c = ws.cell(10, 1 + i, b)
-        c.font = Font(bold=True, size=10); c.alignment = Alignment(horizontal="center", wrap_text=True)
-        c.fill = PatternFill("solid", fgColor="DCE6F1"); c.border = kenar
+        c = ws.cell(ust, 1 + i, b)
+        c.font = Font(bold=True, size=10, color="FFFFFF")
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        c.fill = PatternFill("solid", fgColor="1F3864"); c.border = kutu
+    ws.row_dimensions[ust].height = 30
 
-    satir = 11
+    satir = ust + 1
     for op in v["kapasite_satirlari"]:
         for j, deger in enumerate([op["op"], op["makine"], op["std"], op["personel"],
                                    op["sure"], op["kap"], op["gunluk"], op["not"]]):
             c = ws.cell(satir, 1 + j, deger)
-            c.border = kenar
-            c.alignment = Alignment(horizontal="center" if j != 1 and j != 7 else "left", wrap_text=True)
+            c.border = kutu; c.font = Font(size=10, bold=op["darbogaz"])
+            c.alignment = Alignment(wrap_text=(j in (1, 7)), vertical="center",
+                                    horizontal="left" if j in (1, 7) else "center")
             if op["darbogaz"]:
-                c.fill = PatternFill("solid", fgColor="FDE9D9")
-                c.font = Font(bold=True)
+                c.fill = PatternFill("solid", fgColor="FCE4D6")
+        ws.row_dimensions[satir].height = 44
         satir += 1
 
     satir += 1
-    ws.cell(satir, 1, "DARBOĞAZ").font = Font(bold=True)
-    ws.cell(satir, 2, v["darbogaz"]["makine"]).font = Font(bold=True)
-    ws.cell(satir, 6, v["darbogaz"]["kap"]).font = Font(bold=True)
-    ws.cell(satir, 7, v["darbogaz"]["gunluk"]).font = Font(bold=True)
-    ws.cell(satir, 8, "Hattın kapasitesi bu operasyonla sınırlıdır")
+    for j, deger in enumerate(["DARBOĞAZ", v["darbogaz"]["makine"], "", "", "",
+                               v["darbogaz"]["kap"], v["darbogaz"]["gunluk"],
+                               "Hattın kapasitesi bu operasyonla sınırlıdır"]):
+        c = ws.cell(satir, 1 + j, deger)
+        c.border = kutu; c.font = Font(bold=True, size=10, color="9C0006")
+        c.fill = PatternFill("solid", fgColor="FFC7CE")
+        c.alignment = Alignment(horizontal="left" if j in (1, 7) else "center",
+                                vertical="center", wrap_text=(j == 7))
+    ws.row_dimensions[satir].height = 26
+
     ws.cell(satir + 2, 1, "Kaynak: LeanSys operasyon kartı (std_zaman / kapasite / kapasite_sure). "
-                          "Kapasite = vardiya süresi ÷ standart zaman.").font = Font(size=9, italic=True)
+                          "Vardiya kapasitesi = vardiya süresi ÷ standart zaman."
+            ).font = Font(size=8, italic=True, color="808080")
+    ws.merge_cells(start_row=satir + 2, start_column=1, end_row=satir + 2, end_column=8)
+    ws.print_area = "A1:H%d" % (satir + 2)
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
     wb.save(hedef)
     return len(v["kapasite_satirlari"])
 
