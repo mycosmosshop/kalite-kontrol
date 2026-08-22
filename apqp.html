@@ -95,8 +95,6 @@ a.sil-dugme:hover{background:#b91c1c;color:#fff;border-color:#b91c1c}
       <button id="driveBtn">📁 Drive klasörünü aç</button>
       <button id="belgeBtn" title="Bu ürünün tüm APQP/PPAP belgelerini yeniden üretir: formlar, kontrol planı, FMEA Excel, MSA ve Cp/Cpk çalışmaları, müşteri PPAP dokümanları">📄 Belgeleri üret</button>
       <button id="tazeleBtn" title="Belge ürettikten sonra basın: Drive'daki yeni dokümanları adımlara bağlar ve FR91'e sonradan eklenen adımları getirir. Kayıt açılırken zaten kendiliğinden çalışır.">🔄 Yenile</button>
-      <label style="font-size:12px;display:inline-flex;align-items:center;gap:4px;margin-left:8px" title="AIAG APQP 3rd Edition (Mart 2024) ile eklenen 14 madde bölümlerin SONUNDA durur; bu kutu yalnız onları gösterir">
-        <input type="checkbox" id="yeniSuzgec"> Yalnız yeni maddeler (AIAG 3rd Ed.)</label>
       <span style="font-size:12px;color:var(--soluk)" id="bDrive"></span>
     </div>
   </div>
@@ -607,12 +605,9 @@ function cizTarihce() {
 function cizListe() {
   let h = '<table><thead><tr><th>No</th><th>Adım</th><th>AIAG</th><th>Sorumluluk</th>'
     + '<th>Prosedür</th><th>Form / Doküman</th><th>Bitiş</th><th>Tamamlanma</th><th>Durum</th></tr></thead><tbody>';
-  const yalnizYeni = $('#yeniSuzgec') && $('#yeniSuzgec').checked;
   aktif.bolumler.forEach(b => {
-    const adimlar = yalnizYeni ? b.adimlar.filter(a => a.aiag3) : b.adimlar;
-    if (!adimlar.length) return;
     h += '<tr class="bolum"><td class="no">' + b.no + '</td><td colspan="8">' + b.ad + '</td></tr>';
-    adimlar.forEach(a => {
+    b.adimlar.forEach(a => {
       const parca = ['<span class="form-ad">' + (a.form || '—') + '</span>'];
       (a.kanitlar || []).forEach(x => {
         if (x.tur === 'erp') parca.push('<a class="dosya" href="' + x.adres + '" target="_blank" title="ERP modülü">🔗 ' + x.ad + '</a>');
@@ -1036,8 +1031,6 @@ async function kanitTazele() {
   await kaydet(aktif); ciz();
   return dusen;
 }
-
-$('#yeniSuzgec').addEventListener('change', () => { gorunum = 'liste'; ciz(); });
 
 $('#belgeBtn').addEventListener('click', async () => {
   if (!aktif) return;
