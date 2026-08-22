@@ -767,24 +767,24 @@ async function projeSil(id, kayit) {
   const klasor = kayit ? driveKlasoru(kayit.stokKodu) : '';
   // TEK uyari: kayit VE Drive klasoru birlikte gider. Klasor kalici
   // SILINMEZ, Geri Donusum Kutusu'na tasinir (geri alinabilir).
-  if (!confirm(kod + ' APQP kaydı silinsin mi?
-
-Drive klasörü de kaldırılacak:
-'
-      + klasor + '
-
-Geri Dönüşüm Kutusu&#39;na taşınır, geri alınabilir.')) return;
+  if (!confirm(kod + ' APQP kaydı silinsin mi?' + '\n\n'
+      + 'Drive klasörü de kaldırılacak:\n' + klasor + '\n\n'
+      + 'Geri Dönüşüm Kutusu\u2019na taşınır, geri alınabilir.')) return;
   const r = await sb.from('apqp_projeler').delete().eq('id', id);
   if (r.error) { mesaj('Kayıt silinemedi: ' + r.error.message); return; }
   let ek = '';
   if (klasor) {
-    try { await dosyaYonet('sil', klasor); ek = ' Drive klasörü Geri Dönüşüm Kutusu&#39;na taşındı.'; }
-    catch (err) { ek = ' Drive klasörü kaldırılamadı: ' + err.message; }
+    try {
+      await dosyaYonet('sil', klasor);
+      ek = ' Drive klasörü Geri Dönüşüm Kutusu&#39;na taşındı.';
+    } catch (err) { ek = ' Drive klasörü kaldırılamadı: ' + err.message; }
   }
   aktif = null;
   await projeleriYukle(null);
   mesaj(kod + ' APQP kaydı silindi.' + ek);
 }
+
+
 
 
 
