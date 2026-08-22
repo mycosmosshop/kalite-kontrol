@@ -1505,116 +1505,279 @@ def msa_plani(v, hedef):
 
 
 def fr86_gage_rr(v, hedef):
-    """FR86 Gage R&R: her ölçüm aleti için ayrı sayfa, ölçüm hücreleri BOŞ,
-    EV/AV/GRR/PV/ndc formülleri canlı — operatör ölçünce sonuç kendiliğinden çıkar."""
+    """FR86 Gage R&R — her ölçüm aleti için ayrı sayfa. Ölçüm hücreleri BOŞ;
+    EV/AV/GRR/PV/TV/%GRR/ndc AIAG MSA 4. Baskı ortalama-aralık yöntemiyle
+    canlı formüllüdür, operatör ölçünce sonuç kendiliğinden çıkar.
+    Nitel aletler için Type-3 nitelik uyum sayfası üretilir."""
     from openpyxl import Workbook
-    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.styles import Font, Alignment, PatternFill
     from openpyxl.utils import get_column_letter
 
-    aletler = [g for g in msa_aletleri(v["kod"]) if not g["nitel"]]
-    if not aletler:
+    hepsi = msa_aletleri(v["kod"])
+    olcum = [g for g in hepsi if not g["nitel"]]
+    nitel = [g for g in hepsi if g["nitel"]]
+    if not hepsi:
         return 0
     wb = Workbook(); wb.remove(wb.active)
-    ince = Side(style="thin", color="808080")
-    kutu = Border(top=ince, bottom=ince, left=ince, right=ince)
     rolAd = dict((rol, ad) for rol, ad in v["ekip"])
     OPS, PARCA, TEKRAR = 3, 10, 3
+    # AIAG MSA 4. Baskı K katsayıları (6σ, d2* tablosundan)
+    K1 = {2: 0.8862, 3: 0.5908}[TEKRAR]      # tekrarlanabilirlik
+    K2 = {2: 0.7071, 3: 0.5231}[OPS]         # tekrar üretilebilirlik
+    K3 = {5: 0.4030, 10: 0.3146}[PARCA]      # parça değişkenliği
+    SUT = lambda i: get_column_letter(i)
 
-    for g in aletler:
-        ad = re.sub(r"[\\/*?:\[\]]", "-", g["alet"])[:28]
-        ws = wb.create_sheet(ad)
+    def sayfa_basligi(ws, g, baslik, dok):
         ws.sheet_view.showGridLines = False
-        for h, gen in zip("ABCDEFGHIJKL", (10, 16, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9)):
-            ws.column_dimensions[h].width = gen
-
-        antet(ws, "GAGE R&R (ÖLÇÜM SİSTEMİ ANALİZİ)", "FR 86",
-              "02.01.2025", "0", "1 / 1", 12)
+        antet(ws, baslik, dok, "02.01.2025", "0", "1 / 1", 13)
         r = 6
         for etiket, deger in (("Ürün :", "%s — %s" % (v["kod"], v["ad"])),
                               ("Ölçüm Aleti :", g["alet"]),
-                              ("Karakteristik :", g.get("dar_kar", ", ".join(g["kar"])[:60])),
-                              ("Tolerans :", "%s  (aralık %g)" % (g.get("dar_limit", "—"), g["tol"])),
+                              ("Karakteristik :", g.get("dar_kar") or ", ".join(g["kar"])[:70]),
+                              ("Tolerans :", "%s   (aralık %g)" % (g.get("dar_limit", "—"), g["tol"])
+                               if g.get("tol") else "Nitel — kabul/ret"),
                               ("Sorumlu :", rolAd.get("Kalite Mühendisi", "")),
                               ("Tarih :", v["termin"])):
             e = ws.cell(r, 1, etiket); e.font = Font(bold=True, size=10)
             e.alignment = Alignment(horizontal="right")
             ws.cell(r, 2, deger).alignment = Alignment(vertical="center")
-            ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=12)
+            ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=13)
             r += 1
-        r += 1
+        return r + 1
 
-        # Ölçüm ızgarası: satır = operatör × tekrar, sütun = parça
-        bas = r
-        h = ws.cell(r, 1, "Operatör"); h2 = ws.cell(r, 2, "Tekrar")
-        for c in (h, h2):
-            c.font = Font(bold=True, size=9, color="FFFFFF")
-            c.fill = PatternFill("solid", fgColor="1F3864"); c.border = kutu
-            c.alignment = Alignment(horizontal="center", vertical="center")
+    def baslik_hucre(ws, r, c, metin, genis=1):
+        h = ws.cell(r, c, metin)
+        h.font = Font(bold=True, size=9, color="FFFFFF")
+        h.fill = PatternFill("solid", fgColor="1F3864")
+        h.border = kutu_ince
+        h.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        for cc in range(c, c + genis):
+            ws.cell(r, cc).border = kutu_ince
+            ws.cell(r, cc).fill = PatternFill("solid", fgColor="1F3864")
+        if genis > 1:
+            ws.merge_cells(start_row=r, start_column=c, end_row=r, end_column=c + genis - 1)
+
+    from openpyxl.styles import Border, Side
+    _i = Side(style="thin", color="808080")
+    kutu_ince = Border(top=_i, bottom=_i, left=_i, right=_i)
+
+    # ── Ölçüm aletleri: Type-2 Gage R&R (ANOVA yerine ortalama-aralık) ────
+    for g in olcum:
+        ad = re.sub(r"[\\/*?:\[\]]", "-", g["alet"])[:28]
+        ws = wb.create_sheet(ad)
+        for h, gen in zip("ABCDEFGHIJKLM", (11, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 11)):
+            ws.column_dimensions[h].width = gen
+        r = sayfa_basligi(ws, g, "GAGE R&R (ÖLÇÜM SİSTEMİ ANALİZİ)", "FR 86")
+
+        baslik_hucre(ws, r, 1, "Operatör"); baslik_hucre(ws, r, 2, "Tekrar")
         for pz in range(PARCA):
-            c = ws.cell(r, 3 + pz, "Parça %d" % (pz + 1))
-            c.font = Font(bold=True, size=9, color="FFFFFF")
-            c.fill = PatternFill("solid", fgColor="1F3864"); c.border = kutu
-            c.alignment = Alignment(horizontal="center", vertical="center")
+            baslik_hucre(ws, r, 3 + pz, "Parça %d" % (pz + 1))
+        baslik_hucre(ws, r, 3 + PARCA, "Ortalama")
         r += 1
         op_bas = r
+        op_ort = []                                  # her operatörün ortalama hücresi
         for o in range(OPS):
             for t in range(TEKRAR):
-                ws.cell(r, 1, "Operatör %s" % chr(65 + o) if t == 0 else None)
-                ws.cell(r, 2, t + 1).alignment = Alignment(horizontal="center")
+                c1 = ws.cell(r, 1, "Operatör %s" % chr(65 + o) if t == 0 else None)
+                c1.font = Font(bold=True, size=9)
+                c1.alignment = Alignment(horizontal="center", vertical="center")
+                c1.border = kutu_ince
+                c2 = ws.cell(r, 2, t + 1)
+                c2.alignment = Alignment(horizontal="center"); c2.border = kutu_ince
                 for pz in range(PARCA):
                     c = ws.cell(r, 3 + pz)
-                    c.border = kutu; c.number_format = "0.000"
-                    c.fill = PatternFill("solid", fgColor="FFFDE7")   # doldurulacak alan
-                ws.cell(r, 1).border = kutu; ws.cell(r, 2).border = kutu
-                ws.cell(r, 1).font = Font(bold=True, size=9)
-                ws.cell(r, 1).alignment = Alignment(horizontal="center", vertical="center")
+                    c.border = kutu_ince; c.number_format = "0.000"
+                    c.fill = PatternFill("solid", fgColor="FFFDE7")   # doldurulacak
+                ws.cell(r, 3 + PARCA).border = kutu_ince
                 r += 1
+            blok = "%s%d:%s%d" % (SUT(3), r - TEKRAR, SUT(2 + PARCA), r - 1)
+            h = ws.cell(r - TEKRAR, 3 + PARCA, "=IFERROR(AVERAGE(%s),\"\")" % blok)
+            h.number_format = "0.000"; h.font = Font(bold=True, size=9)
+            h.alignment = Alignment(horizontal="center", vertical="center")
             ws.merge_cells(start_row=r - TEKRAR, start_column=1, end_row=r - 1, end_column=1)
-        son = r - 1
+            ws.merge_cells(start_row=r - TEKRAR, start_column=3 + PARCA, end_row=r - 1,
+                           end_column=3 + PARCA)
+            op_ort.append("%s%d" % (SUT(3 + PARCA), r - TEKRAR))
+        grid_son = r - 1
+        tum = "%s%d:%s%d" % (SUT(3), op_bas, SUT(2 + PARCA), grid_son)
 
-        # Hesap bloğu — AIAG MSA ortalama-aralık yöntemi, formüller canlı
+        # Aralık bloğu: her operatör × parça için (maks − min)
         r += 1
-        d2 = {2: 1.128, 3: 1.693}          # tekrar sayısına göre d2*
-        alan = "C%d:%s%d" % (op_bas, get_column_letter(2 + PARCA), son)
+        baslik_hucre(ws, r, 1, "Aralık (R)", 2)
+        for pz in range(PARCA):
+            baslik_hucre(ws, r, 3 + pz, "Parça %d" % (pz + 1))
+        r += 1
+        rng_bas = r
+        for o in range(OPS):
+            e = ws.cell(r, 1, "Operatör %s" % chr(65 + o))
+            e.font = Font(bold=True, size=9); e.border = kutu_ince
+            ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=2)
+            ws.cell(r, 2).border = kutu_ince
+            for pz in range(PARCA):
+                sut = SUT(3 + pz)
+                ilk = op_bas + o * TEKRAR
+                c = ws.cell(r, 3 + pz, "=IFERROR(MAX(%s%d:%s%d)-MIN(%s%d:%s%d),\"\")"
+                            % (sut, ilk, sut, ilk + TEKRAR - 1, sut, ilk, sut, ilk + TEKRAR - 1))
+                c.number_format = "0.000"; c.border = kutu_ince
+                c.alignment = Alignment(horizontal="center")
+            r += 1
+        rng_son = r - 1
+        # Parça ortalamaları (PV için)
+        e = ws.cell(r, 1, "Parça ortalaması")
+        e.font = Font(bold=True, size=9); e.border = kutu_ince
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=2)
+        ws.cell(r, 2).border = kutu_ince
+        for pz in range(PARCA):
+            sut = SUT(3 + pz)
+            c = ws.cell(r, 3 + pz, "=IFERROR(AVERAGE(%s%d:%s%d),\"\")"
+                        % (sut, op_bas, sut, grid_son))
+            c.number_format = "0.000"; c.border = kutu_ince
+            c.alignment = Alignment(horizontal="center")
+        pavg = r
+        r += 2
+
+        # Hesap bloğu — AIAG MSA 4. Baskı, 6σ
+        rbar = "AVERAGE(%s%d:%s%d)" % (SUT(3), rng_bas, SUT(2 + PARCA), rng_son)
+        xdiff = "MAX(%s)-MIN(%s)" % (",".join(op_ort), ",".join(op_ort))
+        rp = "MAX(%s%d:%s%d)-MIN(%s%d:%s%d)" % (SUT(3), pavg, SUT(2 + PARCA), pavg,
+                                                SUT(3), pavg, SUT(2 + PARCA), pavg)
         hesap = [
-            ("Ölçüm sayısı", "=COUNT(%s)" % alan, "0"),
-            ("R-bar (tekrarlar ortalama aralığı)",
-             "=IFERROR(AVERAGE(%s)-AVERAGE(%s),\"\")" % (
-                 "MAX(%s)" % alan, "MIN(%s)" % alan), "0.0000"),
-            ("EV — Tekrarlanabilirlik (5,15σ)", "=IFERROR(5.15*STDEV(%s)/%g,\"\")" % (alan, d2[3]), "0.0000"),
-            ("AV — Tekrar üretilebilirlik (5,15σ)",
-             "=IFERROR(5.15*STDEV(%s)*0.3,\"\")" % alan, "0.0000"),
-            ("GRR = KAREKÖK(EV²+AV²)", None, "0.0000"),
+            ("Ölçüm sayısı (hedef %d)" % (OPS * PARCA * TEKRAR), "=COUNT(%s)" % tum, "0"),
+            ("R̄  — ortalama aralık", "=IFERROR(%s,\"\")" % rbar, "0.0000"),
+            ("X̄diff — operatör ortalamaları farkı", "=IFERROR(%s,\"\")" % xdiff, "0.0000"),
+            ("Rp — parça ortalamaları aralığı", "=IFERROR(%s,\"\")" % rp, "0.0000"),
+            ("EV = R̄ × K1  (K1=%.4f)" % K1, None, "0.0000"),
+            ("AV = √((X̄diff×K2)² − EV²/(n·r))  (K2=%.4f)" % K2, None, "0.0000"),
+            ("GRR = √(EV² + AV²)", None, "0.0000"),
+            ("PV = Rp × K3  (K3=%.4f)" % K3, None, "0.0000"),
+            ("TV = √(GRR² + PV²)", None, "0.0000"),
             ("Tolerans", "=%g" % g["tol"], "0.0000"),
-            ("%GRR (tolerans bazlı)", None, "0.0%"),
-            ("ndc = 1,41 × (PV/GRR)", None, "0.0"),
+            ("%GRR (toleransa göre)", None, "0.0%"),
+            ("%GRR (TV'ye göre)", None, "0.0%"),
+            ("ndc = 1,41 × PV / GRR", None, "0.0"),
             ("SONUÇ", None, "@"),
         ]
         hbas = r
-        for i, (etiket, formul, bicim) in enumerate(hesap):
+        for etiket, formul, bicim in hesap:
             e = ws.cell(r, 1, etiket)
-            e.font = Font(bold=True, size=9); e.border = kutu
+            e.font = Font(bold=True, size=9); e.border = kutu_ince
             e.alignment = Alignment(horizontal="left", vertical="center")
-            ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=4)
-            c = ws.cell(r, 5, formul)
-            c.border = kutu; c.number_format = bicim
-            c.alignment = Alignment(horizontal="center", vertical="center")
+            ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=5)
+            for cc in range(1, 6):
+                ws.cell(r, cc).border = kutu_ince
+            c = ws.cell(r, 6, formul)
+            c.border = kutu_ince; c.number_format = bicim
             c.font = Font(bold=True, size=9)
+            c.alignment = Alignment(horizontal="center", vertical="center")
             r += 1
-        # Birbirine bağlı formüller (satır numarası belli olduktan sonra)
-        ws.cell(hbas + 4, 5, "=IFERROR(SQRT(E%d^2+E%d^2),\"\")" % (hbas + 2, hbas + 3))
-        ws.cell(hbas + 6, 5, "=IFERROR(E%d/E%d,\"\")" % (hbas + 4, hbas + 5))
-        ws.cell(hbas + 7, 5, "=IFERROR(1.41*(STDEV(%s)/E%d),\"\")" % (alan, hbas + 4))
-        ws.cell(hbas + 8, 5, '=IF(E%d="","ölçüm bekleniyor",IF(E%d<=0.1,"KABUL (%%GRR ≤ %%10)",'
-                             'IF(E%d<=0.3,"ŞARTLI KABUL (%%10–30) — iyileştir","RED (%%GRR > %%30)")))'
-                % (hbas + 6, hbas + 6, hbas + 6))
-        ws.cell(r + 1, 1, "Sarı hücrelere ölçüm değerleri girilir; EV/AV/GRR/%GRR/ndc ve sonuç "
-                          "kendiliğinden hesaplanır. Kabul: %GRR ≤ %10, ndc ≥ 5 (AIAG MSA 4. Baskı)."
+        F = lambda i: "F%d" % (hbas + i)
+        ws[F(4)] = "=IFERROR(%s*%.4f,\"\")" % (F(1), K1)
+        ws[F(5)] = ("=IFERROR(SQRT(MAX(0,(%s*%.4f)^2-(%s^2/%d))),\"\")"
+                    % (F(2), K2, F(4), PARCA * TEKRAR))
+        ws[F(6)] = "=IFERROR(SQRT(%s^2+%s^2),\"\")" % (F(4), F(5))
+        ws[F(7)] = "=IFERROR(%s*%.4f,\"\")" % (F(3), K3)
+        ws[F(8)] = "=IFERROR(SQRT(%s^2+%s^2),\"\")" % (F(6), F(7))
+        ws[F(10)] = "=IFERROR(%s/%s,\"\")" % (F(6), F(9))
+        ws[F(11)] = "=IFERROR(%s/%s,\"\")" % (F(6), F(8))
+        ws[F(12)] = "=IFERROR(1.41*%s/%s,\"\")" % (F(7), F(6))
+        # Karar, toleransa ve toplam degiskenlige gore %GRR'lerin KOTUSUNE
+        # baglidir; yalniz toleransa bakmak olcum sistemini iyi gosterebilir.
+        kotu = "MAX(%s,%s)" % (F(10), F(11))
+        ws[F(13)] = ('=IF(%s<%d,"ölçüm bekleniyor ("&%s&"/%d)",'
+                     'IF(AND(%s<=0.1,%s>=5),"KABUL — %%GRR ≤ %%10 ve ndc ≥ 5",'
+                     'IF(%s<=0.3,"ŞARTLI KABUL — %%10–30, iyileştirme gerekli",'
+                     '"RED — %%GRR > %%30, ölçüm sistemi yetersiz")))'
+                     % (F(0), OPS * PARCA * TEKRAR, F(0), OPS * PARCA * TEKRAR,
+                        kotu, F(12), kotu))
+        ws.cell(r + 1, 1, "Sarı hücrelere ölçüm değerleri girilir (10 parça, 3 operatör, 3 tekrar; "
+                          "parçalar proses değişkenliğini temsil etmeli, sıra karıştırılmalı). "
+                          "Kabul: %GRR ≤ %10 ve ndc ≥ 5 — AIAG MSA 4. Baskı, ortalama-aralık yöntemi."
                 ).font = Font(size=8, italic=True, color="808080")
-        ws.merge_cells(start_row=r + 1, start_column=1, end_row=r + 1, end_column=12)
+        ws.merge_cells(start_row=r + 1, start_column=1, end_row=r + 1, end_column=13)
         ws.page_setup.orientation = "landscape"
+
+    # ── Nitel aletler: Type-3 nitelik uyum analizi (kappa) ────────────────
+    NP = 30
+    for g in nitel:
+        ad = ("N-" + re.sub(r"[\\/*?:\[\]]", "-", g["alet"]))[:28]
+        ws = wb.create_sheet(ad)
+        for h, gen in zip("ABCDEFGHI", (8, 14, 10, 10, 10, 10, 10, 10, 14)):
+            ws.column_dimensions[h].width = gen
+        r = sayfa_basligi(ws, g, "NİTELİK UYUM ANALİZİ (ATTRIBUTE MSA)", "FR 86-N")
+
+        basliklar = ["Parça", "Referans\n(OK/NOK)", "A-1", "A-2", "B-1", "B-2", "C-1", "C-2",
+                     "Uyum"]
+        for i, b in enumerate(basliklar):
+            baslik_hucre(ws, r, 1 + i, b)
+        ws.row_dimensions[r].height = 28
+        r += 1
+        vbas = r
+        for i in range(NP):
+            ws.cell(r, 1, i + 1).alignment = Alignment(horizontal="center")
+            for c in range(1, 9):
+                h = ws.cell(r, c)
+                h.border = kutu_ince
+                h.alignment = Alignment(horizontal="center")
+                if c >= 2:
+                    h.fill = PatternFill("solid", fgColor="FFFDE7")
+            # Tum degerlendirmeler referansla ayni mi?
+            ws.cell(r, 9, '=IF(COUNTA(C%d:H%d)<6,"",IF(COUNTIF(C%d:H%d,B%d)=6,1,0))'
+                    % (r, r, r, r, r)).border = kutu_ince
+            ws.cell(r, 9).alignment = Alignment(horizontal="center")
+            r += 1
+        vson = r - 1
+        r += 1
+        ikili = [("A", "C", "D"), ("B", "E", "F"), ("C", "G", "H")]
+        hesap = [("Değerlendirilen parça sayısı", "=COUNT(I%d:I%d)" % (vbas, vson), "0")]
+        for kim, s1, s2 in ikili:
+            hesap.append(("Kontrolör %s — kendi içinde uyum" % kim,
+                          '=IFERROR(SUMPRODUCT(--(%s%d:%s%d=%s%d:%s%d))/COUNTA(%s%d:%s%d),"")'
+                          % (s1, vbas, s1, vson, s2, vbas, s2, vson, s1, vbas, s1, vson), "0.0%"))
+        for kim, s1, s2 in ikili:
+            hesap.append(("Kontrolör %s — referansa uyum" % kim,
+                          '=IFERROR((SUMPRODUCT(--(%s%d:%s%d=B%d:B%d))+SUMPRODUCT(--(%s%d:%s%d=B%d:B%d)))'
+                          '/(2*COUNTA(B%d:B%d)),"")'
+                          % (s1, vbas, s1, vson, vbas, vson, s2, vbas, s2, vson, vbas, vson,
+                             vbas, vson), "0.0%"))
+        hesap += [
+            ("Tüm kontrolörler + referans tam uyum (Po)",
+             '=IFERROR(AVERAGE(I%d:I%d),"")' % (vbas, vson), "0.0%"),
+            ("Beklenen uyum (Pe)", None, "0.0%"),
+            ("Kappa = (Po − Pe) / (1 − Pe)", None, "0.000"),
+            ("SONUÇ", None, "@"),
+        ]
+        hbas = r
+        for etiket, formul, bicim in hesap:
+            e = ws.cell(r, 1, etiket)
+            e.font = Font(bold=True, size=9); e.border = kutu_ince
+            e.alignment = Alignment(horizontal="left", vertical="center")
+            ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=6)
+            for cc in range(1, 7):
+                ws.cell(r, cc).border = kutu_ince
+            c = ws.cell(r, 7, formul)
+            c.border = kutu_ince; c.number_format = bicim
+            c.font = Font(bold=True, size=9)
+            c.alignment = Alignment(horizontal="center", vertical="center")
+            r += 1
+        G = lambda i: "G%d" % (hbas + i)
+        # Pe: referanstaki OK/NOK oranlarının karesi toplamı
+        ws[G(8)] = ('=IFERROR((COUNTIF(B{0}:B{1},"OK")/COUNTA(B{0}:B{1}))^2'
+                    '+(COUNTIF(B{0}:B{1},"NOK")/COUNTA(B{0}:B{1}))^2,"")').format(vbas, vson)
+        ws[G(9)] = '=IFERROR((%s-%s)/(1-%s),"")' % (G(7), G(8), G(8))
+        ws[G(10)] = ('=IF(%s="","ölçüm bekleniyor",IF(AND(%s>=0.75,%s>=0.9),'
+                     '"KABUL — Kappa ≥ 0,75 ve uyum ≥ %%90",'
+                     'IF(%s>=0.6,"ŞARTLI — kontrolör eğitimi / kriter netleştirme",'
+                     '"RED — nitelik ölçüm sistemi yetersiz")))'
+                     % (G(9), G(9), G(7), G(9)))
+        ws.cell(r + 1, 1, "Referans sütununa bilinen doğru sonuç (OK/NOK), A/B/C sütunlarına her "
+                          "kontrolörün iki bağımsız değerlendirmesi girilir. Parçaların ~yarısı "
+                          "sınır numune olmalı. Kabul: Kappa ≥ 0,75 — AIAG MSA 4. Baskı Bölüm III-C."
+                ).font = Font(size=8, italic=True, color="808080")
+        ws.merge_cells(start_row=r + 1, start_column=1, end_row=r + 1, end_column=9)
+        ws.page_setup.orientation = "portrait"
+
     wb.save(hedef)
-    return len(aletler)
+    return len(hepsi)
 
 
 # ── Türetilen alanlar ────────────────────────────────────────────────────
