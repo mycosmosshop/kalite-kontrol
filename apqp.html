@@ -29,6 +29,8 @@ td.durum{width:110px;text-align:center}
 .kanit{font-size:11px;color:#166534;background:#dcfce7;border-radius:4px;padding:1px 5px;margin-left:4px}
 .form-ad{font-size:12px;color:var(--soluk)}
 a.dosya{color:#1d4ed8;text-decoration:none}a.dosya:hover{text-decoration:underline}
+a.ikon{color:#6b7280;text-decoration:none;font-size:12px;padding:0 2px}
+a.ikon:hover{color:#b91c1c}
 .gantt{overflow-x:auto}
 .gantt table{font-size:11px}
 .gantt td.hf{padding:0;height:20px;min-width:16px}
@@ -173,6 +175,15 @@ async function dosyaAc(yol) {
   } catch (e) {
     mesaj('Dosya açılamadı (' + e.message + '). LeanSys ajanı çalışıyor mu?<br>Yol: <code>' + yol + '</code>');
   }
+}
+
+// Dokumani yeniden adlandirir / siler (ajan izinli koklerle sinirli).
+async function dosyaYonet(islem, yol, ek) {
+  const u = islem === 'sil'
+    ? '/dosyasil?path=' + encodeURIComponent(yol)
+    : '/dosyaadi?path=' + encodeURIComponent(yol) + '&yeni=' + encodeURIComponent(ek);
+  const j = await ajanJson(u);
+  if (!j.ok) throw new Error(j.hata || 'işlem başarısız');
 }
 
 // Urunun Drive klasorundeki dokumanlar. Ajan yoksa bos doner (uretim durmaz).
@@ -407,12 +418,14 @@ function cizPano() {
       + '<td class="no">' + (p.devreyeAlma || '') + '</td>'
       + '<td class="durum">' + kanitli + ' / ' + hepsi.length + '</td>'
       + '<td class="durum">' + rozet(y) + '</td>'
+      + '<td class="durum"><a href="#" class="ikon" data-proje-sil="' + p.id
+      + '" title="Bu APQP kaydını sil">🗑</a></td>'
       + '</tr>';
   }).join('');
   $('#panoKart').innerHTML =
     '<table><thead><tr><th>Ürün Kodu</th><th>Ürün Adı (LeanSys)</th><th>Müşteri</th>'
     + '<th>Lokasyon</th><th>APQP Başlangıç</th><th>Devreye Alma</th>'
-    + '<th>Kanıt</th><th>Tamamlanma</th></tr></thead><tbody>' + satir + '</tbody></table>';
+    + '<th>Kanıt</th><th>Tamamlanma</th><th></th></tr></thead><tbody>' + satir + '</tbody></table>';
 }
 
 function cizListe() {
@@ -424,9 +437,17 @@ function cizListe() {
       const parca = ['<span class="form-ad">' + (a.form || '—') + '</span>'];
       (a.kanitlar || []).forEach(x => {
         if (x.tur === 'erp') parca.push('<a class="dosya" href="' + x.adres + '" target="_blank" title="ERP modülü">🔗 ' + x.ad + '</a>');
-        else parca.push('<a class="dosya" href="#" data-ac="' + encodeURIComponent(x.yol) + '" title="'
-          + (x.tur === 'drive' ? 'Drive dokümanı' : 'LeanSys stok dokümanı') + ' — yerel ajanla açılır">'
-          + (x.tur === 'drive' ? '📁 ' : '📄 ') + x.ad + '</a>');
+        else {
+          const ac = '<a class="dosya" href="#" data-ac="' + encodeURIComponent(x.yol) + '" title="'
+            + (x.tur === 'drive' ? 'Drive dokümanı' : 'LeanSys stok dokümanı') + ' — yerel ajanla açılır">'
+            + (x.tur === 'drive' ? '📁 ' : '📄 ') + x.ad + '</a>';
+          // Drive dokümanı düzenlenebilir/silinebilir; LeanSys dokümanına dokunulmaz
+          const dugme = x.tur === 'drive'
+            ? ' <a href="#" class="ikon" data-ad="' + encodeURIComponent(x.yol) + '" title="Yeniden adlandır">✎</a>'
+              + ' <a href="#" class="ikon" data-sil="' + encodeURIComponent(x.yol) + '" title="Geri Dönüşüm Kutusu&#39;na taşı">🗑</a>'
+            : '';
+          parca.push(ac + dugme);
+        }
       });
       if (!(a.kanitlar || []).length) parca.push('<span style="color:#b45309;font-size:11px">kanıt yok</span>');
       const form = parca.join('<br>');
@@ -485,6 +506,18 @@ document.addEventListener('change', async e => {
 });
 
 document.addEventListener('click', e => {
+  const psil = e.target.closest && e.target.closest('a[data-proje-sil]');
+  if (psil) {
+    e.preventDefault(); e.stopPropagation();
+    const id = psil.dataset.projeSil;
+    const kayit = panoKayitlari.find(x => x.id === id);
+    if (!confirm('Bu APQP kaydı silinsin mi?\n\n' + (kayit ? kayit.stokKodu : id)
+        + '\n\nDrive klasöründeki dokümanlar SİLİNMEZ.')) return;
+    sb.from('apqp_projeler').delete().eq('id', id)
+      .then(() => { aktif = null; return projeleriYukle(null); })
+      .then(() => mesaj('APQP kaydı silindi. Drive klasörü olduğu gibi duruyor.'));
+    return;
+  }
   const tr = e.target.closest && e.target.closest('tr[data-ac-proje]');
   if (tr) {
     $('#projeSec').value = tr.dataset.acProje;
@@ -492,6 +525,28 @@ document.addEventListener('click', e => {
     gorunum = 'liste';
     [...$('#sekmeler').children].forEach(b => b.className = b.dataset.gorunum === gorunum ? 'sec' : '');
     ciz();
+    return;
+  }
+  const yad = e.target.closest && e.target.closest('a[data-ad]');
+  if (yad) {
+    e.preventDefault();
+    const yol = decodeURIComponent(yad.dataset.ad);
+    const eski = yol.split('\\').pop();
+    const yeni = prompt('Yeni dosya adı:', eski);
+    if (!yeni || yeni === eski) return;
+    dosyaYonet('ad', yol, yeni)
+      .then(() => { mesaj('Yeniden adlandırıldı. Kanıtları tazeleyin.'); return kanitTazele(); })
+      .catch(err => mesaj('Yeniden adlandırılamadı: ' + err.message));
+    return;
+  }
+  const ysil = e.target.closest && e.target.closest('a[data-sil]');
+  if (ysil) {
+    e.preventDefault();
+    const yol = decodeURIComponent(ysil.dataset.sil);
+    if (!confirm('Bu doküman Geri Dönüşüm Kutusu\'na taşınsın mı?\n\n' + yol)) return;
+    dosyaYonet('sil', yol)
+      .then(() => { mesaj('Geri Dönüşüm Kutusu&#39;na taşındı.'); return kanitTazele(); })
+      .catch(err => mesaj('Silinemedi: ' + err.message));
     return;
   }
   const a = e.target.closest && e.target.closest('a[data-ac]');
@@ -537,6 +592,26 @@ $('#driveBtn').addEventListener('click', () => aktif && dosyaAc(driveKlasoru(akt
 
 // Drive'a yeni dokuman eklenince adimlara yeniden baglanir (durum korunur:
 // elle %100 yapilmis adim geri alinmaz).
+// Drive klasorunu yeniden tarar: yeni dokumanlari baglar, silinenleri dusurur
+async function kanitTazele() {
+  if (!aktif) return;
+  const drive = await driveDosyalari(aktif.stokKodu);
+  const varolan = new Set(drive.map(d => d.yol));
+  let dusen = 0;
+  aktif.bolumler.forEach(b => b.adimlar.forEach(a => {
+    const once = (a.kanitlar || []).length;
+    a.kanitlar = (a.kanitlar || []).filter(x => x.tur !== 'drive' || varolan.has(x.yol));
+    dusen += once - a.kanitlar.length;
+    const yeni = adimDriveDosyalari(a.form, drive)
+      .filter(d => !a.kanitlar.some(x => x.yol === d.yol));
+    if (yeni.length) a.kanitlar = a.kanitlar.concat(yeni.map(d => ({ tur: 'drive', ad: d.ad, yol: d.yol })));
+    if (!a.kanitlar.length && a.durum === 100 && a.kanit === '') { a.durum = 0; a.tamamlanma = ''; }
+    else if (a.kanitlar.length && !a.durum) { a.durum = 100; a.tamamlanma = a.bitis; }
+  }));
+  await kaydet(aktif); ciz();
+  return dusen;
+}
+
 $('#tazeleBtn').addEventListener('click', async () => {
   if (!aktif) return;
   const drive = await driveDosyalari(aktif.stokKodu);

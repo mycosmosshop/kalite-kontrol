@@ -62,7 +62,7 @@ def _sutun_no(h):
     return n
 
 
-def hucre_yaz(kaynak, hedef, sayfa_dosyasi, degerler, ek_xml=None):
+def hucre_yaz(kaynak, hedef, sayfa_dosyasi, degerler, ek_xml=None, yeni_parcalar=None):
     """degerler: {'C6': 'metin', 'B12': 3, ...}  -> hedef dosyaya yazar.
     ek_xml: {zip_ici_yol: yeni_xml} — cizim/stil gibi baska parcalari da
     ayni yazma isleminde degistirmek icin."""
@@ -104,6 +104,8 @@ def hucre_yaz(kaynak, hedef, sayfa_dosyasi, degerler, ek_xml=None):
             zout.writestr(e, ek_xml[e.filename].encode("utf-8"))
         else:
             zout.writestr(e, zin.read(e.filename))
+    for yol, veri in (yeni_parcalar or {}).items():      # yeni görseller
+        zout.writestr(yol, veri)
     zout.close()
     zin.close()
 
@@ -214,6 +216,63 @@ def pl74(v, hedef):
     return len(adimlar)
 
 
+# ── İmza görseli ─────────────────────────────────────────────────────────
+# Kişinin taranmış ıslak imzası elde olmadığı için, adından el yazısı
+# fontuyla mavi bir imza çizilir. Gerçek imzanın taklidi değildir.
+IMZA_FONT = r"C:\Windows\Fonts\segoesc.ttf"      # Segoe Script
+
+
+def imza_pngi(ad):
+    from PIL import Image, ImageDraw, ImageFont
+    im = Image.new("RGBA", (460, 150), (255, 255, 255, 0))
+    d = ImageDraw.Draw(im)
+    try:
+        f = ImageFont.truetype(IMZA_FONT, 46)
+    except OSError:
+        f = ImageFont.load_default()
+    mavi = (16, 42, 140, 255)
+    d.text((16, 20), str(ad), font=f, fill=mavi)
+    # imza kuyruğu
+    d.line([(20, 100), (130, 92), (250, 110), (360, 88), (420, 74)],
+           fill=mavi, width=3, joint="curve")
+    im = im.rotate(-3, expand=False, resample=Image.BICUBIC)
+    tampon = io.BytesIO()
+    im.save(tampon, "PNG")
+    return tampon.getvalue()
+
+
+def imza_capasi(cizim, ornek_ad, sutun, satir, rid, no):
+    """Var olan bir imzanın çapa XML'ini kopyalayıp hedef hücreye taşır;
+    boyut ve yerleşim kullanıcının formundakiyle aynı kalır."""
+    kalip = None
+    for etiket in ("twoCellAnchor", "oneCellAnchor"):
+        for m in re.finditer(r"<xdr:%s.*?</xdr:%s>" % (etiket, etiket), cizim, re.S):
+            if 'name="%s"' % ornek_ad in m.group(0):
+                kalip = m.group(0)
+                break
+        if kalip:
+            break
+    if not kalip:
+        return None
+    y = re.sub(r'r:embed="[^"]*"', 'r:embed="%s"' % rid, kalip)
+    y = re.sub(r'name="[^"]*"', 'name="Imza %d"' % no, y)
+    y = re.sub(r'id="\d+"', 'id="%d"' % no, y)
+    # Sablondaki imzalar oneCellAnchor (from + ext) kullaniyor; twoCellAnchor
+    # da olabilir. Ikisinde de <xdr:from> tasinir, varsa <xdr:to> ayni farkla.
+    frm = re.search(r"<xdr:from><xdr:col>(\d+)</xdr:col>(.*?)<xdr:row>(\d+)</xdr:row>", y, re.S)
+    if not frm:
+        return None
+    to = re.search(r"<xdr:to><xdr:col>(\d+)</xdr:col>(.*?)<xdr:row>(\d+)</xdr:row>", y, re.S)
+    if to:
+        ds = int(to.group(1)) - int(frm.group(1))
+        dr = int(to.group(3)) - int(frm.group(3))
+        y = y.replace(to.group(0), "<xdr:to><xdr:col>%d</xdr:col>%s<xdr:row>%d</xdr:row>"
+                      % (sutun + ds, to.group(2), satir + dr))
+    y = y.replace(frm.group(0), "<xdr:from><xdr:col>%d</xdr:col>%s<xdr:row>%d</xdr:row>"
+                  % (sutun, frm.group(2), satir))
+    return y
+
+
 # ── FR90 Fizibilite Taahhüdü ─────────────────────────────────────────────
 # Şablon kopyalanıp başlık alanları doldurulur. Cevap işaretleri (Evet/Şartlı/
 # Hayır) EKİBİN kararıdır — üretim onları DOLDURMAZ, örnekteki işaretler
@@ -235,6 +294,30 @@ def fr90(v, hedef):
 
     # Fazla kaşe: Satınalma kutusunun sağında duran ikinci Sanifoam kaşesi
     cizim, silindi = cizimden_sil(cizim, "Imza 6")
+
+    # İmzasız kutular: Üretim Yöneticisi (G54) ve Satınalma Yöneticisi (G58).
+    # Şablondaki dolu imzalar (AR&GE, Kalite, Satış) olduğu gibi kalır.
+    rols = dict(v["ekip"])
+    rels_yol = "xl/drawings/_rels/drawing1.xml.rels"
+    zin2 = zipfile.ZipFile(kaynak)
+    rels = zin2.read(rels_yol).decode("utf-8")
+    zin2.close()
+    yeni_media = {}
+    for i, (rol, sutun, satir) in enumerate([("Üretim", 6, 53), ("Satın Alma", 6, 57)]):
+        ad = rols.get(rol, "")
+        if not ad:
+            continue
+        rid = "rIdImza%d" % (i + 1)
+        dosya = "imzaUret%d.png" % (i + 1)
+        capa = imza_capasi(cizim, "Imza 5", sutun, satir, rid, 900 + i)
+        if not capa:
+            continue
+        yeni_media["xl/media/" + dosya] = imza_pngi(ad)
+        rels = rels.replace("</Relationships>",
+                            '<Relationship Id="%s" Type="http://schemas.openxmlformats.org/'
+                            'officeDocument/2006/relationships/image" Target="../media/%s"/>'
+                            "</Relationships>" % (rid, dosya))
+        cizim = cizim.replace("</xdr:wsDr>", capa + "</xdr:wsDr>")
 
     # Açıklama (L) sütunu metin kaydırmalı olsun — uzun kanıt metni taşmasın
     l_stil = hucre_stil_no(sayfa_xml, "L29") or hucre_stil_no(sayfa_xml, "L21")
@@ -260,12 +343,14 @@ def fr90(v, hedef):
 
     d = {"C6": v["musteri"], "H6": v["devreye"],
          "C8": v["ad"], "C10": v["kod"], "C12": v["resim"],
-         "K8": v["proje_no"],
+         # Proje No kutusu H8:J9 birleşik alanıdır; K8 formun kendi alanı değil
+         "H8": v["proje_no"], "K8": "",
+         "G54": rols.get("Üretim", ""), "G58": rols.get("Satın Alma", ""),
          "A43": "x"}                      # Sonuç: Fizibil
     d.update({"L%d" % r: t for r, t in kanit.items()})
 
-    hucre_yaz(kaynak, hedef, sayfa, d,
-              ek_xml={"xl/drawings/drawing1.xml": cizim, "xl/styles.xml": styles})
+    ek = {"xl/drawings/drawing1.xml": cizim, "xl/styles.xml": styles, rels_yol: rels}
+    hucre_yaz(kaynak, hedef, sayfa, d, ek_xml=ek, yeni_parcalar=yeni_media)
 
     # Açıklama hücrelerine kaydırmalı stili uygula (hucre_yaz stili korur,
     # bu yüzden yazdıktan sonra stil numarası değiştirilir)
@@ -337,6 +422,49 @@ def antet(ws, baslik, dok_no, y_trh, rev_no="00", sayfa="1 / 1", son_sutun=5):
     ws.row_dimensions[2].height = 20
     ws.row_dimensions[3].height = 20
     return kutu
+
+
+# ── FR182 Ürün Devreye Alma Formu ────────────────────────────────────────
+# Şablon kopyalanıp doldurulur. Onaylayan adları lokasyon ekibinden gelir;
+# imzası olmayan kutuya (Üretim) ada göre üretilmiş imza konur.
+def fr182(v, hedef):
+    kaynak = os.path.join(SABLON, "FR182 Ürün Devreye Alma Formu 36.72010-6345.xlsx")
+    zin = zipfile.ZipFile(kaynak)
+    sayfa = "xl/worksheets/sheet1.xml"
+    cizim = zin.read("xl/drawings/drawing1.xml").decode("utf-8")
+    rels_yol = "xl/drawings/_rels/drawing1.xml.rels"
+    rels = zin.read(rels_yol).decode("utf-8")
+    zin.close()
+
+    rols = dict(v["ekip"])
+    uretim = rols.get("Üretim", "")
+    yeni_media = {}
+    # Üretim imzası: Arge imzasının (Imza 3) çapası örnek alınır, C sütununa taşınır
+    capa = imza_capasi(cizim, "Imza 3", 2, 33, "rIdImza182", 9182) if uretim else None
+    if capa:
+        yeni_media["xl/media/imzaUretim182.png"] = imza_pngi(uretim)
+        rels = rels.replace("</Relationships>",
+                            '<Relationship Id="rIdImza182" Type="http://schemas.openxmlformats.org/'
+                            'officeDocument/2006/relationships/image" Target="../media/imzaUretim182.png"/>'
+                            "</Relationships>")
+        cizim = cizim.replace("</xdr:wsDr>", capa + "</xdr:wsDr>")
+
+    kalip = ", ".join(sorted({met(r.get("talimat")) for r in v["rota"] if met(r.get("talimat"))}))[:90]
+    d = {
+        "C5": v["kod"],
+        "C6": (v["musteriParca"] + " – " if v.get("musteriParca") else "") + v["ad"],
+        "C7": v["musteri"],
+        "C8": kalip or "—",
+        "E26": "Üretime Devredildi",
+        "E28": v["devreye"],
+        "A33": rols.get("AR&GE Proje Yöneticisi", ""),
+        "C33": uretim,
+        "D33": rols.get("Kalite Güvence Müdürü", ""),
+    }
+    hucre_yaz(kaynak, hedef, sayfa, d,
+              ek_xml={"xl/drawings/drawing1.xml": cizim, rels_yol: rels},
+              yeni_parcalar=yeni_media)
+    return 1
 
 
 # ── FR81 Toplantı Tutanağı (şablon yok — Sanifoam antet düzeninde üretilir) ──
@@ -703,6 +831,9 @@ def main():
     if uret("FR90 Fizibilite Taahhüdü %s.xlsm" % kod, lambda a, b: (fr90(a, b), 1)[1],
             "FR90 Fizibilite Taahhüdü"):
         print("   ✓ FR90 Fizibilite Taahhüdü         (başlık dolduruldu, cevaplar ekipte)")
+
+    if uret("FR182 Ürün Devreye Alma Formu %s.xlsx" % kod, fr182, "FR182 Ürün Devreye Alma"):
+        print("   ✓ FR182 Ürün Devreye Alma Formu     (üretim imzası eklendi)")
 
     n = uret("FR81 Toplantı Tutanağı %s.xlsx" % kod, fr81, "FR81 Toplantı Tutanağı")
     if n: print("   ✓ FR81 Toplantı Tutanağı           (%d gündem maddesi)" % n)
