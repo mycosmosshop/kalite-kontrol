@@ -1935,9 +1935,11 @@ def yeterlilik_ozeti(v, hedef, kayitlar):
         r += 1
     r += 1
 
+    # Üst simge işaretleri (¹²³) alttaki numaralı dipnotlara gönderir —
+    # hangi açıklamanın hangi sütuna ait olduğu böylece nettir.
     basliklar = ["No", "Tür", "Karakteristik", "Ölçüm Aleti", "n", "Cp/Cm", "Cpk/Cmk",
-                 "Pp", "Ppk", "Normallik (AD)", "Ölçüm sistemi (çöz./tol.)",
-                 "Kullanılan yöntem", "Sonuç"]
+                 "Pp", "Ppk", "Normallik (AD) ²", "Ölçüm sistemi (çöz./tol.) ¹",
+                 "Kullanılan yöntem ²", "Sonuç ³"]
     for i, b in enumerate(basliklar):
         c = ws.cell(r, 1 + i, b)
         c.font = Font(bold=True, size=10, color="FFFFFF")
@@ -1982,24 +1984,35 @@ def yeterlilik_ozeti(v, hedef, kayitlar):
                    len(str(deger[11])) / 34.0, len(str(deger[2])) / 22.0)
         ws.row_dimensions[rr].height = max(30, min(72, 15 * (int(uzun) + 1)))
 
+    # Numaralı dipnotlar — üst simgeler (¹²³) sütun başlıklarına gönderir
     son = bas + len(kayitlar) + 2
-    ws.cell(son, 1,
-            "KABUL DAYANAĞI — (1) Ölçüm sistemi: kontrol planındaki alet esastır. "
-            "AIAG 10'a-1 çözünürlük kuralı ön kontroldür; çözünürlük toleransın "
-            "%10'unu aştığında bağlayıcı kabul, aletin Gage R&R çalışmasıdır "
-            "(FR86, AIAG MSA — %GRR kabul sınırları içinde). "
-            "(2) Yeterlilik: proses Cpk ≥ 1,33 · makine Cmk ≥ 1,67. Normallik "
-            "Anderson-Darling ile sınanır; sağlanmazsa indisler ISO 22514-2 yüzdelik "
-            "yöntemiyle hesaplanır: Cp=(ÜSL−ALS)/(X99,865−X0,135), "
-            "Cpk=min[(ÜSL−X50)/(X99,865−X50); (X50−ALS)/(X50−X0,135)] — normal "
-            "dağılımda bu formül 6σ'ya indirgenir, yani eşikler değişmez. "
-            "Ölçüm değerleri aletin çözünürlüğünde kaydedilir (şeritmetre 1 mm, "
-            "komparatör 0,1 mm); çözünürlükten doğan ayrık veri yüzdelik "
-            "yöntemle doğru değerlendirilir. "
-            "Bu tablodaki değerler ERP'deki çalışmayla aynıdır."
-            ).font = Font(size=8, italic=True, color="808080")
-    ws.merge_cells(start_row=son, start_column=1, end_row=son, end_column=13)
-    ws.row_dimensions[son].height = 46
+    notlar = [
+        ("KABUL DAYANAĞI (başlıklardaki ¹ ² ³ işaretleri aşağıdaki maddelere "
+         "gönderir):", True, 13),
+        ("¹ Ölçüm sistemi — kontrol planındaki alet esastır. AIAG 10'a-1 "
+         "çözünürlük kuralı ön kontroldür; çözünürlük toleransın %10'unu "
+         "aştığında bağlayıcı kabul, o aletin Gage R&R çalışmasıdır "
+         "(FR86, AIAG MSA — %GRR kabul sınırları içinde). Ölçüm değerleri "
+         "aletin çözünürlüğünde kaydedilir (şeritmetre 1 mm, komparatör "
+         "0,1 mm).", False, 30),
+        ("² Normallik ve yöntem — normallik Anderson-Darling ile sınanır "
+         "(AD < kritik → normal). Sağlanmazsa indisler ISO 22514-2 yüzdelik "
+         "yöntemiyle hesaplanır: Cp=(ÜSL−ALS)/(X99,865−X0,135), "
+         "Cpk=min[(ÜSL−X50)/(X99,865−X50); (X50−ALS)/(X50−X0,135)] — normal "
+         "dağılımda bu formül 6σ'ya indirgenir, eşikler değişmez. "
+         "Çözünürlükten doğan ayrık veri bu yöntemle doğru değerlendirilir.",
+         False, 40),
+        ("³ Sonuç — kabul eşiği: proses Cpk ≥ 1,33 · makine Cmk ≥ 1,67. "
+         "Bu tablodaki değerler ERP'deki çalışmayla aynıdır (aynı veri, aynı "
+         "yöntem; ERP sayfası rozeti aynı yöntemi gösterir).", False, 26),
+    ]
+    for metin, kalin, yuk in notlar:
+        ws.cell(son, 1, metin).font = Font(size=8, italic=not kalin,
+                                           bold=kalin, color="808080")
+        ws.cell(son, 1).alignment = Alignment(wrap_text=True, vertical="top")
+        ws.merge_cells(start_row=son, start_column=1, end_row=son, end_column=13)
+        ws.row_dimensions[son].height = yuk
+        son += 1
     ws.page_setup.orientation = "landscape"
     ws.page_setup.fitToWidth = 1
 

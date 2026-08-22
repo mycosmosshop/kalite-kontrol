@@ -355,7 +355,10 @@ const MSA_ADRES = 'https://mycosmosshop.github.io/msa/results.html?id=';
 // parca basina tek olcum olur.
 const MSA_SAYFA = { capability: 'cap-results.html', binomial: 'cap-attributes.html',
   poisson: 'cap-attributes.html', tolerance: 'cap-tolerance.html',
-  comparison: 'cap-compare.html', multi: 'cap-multi.html' };
+  comparison: 'cap-compare.html', multi: 'cap-multi.html',
+  // Kappa/oznitelik (gorsel kontroller: GOZLE, TL283...) kendi sayfasinda
+  // acilmali; results.html Gage R&R icindir ve yanlis yerde gosteriyordu.
+  attribute: 'attr-results.html' };
 const msaAdres = c => 'https://mycosmosshop.github.io/msa/'
   + (MSA_SAYFA[met(c.study_type)] || 'results.html') + '?id=' + c.id;
 const MSA_ROZET = { acceptable: '✓ kabul', marginal: '⚠ şartlı', unacceptable: '✗ red' };
