@@ -216,6 +216,7 @@ async function dosyaYonet(islem, yol, ek) {
     : '/dosyaadi?path=' + encodeURIComponent(yol) + '&yeni=' + encodeURIComponent(ek);
   const j = await ajanJson(u);
   if (!j.ok) throw new Error(j.hata || 'işlem başarısız');
+  return j.yol;                       // nereye gitti: geri dönüşüm / Drive çöp
 }
 
 // Urunun Drive klasorundeki dokumanlar. Ajan yoksa bos doner (uretim durmaz).
@@ -837,9 +838,13 @@ async function projeSil(id, kayit) {
   let ek = '';
   if (klasor) {
     try {
-      await dosyaYonet('sil', klasor);
-      ek = ' Drive klasörü Geri Dönüşüm Kutusu&#39;na taşındı.';
-    } catch (err) { ek = ' Drive klasörü kaldırılamadı: ' + err.message; }
+      const y = await dosyaYonet('sil', klasor);
+      ek = ' Drive klasörü kaldırıldı (' + (y || 'geri dönüşüm kutusu') + ').';
+    } catch (err) {
+      // En sik sebep: dosyalardan biri Excel/Word'de ACIK
+      ek = ' Drive klasörü kaldırılamadı: ' + err.message
+        + ' — dosyalardan biri açık olabilir, kapatıp Drive panelinden silin.';
+    }
   }
   aktif = null;
   await projeleriYukle(null);
