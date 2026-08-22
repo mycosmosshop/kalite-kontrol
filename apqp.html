@@ -212,7 +212,8 @@ async function driveDosyalari(kod, musteriParca) {
   try {
     const j = await ajanJson('/dosyalar?dir=' + encodeURIComponent(driveKlasoru(kod)));
     const hepsi = j.ok ? (j.dosyalar || []) : [];
-    const ait = hepsi.filter(d => buUruneAit(d.ad, kod, musteriParca));
+    // Excel/Word acikken birakilan kilit dosyalari (~$...) kanit degildir
+    const ait = hepsi.filter(d => !/^~\$/.test(met(d.ad)) && buUruneAit(d.ad, kod, musteriParca));
     driveDisi = hepsi.length - ait.length;
     return ait;
   } catch { driveDisi = 0; return []; }
@@ -231,6 +232,8 @@ const DOSYA_ANAHTAR = [
   [/msa|gage ?r&?r/i,                                /msa|gage ?r&?r|fr ?86|\u00f6l\u00e7\u00fcm sistemi/i],
   [/kontrol plan/i,                                  /kontrol plan/i],
   [/p-?fmea|pfmea/i,                                 /fmea/i],
+  // MAN'de kapak belgesi VDA_2 Anlagen; Mercedes'te ayri Cover Sheet var
+  [/cover ?sheet|vda[ _]?2/i,                        /cover ?sheet|kapak|psw|part submission/i],
 ];
 
 // Klasordeki her dosya bu urune ait DEGIL: sablonlar ("FR90 Fizibilite
@@ -247,12 +250,26 @@ function buUruneAit(dosyaAdi, kod, musteriParca) {
   return anahtar.some(k => ad.includes(k));
 }
 
+// Belge adi ile form metnini karsilastirmak icin sadelestirme: urun kodu,
+// uzanti, noktalama ve Turkce karakter farklari atilir.
+const adSade = x => met(x)
+  .replace(/\.[a-z]{3,4}$/i, '')
+  .toLocaleLowerCase('tr')
+  .replace(/[çğıöşü]/g, c => ({ 'ç': 'c', 'ğ': 'g', 'ı': 'i', 'ö': 'o', 'ş': 's', 'ü': 'u' }[c]))
+  .replace(/[0-9]+[.\-][0-9.\-a-z]*/g, ' ')     // urun/musteri kodlari
+  .replace(/[^a-z]+/g, ' ').trim();
+
 // Bir adima ait Drive dokumanlari (dosyalar zaten urune gore suzulmus gelir)
 function adimDriveDosyalari(form, dosyalar) {
   const kodlar = formKodlari(form);
+  const fs = adSade(form);
   return dosyalar.filter(d => {
     if (kodlar.length && formKodlari(d.ad).some(k => kodlar.includes(k))) return true;
-    return DOSYA_ANAHTAR.some(([dk, fk]) => dk.test(d.ad) && fk.test(met(form)));
+    if (DOSYA_ANAHTAR.some(([dk, fk]) => dk.test(d.ad) && fk.test(met(form)))) return true;
+    // Belgeler form adiyla uretiliyor ("APQP Program Metrikleri <kod>.xlsx"):
+    // anahtar kelime listesi tutmak yerine adlari dogrudan karsilastir.
+    const ds = adSade(d.ad);
+    return ds.length > 8 && fs.length > 8 && (ds.includes(fs) || fs.includes(ds));
   });
 }
 
@@ -405,7 +422,12 @@ async function apqpUret(giris) {
       const resimAdimi = /teknik resim|şartname|sartname/i.test(met(a.form)) && resim;
       // KANITLAR: ERP modulu · LeanSys stok dokumani · Drive dokumani
       const kanitlar = [];
-      if (mod) kanitlar.push({ tur: 'erp', ad: mod.ad, adres: mod.adres });
+      if (mod) {
+        // FMEA adimlarinda modulu degil, DOGRUDAN o urunun projesini ac
+        const adres = /fmea|akış diyagram|akis diyagram/i.test(met(a.form)) && k.fmeaId
+          ? mod.adres + '?proje=' + encodeURIComponent(k.fmeaId) : mod.adres;
+        kanitlar.push({ tur: 'erp', ad: mod.ad, adres });
+      }
       // MSA adimlarina modulun genel baglantisi degil, GERCEK calismalar baglanir
       if (/msa|gage ?r&?r|fr ?86|ölçüm sistemi/i.test(met(a.form) + ' ' + met(a.ad))) {
         (k.msa || []).forEach(c => kanitlar.push({
