@@ -467,19 +467,95 @@ def fr182(v, hedef):
     return 1
 
 
-# ── FR81 Toplantı Tutanağı (şablon yok — Sanifoam antet düzeninde üretilir) ──
-# Konular APQP başlangıç toplantısının standart gündemi: altyapı/ekipman,
-# tedarikçi, şartname, teknik resim, benzer parça geçmişi, fizibilite.
+# ── FR81 Toplantı Tutanağı ───────────────────────────────────────────────
+# Bir ürün kodunun tutanağı TEKTİR ve büyüyerek devam eder: her toplantıda
+# APQP madde numarasına göre yeni maddeler ALTINA eklenir, var olanların
+# durumu/açıklaması olduğu gibi kalır. Gündem, FR91 listesinde tutanağa
+# bağlanan APQP maddelerinden gelir.
+FR81_SUTUN = ["NO", "APQP MADDE", "KONU", "SORUMLU", "TERMİN", "AÇIKLAMA", "DURUM"]
+
+
+def fr81_gundem(v):
+    """APQP maddesi -> (konu, rol, açıklama). FR91'de FR81'e bağlanan maddeler."""
+    hammadde = ", ".join(met(a.get("tuketim_kodu")) for a in v["agac"][:5]) or "ürün ağacında hammadde yok"
+    makineler = ", ".join(sorted({met(r.get("makine_adi")) for r in v["rota"]
+                                  if met(r.get("makine_adi"))})) or "—"
+    aletler = ", ".join(sorted({g["alet"] for g in msa_aletleri(v["kod"])})) or "—"
+    return [
+        ("2.1", "Benzer/karşılaştırılabilir parça geçmişi incelendi",
+         "AR&GE Proje Yöneticisi", v["benzer"]),
+        ("2.2", "Özel/kritik karakteristikler belirlendi",
+         "Kalite Güvence Müdürü", "Kontrol planındaki özel karakteristikler PFMEA'ya aktarılacak"),
+        ("2.4", "Yeni alet, ekipman ve tesis gereksinimleri — altyapı yeterliliği",
+         "Üretim", "Kullanılacak hat: %s" % makineler[:150]),
+        ("2.5", "Yeni gösterge, fikstür ve test ekipmanı gereksinimleri",
+         "Kalite Mühendisi", "Kontrol planındaki ölçüm aletleri: %s" % aletler[:150]),
+        ("2.6", "İlk kapasite değerlendirmesi",
+         "Üretim", "Darboğaz operasyon ve vardiya kapasitesi Kapasite Takip Formunda"),
+        ("2.7", "Hammadde ve alt tedarikçi durumu",
+         "Satın Alma", "Ürün ağacı: %s — tedarikçiler PL11 onaylı listeden seçilecek" % hammadde[:110]),
+        ("2.8", "Müşteri teknik resmi ve şartnamelerinin incelenmesi (%s)" % v["resim"],
+         "AR&GE Proje Yöneticisi", "Teknik resim ve şartname ERP stok dokümanlarında kayıtlı"),
+        ("2.9", "Fizibilite kararı",
+         "Kalite Güvence Müdürü", "FR90 Fizibilite Taahhüdü ekip tarafından imzalanacak"),
+        ("2.10", "Paketleme planı ve ambalaj standardı",
+         "Lojistik", "FR228 Ambalaj Standardı Formu hazırlanacak"),
+        ("2.11", "Proje kapsamı ve APQP ekibi tanımlandı (roller, yetkiler, toplantı düzeni)",
+         "AR&GE Proje Yöneticisi", "Ekip: " + ", ".join(ad for _, ad in v["ekip"])),
+        ("2.13", "Açık konu (concern) matrisi — sorumlu ve termin atandı",
+         "Kalite Güvence Müdürü", "Açık konular FR91 takip formundan izlenir"),
+        ("2.14", "Risk değerlendirme ve azaltma planı",
+         "Kalite Mühendisi", "Riskler PFMEA AP değerleri ve FR148 ile izlenir"),
+        ("2.15", "Değişiklik yönetimi başlatıldı",
+         "Kalite Güvence Müdürü", "Değişiklik talebi/onayı FR148, revizyon tarihçesi her çıktıda"),
+        ("2.16", "APQP program metrikleri yönetime sunuldu",
+         "AR&GE Proje Yöneticisi", "Kırmızı/sarı/yeşil durum ve kapı onayı"),
+        ("3.4", "Ölçüm sistemi analizi (MSA) planı gözden geçirildi",
+         "Kalite Mühendisi", "Kontrol planındaki aletler için MSA Planı ve FR86 formları hazırlandı"),
+        ("3.13", "Ürün/proses kalite sistemi gözden geçirmesi",
+         "Kalite Güvence Müdürü", "Kontrol planı, PFMEA ve operasyon talimatları uyumu kontrol edildi"),
+    ]
+
+
+def fr81_mevcut(hedef):
+    """Var olan tutanaktaki maddeler — yeniden üretimde korunur."""
+    if not os.path.exists(hedef):
+        return [], 0
+    try:
+        from openpyxl import load_workbook
+        ws = load_workbook(hedef, data_only=True).active
+    except Exception:
+        return [], 0
+    satirlar, enson = [], 0
+    for r in ws.iter_rows(min_row=1, max_row=ws.max_row, max_col=len(FR81_SUTUN), values_only=True):
+        if r[0] == "NO" or all(x in (None, "") for x in r):
+            continue
+        try:
+            no = int(r[0])
+        except (TypeError, ValueError):
+            # Toplanti ayirac satiri — oldugu gibi tasinir
+            if met(r[0]).startswith("──"):
+                satirlar.append(("--", met(r[0]), "", "", "", "", ""))
+            continue
+        enson = max(enson, no)
+        satirlar.append((no,) + tuple(met(x) for x in r[1:7]))
+    return satirlar, enson
+
+
 def fr81(v, hedef):
     from openpyxl import Workbook
     from openpyxl.styles import Font, Alignment, PatternFill
 
+    eski, enson = fr81_mevcut(hedef)
+    varolan = {x[1] for x in eski if x[0] != "--"}      # APQP madde no'lari
+    rolAd = dict((rol, ad) for rol, ad in v["ekip"])
+    yeni = [(m, k, rolAd.get(rol, rol), a) for m, k, rol, a in fr81_gundem(v) if m not in varolan]
+
     wb = Workbook(); ws = wb.active; ws.title = "Toplantı Tutanağı"
     ws.sheet_view.showGridLines = False
-    for h, g in zip("ABCDE", (13, 58, 20, 14, 42)):
+    for h, g in zip("ABCDEFG", (7, 12, 54, 20, 13, 44, 14)):
         ws.column_dimensions[h].width = g
-
-    kutu = antet(ws, "TOPLANTI TUTANAĞI", "FR 81", "01.09.2004", son_sutun=5)
+    kutu = antet(ws, "TOPLANTI TUTANAĞI", "FR 81", "01.09.2004", son_sutun=7)
 
     def alan(satir, etiket, deger, birlestir_son=None):
         c = ws.cell(satir, 1, etiket)
@@ -491,66 +567,71 @@ def fr81(v, hedef):
             ws.merge_cells(start_row=satir, start_column=2, end_row=satir, end_column=birlestir_son)
         return d
 
-    alan(6, "TOPLANTI TARİHİ :", v["devreye_baslangic"])
-    ws.cell(6, 3, "TOPLANTI SAATİ :").font = Font(bold=True, size=10)
-    ws.cell(6, 3).alignment = Alignment(horizontal="right")
-    ws.cell(6, 4, "14:00").alignment = Alignment(horizontal="center")
-    alan(7, "KONU :", "%s (%s) — APQP başlangıç / fizibilite değerlendirmesi" % (v["ad"], v["kod"]), 5)
-    k = alan(8, "KATILIMCILAR :", ", ".join("%s (%s)" % (ad, rol) for rol, ad in v["ekip"]), 5)
+    bugun = datetime.date.today().isoformat()
+    toplanti_no = sum(1 for x in eski if x[0] == "--") + 1
+    alan(6, "TOPLANTI TARİHİ :", v["devreye_baslangic"] if not eski else bugun)
+    ws.cell(6, 4, "TOPLANTI SAATİ :").font = Font(bold=True, size=10)
+    ws.cell(6, 4).alignment = Alignment(horizontal="right")
+    ws.cell(6, 5, "14:00").alignment = Alignment(horizontal="center")
+    alan(7, "KONU :", "%s (%s) — APQP proje takip toplantıları (%d. toplantı)"
+         % (v["ad"], v["kod"], toplanti_no), 7)
+    k = alan(8, "KATILIMCILAR :", ", ".join("%s (%s)" % (ad, rol) for rol, ad in v["ekip"]), 7)
     k.alignment = Alignment(wrap_text=True, vertical="top")
     ws.row_dimensions[8].height = 34
 
-    for i, b in enumerate(["NO", "KONU", "SORUMLU", "TERMİN", "AÇIKLAMA"]):
+    for i, b in enumerate(FR81_SUTUN):
         c = ws.cell(10, 1 + i, b)
         c.font = Font(bold=True, size=11, color="FFFFFF")
         c.alignment = Alignment(horizontal="center", vertical="center")
         c.fill = PatternFill("solid", fgColor="1F3864"); c.border = kutu
     ws.row_dimensions[10].height = 24
 
-    hammadde = ", ".join(met(a.get("tuketim_kodu")) for a in v["agac"][:5]) or "ürün ağacında hammadde yok"
-    makineler = ", ".join(sorted({met(r.get("makine_adi")) for r in v["rota"] if met(r.get("makine_adi"))})) or "—"
-    rolAd = dict((r, a) for r, a in v["ekip"])
-    gundem = [
-        ("Müşteri teknik resmi ve şartnamelerin incelenmesi (%s)" % v["resim"],
-         rolAd["AR&GE Proje Yöneticisi"], "Teknik resim ve şartname ERP stok dokümanlarında kayıtlı"),
-        ("Özel/kritik karakteristiklerin belirlenmesi",
-         rolAd["Kalite Güvence Müdürü"], "Kontrol planındaki özel karakteristikler PFMEA'ya aktarılacak"),
-        ("Altyapı, ekipman ve tesis yeterliliği değerlendirmesi",
-         rolAd["Üretim"], "Kullanılacak hat: %s" % makineler[:150]),
-        ("Ölçüm/test ekipmanı ve kalibrasyon ihtiyacı",
-         rolAd["Kalite Mühendisi"], "Kontrol planındaki ölçüm yöntemleri için ekipman uygunluğu"),
-        ("Hammadde ve alt tedarikçi durumu",
-         rolAd["Satın Alma"], "Ürün ağacı: %s — tedarikçiler onaylı tedarikçi listesinden seçilecek" % hammadde[:110]),
-        ("Benzer/karşılaştırılabilir parça geçmişi",
-         rolAd["AR&GE Proje Yöneticisi"], v["benzer"]),
-        ("Kapasite değerlendirmesi (ilk)",
-         rolAd["Üretim"], "Darboğaz operasyon ve vardiya kapasitesi Kapasite Takip Formunda"),
-        ("Ambalaj ve lojistik planı",
-         rolAd["Lojistik"], "FR228 Ambalaj Standardı Formu hazırlanacak"),
-        ("Fizibilite kararı (FR90)",
-         rolAd["Kalite Güvence Müdürü"], "FR90 Fizibilite Taahhüdü ekip tarafından imzalanacak"),
-    ]
-    for i, (konu, sorumlu, aciklama) in enumerate(gundem):
-        r = 11 + i
-        for j, deger in enumerate([i + 1, konu, sorumlu, v["termin"], aciklama]):
-            c = ws.cell(r, 1 + j, deger)
+    def satir_yaz(r, deger, zebra, ayirac=False):
+        if ayirac:
+            c = ws.cell(r, 1, deger)
+            c.font = Font(bold=True, size=9, color="1F3864")
+            c.alignment = Alignment(horizontal="left", vertical="center")
+            c.fill = PatternFill("solid", fgColor="DCE6F1")
+            for j in range(1, len(FR81_SUTUN) + 1):
+                ws.cell(r, j).border = kutu
+                ws.cell(r, j).fill = PatternFill("solid", fgColor="DCE6F1")
+            ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=len(FR81_SUTUN))
+            return
+        for j, x in enumerate(deger):
+            c = ws.cell(r, 1 + j, x)
             c.border = kutu
             c.font = Font(size=10)
             c.alignment = Alignment(wrap_text=True, vertical="center",
-                                    horizontal="center" if j in (0, 2, 3) else "left")
-            if i % 2:
+                                    horizontal="center" if j in (0, 1, 3, 4, 6) else "left")
+            if zebra:
                 c.fill = PatternFill("solid", fgColor="F7F9FC")
-        ws.row_dimensions[r].height = 34
+        ws.row_dimensions[r].height = 32
 
-    r = 11 + len(gundem) + 1
-    ws.cell(r, 1, "Kaynak: ERP ürün ağacı, operasyon kartı, kontrol planı ve stok dokümanları."
+    r, z = 11, False
+    for x in eski:                                  # onceki toplantilar oldugu gibi
+        if x[0] == "--":
+            satir_yaz(r, x[1], False, ayirac=True)
+        else:
+            satir_yaz(r, x, z); z = not z
+        r += 1
+    if yeni:
+        if eski:
+            satir_yaz(r, "──  %d. Toplantı — %s  ──" % (toplanti_no, bugun), False, ayirac=True)
+            r += 1
+        for i, (madde, konu, sorumlu, aciklama) in enumerate(yeni):
+            satir_yaz(r, (enson + 1 + i, madde, konu, sorumlu, v["termin"], aciklama, "Açık"), z)
+            z = not z
+            r += 1
+
+    ws.cell(r + 1, 1, "Maddeler APQP takip formundaki (FR91) madde numaralarına bağlıdır. "
+                      "Her toplantıda yeni maddeler bu formun altına eklenir; önceki maddeler korunur."
             ).font = Font(size=8, italic=True, color="808080")
-    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=5)
-    ws.print_area = "A1:E%d" % r
+    ws.merge_cells(start_row=r + 1, start_column=1, end_row=r + 1, end_column=7)
+    ws.print_area = "A1:G%d" % (r + 1)
     ws.page_setup.orientation = "landscape"
     ws.page_setup.fitToWidth = 1
     wb.save(hedef)
-    return len(gundem)
+    return len(yeni) if yeni else len([x for x in eski if x[0] != "--"])
 
 
 # ── Kapasite Takip Formu (şablon yok — Run@Rate mantığında üretilir) ──────
@@ -628,82 +709,73 @@ def kapasite(v, hedef):
 
 
 # ── PL11 Onaylı Tedarikçi Listesi ────────────────────────────────────────
-# Kaynak: onayli_tedarikci tablosu (tedarikçi modülü "Onaylı Listeyi Buluta
-# Yaz" ile doldurur). Ürünün LOKASYONUNA göre süzülür — Ankara ve Çerkezköy
-# onaylı listeleri farklıdır — ve Tip A (Otomotiv) tedarikçiler alınır.
+# Format, ERP Onaylı Tedarikçi modülünün KENDİ Excel çıktısıdır (41 sütun,
+# başlık bloğu, formüller) — uydurma bir düzen kullanılmaz. Downloads'taki en
+# güncel dışa aktarım şablon alınır; ürünün LOKASYONUNA ait olmayan ve
+# Tip A (Otomotiv) olmayan satırlar silinir.
+# Satır silmeyi EXCEL yapar: dosyada 160 formül, 14 veri doğrulama ve 6 koşullu
+# biçim var, Excel bunların aralıklarını kendiliğinden düzeltir.
+INDIRILENLER = r"C:\Users\User\Downloads"
+
+
+def onayli_liste_sablonu():
+    """Downloads klasöründeki EN GÜNCEL Onaylı Tedarikçi dışa aktarımı."""
+    try:
+        adaylar = [os.path.join(INDIRILENLER, f) for f in os.listdir(INDIRILENLER)
+                   if f.lower().startswith("onayli_tedarikciler") and f.lower().endswith(".xlsx")]
+    except OSError:
+        return None
+    return max(adaylar, key=os.path.getmtime) if adaylar else None
+
+
 def pl11(v, hedef):
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, Alignment, PatternFill
+    import shutil, subprocess, json as _json
+    kaynak = onayli_liste_sablonu()
+    if not kaynak:
+        print("   ! PL11 atlandı — Downloads'ta Onaylı Tedarikçi dışa aktarımı yok;")
+        print("     tedarikçi modülünden listeyi bir kez Excel'e aktarın")
+        return 0
+    shutil.copy2(kaynak, hedef)
+
+    betik = (
+        "$ErrorActionPreference='Stop'\n"
+        "$f = '" + hedef.replace("'", "''") + "'\n"
+        "$lok = '" + v["lokasyon_ad"] + "'\n"
+        "$x = New-Object -ComObject Excel.Application\n"
+        "$x.Visible = $false; $x.DisplayAlerts = $false\n"
+        "try {\n"
+        "  $wb = $x.Workbooks.Open($f)\n"
+        "  $ws = $wb.Worksheets.Item(1)\n"
+        "  $son = $ws.UsedRange.Rows.Count\n"
+        "  $silinen = 0; $kalan = 0\n"
+        "  for ($r = $son; $r -ge 10; $r--) {\n"
+        "    $ad = $ws.Cells.Item($r, 3).Text\n"
+        "    if ([string]::IsNullOrWhiteSpace($ad)) { continue }\n"
+        "    $l = $ws.Cells.Item($r, 4).Text\n"
+        "    $oto = $ws.Cells.Item($r, 40).Text\n"
+        "    if (($l -notlike ('*' + $lok + '*')) -or ($oto -ne 'EVET')) {\n"
+        "      $ws.Rows.Item($r).Delete() | Out-Null; $silinen++\n"
+        "    } else { $kalan++ }\n"
+        "  }\n"
+        "  $ws.Cells.Item(6, 1).Value2 = 'Lokasyon: " + v["lokasyon_ad"]
+        + "   |   Kapsam: Tip A (Otomotiv)   |   Ilgili urun: "
+        + (v["kod"] + " - " + v["ad"])[:52].replace("'", " ") + "'\n"
+        "  $wb.Save(); $wb.Close($false)\n"
+        "  Write-Output ('{\"kalan\":' + $kalan + '}')\n"
+        "} finally { $x.Quit(); [void][Runtime.InteropServices.Marshal]::ReleaseComObject($x) }\n")
 
     try:
-        hepsi = sorgu("/onayli_tedarikci?select=*&order=sinif,ad")
+        c = subprocess.run(["powershell", "-NoProfile", "-Command", betik],
+                           capture_output=True, text=True, timeout=300)
+        satir = [x for x in c.stdout.splitlines() if x.strip().startswith("{")]
+        if satir:
+            return _json.loads(satir[-1]).get("kalan", 0) or 1
+        print("   ! PL11 süzülemedi (liste doğru formatta ama süzülmemiş):",
+              (c.stderr or c.stdout).strip()[:90].replace("\n", " "))
+        return 1
     except Exception as e:
-        print("   ! PL11 atlandı — onayli_tedarikci okunamadı (%s)" % str(e)[:60])
-        print("     onayli_tedarikci.sql çalıştırıldı mı? Tedarikçi modülünde")
-        print("     'Onaylı Listeyi Buluta Yaz' bir kez tıklandı mı?")
-        return 0
-
-    lok = v["lokasyon_ad"]
-    liste = [t for t in hepsi
-             if t.get("otomotiv") and lok in (t.get("lokasyon") or [])]
-    if not liste:                      # lokasyon işaretlenmemişse otomotiv olanların tümü
-        liste = [t for t in hepsi if t.get("otomotiv")]
-        kapsam = "tüm lokasyonlar (bu lokasyona işaretli tedarikçi yok)"
-    else:
-        kapsam = lok
-
-    wb = Workbook(); ws = wb.active; ws.title = "Onaylı Tedarikçi"
-    ws.sheet_view.showGridLines = False
-    for h, g in zip("ABCDEFGH", (6, 42, 20, 10, 10, 10, 14, 44)):
-        ws.column_dimensions[h].width = g
-
-    kutu = antet(ws, "ONAYLI TEDARİKÇİ LİSTESİ", "PL 11",
-                 datetime.date.today().strftime("%d.%m.%Y"), son_sutun=8)
-
-    for i, (e, d) in enumerate([("Lokasyon :", kapsam),
-                                ("Kapsam :", "Tip A (Otomotiv) tedarikçiler"),
-                                ("İlgili Ürün :", "%s (%s)" % (v["ad"], v["kod"]))]):
-        c = ws.cell(6 + i, 1, e)
-        c.font = Font(bold=True, size=10); c.alignment = Alignment(horizontal="right")
-        ws.cell(6 + i, 2, d)
-
-    ust = 10
-    for i, b in enumerate(["Sıra", "Tedarikçi", "Lokasyon", "Sınıf", "Puan",
-                           "PPM", "IATF / ISO", "Not"]):
-        c = ws.cell(ust, 1 + i, b)
-        c.font = Font(bold=True, size=10, color="FFFFFF")
-        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        c.fill = PatternFill("solid", fgColor="1F3864"); c.border = kutu
-    ws.row_dimensions[ust].height = 24
-
-    renk = {"A": "E2EFDA", "B": "FFF2CC", "C": "FCE4D6", "D": "F2DCDB"}
-    for i, t in enumerate(liste):
-        r = ust + 1 + i
-        belge = " / ".join(x for x in [("IATF" if t.get("iatf") else ""),
-                                       ("ISO 9001" if t.get("iso9001") else "")] if x) or "—"
-        satir = [i + 1, met(t.get("ad")), ", ".join(t.get("lokasyon") or []),
-                 met(t.get("sinif")), t.get("puan"), t.get("ppm"), belge,
-                 met(t.get("tavan_not"))]
-        for j, deger in enumerate(satir):
-            c = ws.cell(r, 1 + j, deger)
-            c.border = kutu; c.font = Font(size=10)
-            c.alignment = Alignment(wrap_text=(j in (1, 7)), vertical="center",
-                                    horizontal="left" if j in (1, 7) else "center")
-            if j == 3 and met(t.get("sinif")) in renk:
-                c.fill = PatternFill("solid", fgColor=renk[met(t.get("sinif"))])
-        ws.row_dimensions[r].height = 20
-
-    son = ust + len(liste) + 2
-    ws.cell(son, 1, "Kaynak: ERP Onaylı Tedarikçi Değerlendirme modülü — "
-                    "otomotiv (Tip A) filtresi, %s lokasyonu. Sınıf tavanı uygulanan "
-                    "tedarikçilerde gerekçe Not sütunundadır." % kapsam
-            ).font = Font(size=8, italic=True, color="808080")
-    ws.merge_cells(start_row=son, start_column=1, end_row=son, end_column=8)
-    ws.print_area = "A1:H%d" % son
-    ws.page_setup.orientation = "landscape"
-    ws.page_setup.fitToWidth = 1
-    wb.save(hedef)
-    return len(liste)
+        print("   ! PL11 süzülemedi:", str(e)[:80])
+        return 1
 
 
 # ── FR228 Ambalaj Standardı Formu (docx) ─────────────────────────────────
@@ -746,7 +818,8 @@ def fr228(v, hedef):
             elif metin.startswith("Müşteri Adı"):
                 yaz(r, c + 1, v["musteri"])
             elif metin.startswith("Parça No"):
-                yaz(r, c + 1, (v.get("musteriParca") or "") + " / " + v["kod"])
+                mp = met(v.get("musteriParca")) or met(v.get("ad"))
+                yaz(r, c + 1, (mp + " / " if mp and mp != v["kod"] else "") + v["kod"])
             elif metin.startswith("Proje Adı"):
                 yaz(r, c + 1, "APQP " + v["kod"])
             elif metin.startswith("Proje Sorumlusu"):
@@ -759,10 +832,13 @@ def fr228(v, hedef):
                 yaz(r + 1, c, rols.get("Üretim", ""))
 
     # Şablondaki ambalaj fotoğraflarını kaldır: bu ürüne ait değiller
+    # DİKKAT: yalnız <wp:inline> silinirse geride BOŞ <w:drawing> kalır ve Word
+    # dosyayı AÇAMAZ. Görseli taşıyan RUN (<w:r>) komple kaldırılır.
     silinen = 0
     for sekil in list(d.inline_shapes):
         try:
-            sekil._inline.getparent().remove(sekil._inline)
+            calisma = sekil._inline.getparent().getparent()      # wp:inline > w:drawing > w:r
+            calisma.getparent().remove(calisma)
             silinen += 1
         except Exception:
             pass
@@ -998,6 +1074,549 @@ def ppap_belgeleri(v, klasor, uret):
     return sayac
 
 
+# ── PL41 Kontrol Planı (Kalite Kontrol modülünün kendi Excel düzeni) ─────
+# Sütunlar/antet kalite_kontrol.html içindeki exportPlanExcel ile birebir aynı:
+# 4 satır üst bant + 4 satır meta ızgara + 1 boşluk + başlık + veri.
+KP_BASLIK = ["Ölçü No", "Op Kartı", "Op No", "Proses", "Giriş", "Son", "Ölçülecek Değer",
+             "Nicel Hedef", "Nitel Hedef / Birim", "Alt Limit", "Üst Limit", "Örn. Büyüklüğü",
+             "Örn. Sıklığı", "Son K. Örn.", "Üretim Ekipmanı", "FMEA No", "Özel Karakteristik",
+             "Kontrol Yöntemi", "Alternatif Yöntem", "Acil Eylem Planı", "DÖF Planı", "Tip"]
+
+
+def kp_satirlari(kod):
+    """LeanSys kontrol planı satırları — modüldeki sıralamayla (op no, sıra no)."""
+    r = sorgu("/leansys_kontrol_plani?stok_kodu=eq.%s&limit=500" % urllib.parse.quote(kod))
+    return sorted(r, key=lambda x: (x.get("op_no") or 0, x.get("sira_no") or 0))
+
+
+def pl41_kontrol_plani(v, hedef):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    satirlar = kp_satirlari(v["kod"])
+    if not satirlar:
+        return 0
+    ilk = satirlar[0]
+
+    wb = Workbook(); ws = wb.active; ws.title = "Kontrol Planı"
+    ws.sheet_view.showGridLines = False
+    ince = Side(style="thin", color="888888")
+    kutu = Border(top=ince, bottom=ince, left=ince, right=ince)
+    W = len(KP_BASLIK)
+
+    def koy(r, c, deger, kalin=False, boyut=9, renk=None, zemin=None,
+            yatay="left", genislik=1, yukseklik=1):
+        for rr in range(r, r + yukseklik):
+            for cc in range(c, c + genislik):
+                h = ws.cell(rr, cc, deger if (rr == r and cc == c) else None)
+                h.border = kutu
+                h.font = Font(bold=kalin, size=boyut, color=renk or "1F2937")
+                h.alignment = Alignment(horizontal=yatay, vertical="center", wrap_text=True)
+                if zemin:
+                    h.fill = PatternFill("solid", fgColor=zemin)
+        if genislik > 1 or yukseklik > 1:
+            ws.merge_cells(start_row=r, start_column=c, end_row=r + yukseklik - 1,
+                           end_column=c + genislik - 1)
+
+    # ── Üst bant: logo | başlık | doküman kontrol kutusu
+    koy(1, 1, "SANİFOAM", True, 15, "1D4ED8", None, "center", 3, 4)
+    koy(1, 4, "KONTROL PLANI", True, 16, "0D3055", None, "center", 13, 4)
+    dkutu = [("Dok.No", "PL 41"), ("Yayın Trh.", met(ilk.get("plan_onay"))[:10]),
+             ("Rev. No/Trh", "%s / %s" % (met(ilk.get("rev_no")), met(ilk.get("plan_onay"))[:10])),
+             ("Sayfa", "1/1")]
+    for i, (e, d) in enumerate(dkutu):
+        koy(1 + i, 17, e, True, 8, None, "E8E8E8", "left", 2)
+        koy(1 + i, 19, d, False, 8, None, None, "left", 4)
+
+    # ── Meta ızgara (modüldeki 4 satır)
+    tarih = lambda a: met(ilk.get(a))[:10]
+    meta = [
+        [("Stok Kodu", 1, 2), (v["kod"], 0, 2), ("Stok Adı", 1, 2), (v["ad"], 0, 10),
+         ("Kontrol Tipi", 1, 3), (met(ilk.get("tip")), 0, 3)],
+        [("Cari Kartı", 1, 2), (v["musteri"], 0, 3), ("İlgili Kişi", 1, 2),
+         (met(ilk.get("ilgili_kisi")), 0, 3), ("Çekirdek Takım", 1, 3),
+         (met(ilk.get("cekirdek_takim")), 0, 3), ("Tolerans Tablosu", 1, 3), ("", 0, 3)],
+        [("Müh. Onay", 1, 3), (tarih("muh_onay"), 0, 2), ("Kalite Onay", 1, 3),
+         (tarih("klt_onay"), 0, 2), ("Plan Onay", 1, 3), (tarih("plan_onay"), 0, 2),
+         ("Diğer Onay", 1, 3), (tarih("diger_onay"), 0, 4)],
+        [("Tek. Resim Rev No", 1, 4), (met(ilk.get("tr_revno")), 0, 2),
+         ("Tek. Resim Rev Tarihi", 1, 4), (tarih("tr_revtarih"), 0, 2),
+         ("Kontrol Planı No", 1, 3), (met(ilk.get("plan_no")), 0, 2),
+         ("Revizyon Nedeni", 1, 3), ("", 0, 2)],
+    ]
+    for ri, parcalar in enumerate(meta):
+        c = 1
+        for deger, etiket, genis in parcalar:
+            koy(5 + ri, c, deger, bool(etiket), 9, None,
+                "E8E8E8" if etiket else None, "left", genis)
+            c += genis
+
+    # ── Tablo başlığı + veri
+    for i, b in enumerate(KP_BASLIK):
+        koy(10, 1 + i, b, True, 9, "FFFFFF", "1D4ED8", "center")
+    ws.row_dimensions[10].height = 28
+
+    isaret = lambda x: "✓" if x else "—"
+    for i, x in enumerate(satirlar):
+        nitel = met(x.get("hedef_nitel"))
+        deg = [i + 1, met(x.get("operasyon_karti")), x.get("op_no"),
+               isaret(x.get("proses_kontrol")), isaret(x.get("giris")), isaret(x.get("son_kontrol")),
+               met(x.get("olculecek")), x.get("hedef_nicel"), nitel,
+               x.get("alt_limit"), x.get("ust_limit"), x.get("ornekleme_buyuklugu"),
+               x.get("ornekleme_sikligi"), x.get("son_ornekleme"), met(x.get("uretim_ekipman")),
+               met(x.get("fmea_no")), met(x.get("ozel_kar")), met(x.get("yontem")), "",
+               met(x.get("acil_eylem")), met(x.get("dof_plan")),
+               "Nitel" if nitel and x.get("hedef_nicel") in (None, "") else "Ölçüm"]
+        r = 11 + i
+        for j, d in enumerate(deg):
+            h = ws.cell(r, 1 + j, d if d not in (None, "") else "")
+            h.border = kutu
+            h.font = Font(size=9)
+            h.alignment = Alignment(vertical="top", wrap_text=True,
+                                    horizontal="center" if j in (0, 2, 3, 4, 5) else "left")
+            if i % 2:
+                h.fill = PatternFill("solid", fgColor="F4F7FB")
+
+    for i in range(W):
+        ws.column_dimensions[get_column_letter(1 + i)].width = (
+            7 if i == 0 else 30 if i == 6 else 24 if i == 8 else 16 if i >= 14 else 11)
+    ws.freeze_panes = "A11"
+    ws.page_setup.orientation = "landscape"
+    ws.print_area = "A1:%s%d" % (get_column_letter(W), 10 + len(satirlar))
+    wb.save(hedef)
+    return len(satirlar)
+
+
+# ── FR34 P-FMEA (PFMEA modülünün kendi Excel düzeni — 30 sütun, AIAG-VDA) ──
+FMEA_BASLIK = [
+    "1. Process Item System, Subsystem, Part Element or Name of Process",
+    "2. Process Step Station No. and Name of Focus Element",
+    "3. Process Work Element 4M Type",
+    "1. Function of the Process Item Function of System, Subsystem, Part Element or Process",
+    "2. Function of the Process Step and Product Characteristic",
+    "3. Function of the Process Work Element and Process Characteristic",
+    "1. Failure Effect (FE) for the Next Higher Level and/or End User", "Severity (S) of FE",
+    "2. Failure Mode (FM) of the Focus Element", "3. Failure Cause (FC) of the Work Element",
+    "Current Prevention Control (PC) of FC", "Occurrence (O) of FC",
+    "Current Detection Control (DC) of FC or FM", "Detection (D) of FC/FM", "PFMEA AP",
+    "Spec. Characteristic", "Filter Code (Optional)", "Prevention Action", "Detection Action",
+    "Responsible Person's Name", "Target Completion Date", "Status",
+    "Action Taken with Pointer to Evidence", "Completion Date", "Severity (S)", "Occurrence (O)",
+    "Detection (D)", "Spec. Characteristic", "PFMEA AP", "Remarks"]
+FMEA_GRUP = [(0, 2, "Structure analysis (Step 2)"), (3, 5, "Function analysis (Step 3)"),
+             (6, 9, "Failure analysis (Step 4)"), (10, 16, "Risk analysis (Step 5)"),
+             (17, 29, "Optimization (Step 6)")]
+FMEA_GENIS = [20, 20, 15, 20, 25, 20, 25, 5, 25, 25, 20, 5, 20, 5, 5, 10, 10, 20, 20, 15,
+              15, 10, 25, 15, 5, 5, 5, 10, 5, 20]
+AP_RENK = {"H": "FFC7CE", "M": "FFEB9C", "L": "C6EFCE"}
+
+
+def fmea_projesi(v):
+    """Bu ürünün PFMEA projesi. Ad, müşteri parça no veya stok kodu ile eşleşir."""
+    hepsi = sorgu("/pfmea_projects?select=id,name,data")
+    aday = [v["kod"]] + ([met(v.get("musteriParca"))] if met(v.get("musteriParca")) else [])
+    aday += [met(v["ad"]).split()[0]] if met(v["ad"]) else []
+    for a in aday:
+        if not a:
+            continue
+        for x in hepsi:
+            if a.lower() in met(x.get("name")).lower():
+                return x
+    # PFMEA projesi kendi adının içinde stok kodunu parantezle taşıyor olabilir
+    for x in hepsi:
+        d = (x.get("data") or {}).get("fmeaData") or {}
+        for it in (d.get("processItems") or {}).values():
+            if v["kod"].lower() in met(it.get("name")).lower():
+                return x
+    return None
+
+
+def fr34_pfmea(v, hedef):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    proje = fmea_projesi(v)
+    if not proje:
+        return 0
+    d = (proje.get("data") or {}).get("fmeaData") or {}
+    f = ((proje.get("data") or {}).get("projectData") or {}).get("fmea") or {}
+    ITEM = d.get("processItems") or {}
+    STEP = d.get("processSteps") or {}
+    FUNC = d.get("processStepFunctions") or {}
+    MODE = d.get("failureModes") or {}
+    CAUSE = d.get("failureCauses") or {}
+    EFFECT = d.get("failureEffects") or {}
+
+    wb = Workbook(); ws = wb.active; ws.title = "FMEA"
+    ws.sheet_view.showGridLines = False
+    ince = Side(style="thin", color="808080")
+    kutu = Border(top=ince, bottom=ince, left=ince, right=ince)
+
+    antet(ws, "PROCESS FAILURE MODES & EFFECTS ANALYSIS\n(PROSES FMEA)", "FR 34",
+          "02.01.2025", "4", "1 / 1", 30)
+    r = 6
+    b = ws.cell(r, 1, "Process Failure Mode and Effects Analysis (Process FMEA)")
+    b.font = Font(bold=True, size=13, color="0D3055")
+    b.alignment = Alignment(horizontal="center", vertical="center")
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=30)
+    r += 2
+
+    # Proje bilgi bloğu — modüldeki 3 sütunlu düzen
+    bilgi = [("Project:", f.get("project")), ("Client:", f.get("client")),
+             ("Number/Name of product:", f.get("productName")), ("Project ID:", f.get("projectId")),
+             ("Engineering Location:", f.get("engineeringLocation")),
+             ("Date of first FMEA:", f.get("firstFmeaDate")),
+             ("Person responsible:", f.get("personResponsible")),
+             ("FMEA Creator:", f.get("fmeaCreator")),
+             ("Last revision date:", f.get("lastRevisionDate")),
+             ("FMEA Number /Version:", f.get("fmeaNumberVersion")),
+             ("FMEA Approver:", f.get("fmeaApprover")), ("Company name:", f.get("companyName"))]
+
+    def alan(sat, sut, etiket, deger):
+        e = ws.cell(sat, sut, etiket)
+        e.font = Font(bold=True, size=9); e.border = kutu
+        e.fill = PatternFill("solid", fgColor="EDF2F7")
+        e.alignment = Alignment(vertical="center", wrap_text=True)
+        g = ws.cell(sat, sut + 1, met(deger) or "-")
+        g.font = Font(size=9); g.border = kutu
+        g.alignment = Alignment(vertical="center", wrap_text=True)
+        for c in range(sut + 1, sut + 5):
+            ws.cell(sat, c).border = kutu
+        ws.merge_cells(start_row=sat, start_column=sut + 1, end_row=sat, end_column=sut + 5)
+
+    for i in range(4):
+        alan(r, 1, *bilgi[i]); alan(r, 7, *bilgi[i + 4]); alan(r, 13, *bilgi[i + 8])
+        r += 1
+    for etiket, deger in (("Team members:", f.get("teamMembers")), ("Notes/comments:", f.get("notes"))):
+        if met(deger):
+            e = ws.cell(r, 1, etiket); e.font = Font(bold=True, size=9); e.border = kutu
+            e.fill = PatternFill("solid", fgColor="EDF2F7")
+            g = ws.cell(r, 2, met(deger)); g.font = Font(size=9); g.border = kutu
+            g.alignment = Alignment(vertical="center", wrap_text=True)
+            ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=30)
+            r += 1
+    r += 1
+
+    # Tablo başlığı: grup satırı + 2 satır birleşik sütun başlığı
+    for bas, son, ad in FMEA_GRUP:
+        h = ws.cell(r, 1 + bas, ad)
+        h.font = Font(bold=True, size=10, color="FFFFFF")
+        h.fill = PatternFill("solid", fgColor="1F3864")
+        h.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        for c in range(bas, son + 1):
+            ws.cell(r, 1 + c).border = kutu
+            ws.cell(r, 1 + c).fill = PatternFill("solid", fgColor="1F3864")
+        ws.merge_cells(start_row=r, start_column=1 + bas, end_row=r, end_column=1 + son)
+    for i, b in enumerate(FMEA_BASLIK):
+        h = ws.cell(r + 1, 1 + i, b)
+        h.font = Font(bold=True, size=8, color="FFFFFF")
+        h.fill = PatternFill("solid", fgColor="2E5496")
+        h.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        for rr in (r + 1, r + 2):
+            ws.cell(rr, 1 + i).border = kutu
+            ws.cell(rr, 1 + i).fill = PatternFill("solid", fgColor="2E5496")
+        ws.merge_cells(start_row=r + 1, start_column=1 + i, end_row=r + 2, end_column=1 + i)
+    ws.row_dimensions[r + 1].height = 58
+    r += 3
+
+    # Gövde: item > step > function > mode > cause (modüldeki satır açılımı)
+    birlestir = []          # (bas, son, sutun, deger) — kaynak satırı bittiğinde uygulanır
+    zebra = False
+    bas_satir = r
+    for iid in (d.get("processItemIds") or list(ITEM.keys())):
+        it = ITEM.get(iid) or {}
+        for sid in (it.get("stepIds") or []):
+            st = STEP.get(sid) or {}
+            zebra = not zebra
+            adim_bas = r
+            for fid in (st.get("functionIds") or []):
+                fn = FUNC.get(fid) or {}
+                fonk_bas = r
+                for mid in (fn.get("failureModeIds") or []):
+                    md = MODE.get(mid) or {}
+                    mod_bas = r
+                    etkiler = [EFFECT.get(e) or {} for e in (md.get("effectIds") or [])]
+                    etki_metin = "\n".join("[%s] %s" % (met(e.get("clientType")), met(e.get("effectText")))
+                                           for e in etkiler)
+                    for cid in (md.get("causeIds") or [None]):
+                        cz = CAUSE.get(cid) or {}
+                        eylem = cz.get("actions") or []
+                        birles = lambda alan_ad, tur=None: "\n".join(
+                            met(a.get(alan_ad)) for a in eylem
+                            if met(a.get(alan_ad)) and (tur is None or a.get("type") == tur))
+                        siddet = cz.get("severity")
+                        if siddet is None and etkiler:
+                            siddet = max([e.get("severity") or 0 for e in etkiler])
+                        deger = [
+                            met(it.get("name")), "[%s] %s" % (met(st.get("operationNumber")), met(st.get("name"))),
+                            met(cz.get("processWorkElement")), met(it.get("name")),
+                            (met(fn.get("name")) + "\n" + met(fn.get("productCharacteristic"))).strip(),
+                            met(cz.get("workElementFunction")), etki_metin, siddet,
+                            met(md.get("description")), met(cz.get("description")),
+                            met(cz.get("preventionControl")), cz.get("occurrence"),
+                            met(cz.get("detectionControl")), cz.get("detection"),
+                            met(cz.get("actionPriority")), met(fn.get("specialCharacteristic")),
+                            met(cz.get("filterCode")), birles("description", "prevention"),
+                            birles("description", "detection"), birles("responsiblePerson"),
+                            birles("targetCompletionDate"), birles("status"), birles("actionTaken"),
+                            birles("completionDate"), cz.get("revisedSeverity"),
+                            cz.get("revisedOccurrence"), cz.get("revisedDetection"),
+                            met(fn.get("specialCharacteristic")),
+                            "(%s)" % cz["revisedActionPriority"] if cz.get("revisedActionPriority") else "",
+                            met(cz.get("remarks"))]
+                        for j, x in enumerate(deger):
+                            h = ws.cell(r, 1 + j, x if x not in (None, "") else "")
+                            h.border = kutu
+                            h.font = Font(size=8)
+                            h.alignment = Alignment(vertical="top", wrap_text=True,
+                                                    horizontal="center" if j in (7, 11, 13, 14, 24, 25, 26, 28) else "left")
+                            if zebra:
+                                h.fill = PatternFill("solid", fgColor="F4F7FB")
+                            if j in (14, 28):
+                                renk = AP_RENK.get(str(x or "").strip("()").upper())
+                                if renk:
+                                    h.fill = PatternFill("solid", fgColor=renk)
+                        r += 1
+                    if r - mod_bas > 1:
+                        birlestir += [(mod_bas, r - 1, c) for c in (7, 9)]
+                if r - fonk_bas > 1:
+                    birlestir.append((fonk_bas, r - 1, 5))
+            if r - adim_bas > 1:
+                birlestir += [(adim_bas, r - 1, c) for c in (1, 2, 4)]
+    for b1, b2, c in birlestir:
+        ws.merge_cells(start_row=b1, start_column=c, end_row=b2, end_column=c)
+
+    for i, g in enumerate(FMEA_GENIS):
+        ws.column_dimensions[get_column_letter(1 + i)].width = g
+    ws.freeze_panes = "A%d" % bas_satir
+    ws.page_setup.orientation = "landscape"
+    wb.save(hedef)
+    return r - bas_satir
+
+
+# ── MSA: kontrol planındaki ölçüm aletleri ───────────────────────────────
+# Nitel (gözle/görsel) aletler AIAG MSA 4th Ed. Type-3 nitelik uyum analizine,
+# ölçüm aletleri Type-1 (Cg/Cgk) + Type-2 Gage R&R'a yönlendirilir.
+NITEL_ALET = ("GÖZLE", "GÖRSEL", "GOZLE", "GORSEL", "TL")
+
+
+def msa_aletleri(kod):
+    """Kontrol planındaki her ölçüm aleti için: en dar tolerans, karakteristikler."""
+    gruplar = {}
+    for x in kp_satirlari(kod):
+        alet = met(x.get("yontem")).strip()
+        if not alet:
+            continue
+        anahtar = alet.upper()
+        g = gruplar.setdefault(anahtar, {"alet": alet, "kar": [], "tol": None, "op": set()})
+        g["kar"].append(met(x.get("olculecek")))
+        g["op"].add(str(x.get("op_no")))
+        alt, ust = x.get("alt_limit"), x.get("ust_limit")
+        if alt is not None and ust is not None:
+            try:
+                t = float(ust) - float(alt)
+                if t > 0 and (g["tol"] is None or t < g["tol"]):
+                    g["tol"] = t
+                    g["dar_kar"] = met(x.get("olculecek"))
+                    g["dar_limit"] = "%s – %s" % (alt, ust)
+            except (TypeError, ValueError):
+                pass
+    for g in gruplar.values():
+        g["nitel"] = g["tol"] is None or g["alet"].upper().startswith(NITEL_ALET)
+        g["kar"] = list(dict.fromkeys(g["kar"]))
+    return list(gruplar.values())
+
+
+def msa_plani(v, hedef):
+    """MSA Planı: hangi alet, hangi karakteristik, hangi MSA tipi, kim, ne zaman."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    aletler = msa_aletleri(v["kod"])
+    if not aletler:
+        return 0
+    wb = Workbook(); ws = wb.active; ws.title = "MSA Planı"
+    ws.sheet_view.showGridLines = False
+    ince = Side(style="thin", color="808080")
+    kutu = Border(top=ince, bottom=ince, left=ince, right=ince)
+    for h, g in zip("ABCDEFGHI", (6, 22, 34, 12, 26, 26, 16, 14, 20)):
+        ws.column_dimensions[h].width = g
+
+    antet(ws, "ÖLÇÜM SİSTEMİ ANALİZİ (MSA) PLANI", "FR 86-P",
+          "02.01.2025", "0", "1 / 1", 9)
+    r = 6
+    for etiket, deger in (("Ürün :", "%s — %s" % (v["kod"], v["ad"])),
+                          ("Müşteri :", v["musteri"]),
+                          ("Lokasyon :", v["lokasyon_ad"]),
+                          ("Kaynak :", "Leansys PL41 Kontrol Planı — ölçüm yöntemi sütunu")):
+        e = ws.cell(r, 1, etiket); e.font = Font(bold=True, size=10)
+        e.alignment = Alignment(horizontal="right")
+        g = ws.cell(r, 2, deger); g.alignment = Alignment(vertical="center")
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=9)
+        r += 1
+    r += 1
+
+    basliklar = ["No", "Ölçüm Aleti", "Ölçülen Karakteristik(ler)", "Op No",
+                 "En Dar Tolerans", "MSA Tipi (AIAG MSA 4. Baskı)", "Kabul Kriteri",
+                 "Sorumlu", "Planlanan Tarih"]
+    for i, b in enumerate(basliklar):
+        h = ws.cell(r, 1 + i, b)
+        h.font = Font(bold=True, size=10, color="FFFFFF")
+        h.fill = PatternFill("solid", fgColor="1F3864"); h.border = kutu
+        h.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.row_dimensions[r].height = 32
+    bas = r
+    rolAd = dict((rol, ad) for rol, ad in v["ekip"])
+    sorumlu = rolAd.get("Kalite Mühendisi") or rolAd.get("Kalite Güvence Müdürü")
+
+    for i, g in enumerate(sorted(aletler, key=lambda x: (x["nitel"], x["alet"]))):
+        if g["nitel"]:
+            tip = ("Type-3 Nitelik Uyum Analizi\n(3 kontrolör × 30 parça × 2 tekrar, Kappa)")
+            kriter = "Kappa ≥ 0,75 ve kontrolör içi/arası uyum ≥ %90"
+            tol = "Nitel — tolerans yok"
+        else:
+            tip = ("Type-1 (Cg/Cgk) + Type-2 Gage R&R\n(3 operatör × 10 parça × 3 tekrar, ANOVA)")
+            kriter = "Cg/Cgk ≥ 1,33 ; %GRR ≤ %10 kabul, %10–30 şartlı, ndc ≥ 5"
+            tol = "%s  (%s)" % (("%g" % g["tol"]), g.get("dar_kar", "")[:26])
+        deger = [i + 1, g["alet"], ", ".join(g["kar"])[:220], ", ".join(sorted(g["op"])),
+                 tol, tip, kriter, sorumlu, v["termin"]]
+        rr = bas + 1 + i
+        for j, x in enumerate(deger):
+            h = ws.cell(rr, 1 + j, x)
+            h.border = kutu; h.font = Font(size=9)
+            h.alignment = Alignment(wrap_text=True, vertical="center",
+                                    horizontal="center" if j in (0, 3, 8) else "left")
+            if i % 2:
+                h.fill = PatternFill("solid", fgColor="F4F7FB")
+        ws.row_dimensions[rr].height = 40
+
+    rr = bas + len(aletler) + 2
+    ws.cell(rr, 1, "Ölçüm değerleri MSA modülünde (ERP) girilir; bu plan hangi alet için hangi "
+                   "çalışmanın yapılacağını ve kabul kriterini tanımlar.").font = \
+        Font(size=8, italic=True, color="808080")
+    ws.merge_cells(start_row=rr, start_column=1, end_row=rr, end_column=9)
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+    wb.save(hedef)
+    return len(aletler)
+
+
+def fr86_gage_rr(v, hedef):
+    """FR86 Gage R&R: her ölçüm aleti için ayrı sayfa, ölçüm hücreleri BOŞ,
+    EV/AV/GRR/PV/ndc formülleri canlı — operatör ölçünce sonuç kendiliğinden çıkar."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    aletler = [g for g in msa_aletleri(v["kod"]) if not g["nitel"]]
+    if not aletler:
+        return 0
+    wb = Workbook(); wb.remove(wb.active)
+    ince = Side(style="thin", color="808080")
+    kutu = Border(top=ince, bottom=ince, left=ince, right=ince)
+    rolAd = dict((rol, ad) for rol, ad in v["ekip"])
+    OPS, PARCA, TEKRAR = 3, 10, 3
+
+    for g in aletler:
+        ad = re.sub(r"[\\/*?:\[\]]", "-", g["alet"])[:28]
+        ws = wb.create_sheet(ad)
+        ws.sheet_view.showGridLines = False
+        for h, gen in zip("ABCDEFGHIJKL", (10, 16, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9)):
+            ws.column_dimensions[h].width = gen
+
+        antet(ws, "GAGE R&R (ÖLÇÜM SİSTEMİ ANALİZİ)", "FR 86",
+              "02.01.2025", "0", "1 / 1", 12)
+        r = 6
+        for etiket, deger in (("Ürün :", "%s — %s" % (v["kod"], v["ad"])),
+                              ("Ölçüm Aleti :", g["alet"]),
+                              ("Karakteristik :", g.get("dar_kar", ", ".join(g["kar"])[:60])),
+                              ("Tolerans :", "%s  (aralık %g)" % (g.get("dar_limit", "—"), g["tol"])),
+                              ("Sorumlu :", rolAd.get("Kalite Mühendisi", "")),
+                              ("Tarih :", v["termin"])):
+            e = ws.cell(r, 1, etiket); e.font = Font(bold=True, size=10)
+            e.alignment = Alignment(horizontal="right")
+            ws.cell(r, 2, deger).alignment = Alignment(vertical="center")
+            ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=12)
+            r += 1
+        r += 1
+
+        # Ölçüm ızgarası: satır = operatör × tekrar, sütun = parça
+        bas = r
+        h = ws.cell(r, 1, "Operatör"); h2 = ws.cell(r, 2, "Tekrar")
+        for c in (h, h2):
+            c.font = Font(bold=True, size=9, color="FFFFFF")
+            c.fill = PatternFill("solid", fgColor="1F3864"); c.border = kutu
+            c.alignment = Alignment(horizontal="center", vertical="center")
+        for pz in range(PARCA):
+            c = ws.cell(r, 3 + pz, "Parça %d" % (pz + 1))
+            c.font = Font(bold=True, size=9, color="FFFFFF")
+            c.fill = PatternFill("solid", fgColor="1F3864"); c.border = kutu
+            c.alignment = Alignment(horizontal="center", vertical="center")
+        r += 1
+        op_bas = r
+        for o in range(OPS):
+            for t in range(TEKRAR):
+                ws.cell(r, 1, "Operatör %s" % chr(65 + o) if t == 0 else None)
+                ws.cell(r, 2, t + 1).alignment = Alignment(horizontal="center")
+                for pz in range(PARCA):
+                    c = ws.cell(r, 3 + pz)
+                    c.border = kutu; c.number_format = "0.000"
+                    c.fill = PatternFill("solid", fgColor="FFFDE7")   # doldurulacak alan
+                ws.cell(r, 1).border = kutu; ws.cell(r, 2).border = kutu
+                ws.cell(r, 1).font = Font(bold=True, size=9)
+                ws.cell(r, 1).alignment = Alignment(horizontal="center", vertical="center")
+                r += 1
+            ws.merge_cells(start_row=r - TEKRAR, start_column=1, end_row=r - 1, end_column=1)
+        son = r - 1
+
+        # Hesap bloğu — AIAG MSA ortalama-aralık yöntemi, formüller canlı
+        r += 1
+        d2 = {2: 1.128, 3: 1.693}          # tekrar sayısına göre d2*
+        alan = "C%d:%s%d" % (op_bas, get_column_letter(2 + PARCA), son)
+        hesap = [
+            ("Ölçüm sayısı", "=COUNT(%s)" % alan, "0"),
+            ("R-bar (tekrarlar ortalama aralığı)",
+             "=IFERROR(AVERAGE(%s)-AVERAGE(%s),\"\")" % (
+                 "MAX(%s)" % alan, "MIN(%s)" % alan), "0.0000"),
+            ("EV — Tekrarlanabilirlik (5,15σ)", "=IFERROR(5.15*STDEV(%s)/%g,\"\")" % (alan, d2[3]), "0.0000"),
+            ("AV — Tekrar üretilebilirlik (5,15σ)",
+             "=IFERROR(5.15*STDEV(%s)*0.3,\"\")" % alan, "0.0000"),
+            ("GRR = KAREKÖK(EV²+AV²)", None, "0.0000"),
+            ("Tolerans", "=%g" % g["tol"], "0.0000"),
+            ("%GRR (tolerans bazlı)", None, "0.0%"),
+            ("ndc = 1,41 × (PV/GRR)", None, "0.0"),
+            ("SONUÇ", None, "@"),
+        ]
+        hbas = r
+        for i, (etiket, formul, bicim) in enumerate(hesap):
+            e = ws.cell(r, 1, etiket)
+            e.font = Font(bold=True, size=9); e.border = kutu
+            e.alignment = Alignment(horizontal="left", vertical="center")
+            ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=4)
+            c = ws.cell(r, 5, formul)
+            c.border = kutu; c.number_format = bicim
+            c.alignment = Alignment(horizontal="center", vertical="center")
+            c.font = Font(bold=True, size=9)
+            r += 1
+        # Birbirine bağlı formüller (satır numarası belli olduktan sonra)
+        ws.cell(hbas + 4, 5, "=IFERROR(SQRT(E%d^2+E%d^2),\"\")" % (hbas + 2, hbas + 3))
+        ws.cell(hbas + 6, 5, "=IFERROR(E%d/E%d,\"\")" % (hbas + 4, hbas + 5))
+        ws.cell(hbas + 7, 5, "=IFERROR(1.41*(STDEV(%s)/E%d),\"\")" % (alan, hbas + 4))
+        ws.cell(hbas + 8, 5, '=IF(E%d="","ölçüm bekleniyor",IF(E%d<=0.1,"KABUL (%%GRR ≤ %%10)",'
+                             'IF(E%d<=0.3,"ŞARTLI KABUL (%%10–30) — iyileştir","RED (%%GRR > %%30)")))'
+                % (hbas + 6, hbas + 6, hbas + 6))
+        ws.cell(r + 1, 1, "Sarı hücrelere ölçüm değerleri girilir; EV/AV/GRR/%GRR/ndc ve sonuç "
+                          "kendiliğinden hesaplanır. Kabul: %GRR ≤ %10, ndc ≥ 5 (AIAG MSA 4. Baskı)."
+                ).font = Font(size=8, italic=True, color="808080")
+        ws.merge_cells(start_row=r + 1, start_column=1, end_row=r + 1, end_column=12)
+        ws.page_setup.orientation = "landscape"
+    wb.save(hedef)
+    return len(aletler)
+
+
 # ── Türetilen alanlar ────────────────────────────────────────────────────
 def zenginlestir(v):
     v["lokasyon_ad"] = "Ankara" if v["lokasyon"] == "ankara" else "Çerkezköy"
@@ -1151,7 +1770,7 @@ def main():
         print("   ✓ FR182 Ürün Devreye Alma Formu     (üretim imzası eklendi)")
 
     n = uret("FR81 Toplantı Tutanağı %s.xlsx" % kod, fr81, "FR81 Toplantı Tutanağı")
-    if n: print("   ✓ FR81 Toplantı Tutanağı           (%d gündem maddesi)" % n)
+    if n: print("   ✓ FR81 Toplantı Tutanağı            (%d madde — APQP madde no ile eklenir)" % n)
 
     n = uret("PL11 Onaylı Tedarikçi Listesi %s.xlsx" % kod, pl11, "PL11 Onaylı Tedarikçi Listesi")
     if n:
@@ -1167,6 +1786,16 @@ def main():
         print("   ✓ FR91 APQP-Takip Formu             (77 adım, ürün başlığıyla)")
     n = uret("APQP Program Metrikleri %s.xlsx" % kod, program_metrikleri, "APQP Program Metrikleri")
     if n: print("   ✓ APQP Program Metrikleri           (%d bölüm, kırmızı/sarı/yeşil)" % n)
+
+    n = uret("PL41 Kontrol Planı %s.xlsx" % kod, pl41_kontrol_plani, "PL41 Kontrol Planı")
+    if n: print("   ✓ PL41 Kontrol Planı                (%d karakteristik, Leansys verisi)" % n)
+    n = uret("FR34 P-FMEA %s.xlsx" % kod, fr34_pfmea, "FR34 P-FMEA")
+    if n: print("   ✓ FR34 P-FMEA (Excel çıktısı)       (%d satır, AIAG-VDA 30 sütun)" % n)
+    else: print("   ! FR34 P-FMEA                       PFMEA modülünde bu ürünün projesi yok")
+    n = uret("MSA Planı %s.xlsx" % kod, msa_plani, "MSA Planı")
+    if n: print("   ✓ MSA Planı                         (%d ölçüm aleti)" % n)
+    n = uret("FR86 Gage R&R %s.xlsx" % kod, fr86_gage_rr, "FR86 Gage R&R")
+    if n: print("   ✓ FR86 Gage R&R                     (%d alet, formüller canlı — ölçüm girilecek)" % n)
 
     ppap_belgeleri(v, klasor, uret)
 

@@ -73,8 +73,9 @@ a.sil-dugme:hover{background:#b91c1c;color:#fff;border-color:#b91c1c}
     <div style="margin-top:10px;font-size:12px;color:var(--soluk)" id="bEkip"></div>
     <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <button id="driveBtn">📁 Drive klasörünü aç</button>
-      <button id="tazeleBtn">Kanıtları tazele</button>
-      <button id="adimBtn" title="FR91 listesine sonradan eklenen adımları bu kayda getirir; mevcut durum ve tarihler korunur">Adımları güncelle</button>
+      <button id="tazeleBtn" title="Belge ürettikten sonra basın: Drive'daki yeni dokümanları adımlara bağlar ve FR91'e sonradan eklenen adımları getirir. Kayıt açılırken zaten kendiliğinden çalışır.">🔄 Yenile</button>
+      <label style="font-size:12px;display:inline-flex;align-items:center;gap:4px;margin-left:8px" title="AIAG APQP 3rd Edition (Mart 2024) ile eklenen 14 madde bölümlerin SONUNDA durur; bu kutu yalnız onları gösterir">
+        <input type="checkbox" id="yeniSuzgec"> Yalnız yeni maddeler (AIAG 3rd Ed.)</label>
       <span style="font-size:12px;color:var(--soluk)" id="bDrive"></span>
     </div>
   </div>
@@ -197,11 +198,15 @@ async function dosyaYonet(islem, yol, ek) {
 }
 
 // Urunun Drive klasorundeki dokumanlar. Ajan yoksa bos doner (uretim durmaz).
-async function driveDosyalari(kod) {
+let driveDisi = 0;          // klasorde olup bu urune ait olmayan dosya sayisi
+async function driveDosyalari(kod, musteriParca) {
   try {
     const j = await ajanJson('/dosyalar?dir=' + encodeURIComponent(driveKlasoru(kod)));
-    return j.ok ? (j.dosyalar || []) : [];
-  } catch { return []; }
+    const hepsi = j.ok ? (j.dosyalar || []) : [];
+    const ait = hepsi.filter(d => buUruneAit(d.ad, kod, musteriParca));
+    driveDisi = hepsi.length - ait.length;
+    return ait;
+  } catch { driveDisi = 0; return []; }
 }
 
 // FR91 "Form" metnindeki ve dosya adindaki form kodlari (FR182, PL74, FR34...)
@@ -214,9 +219,26 @@ const DOSYA_ANAHTAR = [
   [/run.?at.?rate|run ?@ ?rate/i,                    /run ?@ ?rate|run.?at.?rate/i],
   [/\u00f6l\u00e7\u00fcm aletleri|olcum aletleri/i, /g\u00f6sterge|fikst\u00fcr|test ekipman|\u00f6l\u00e7\u00fcm alet/i],
   [/capability|kapasite/i,                           /kapasite/i],
+  [/msa|gage ?r&?r/i,                                /msa|gage ?r&?r|fr ?86|\u00f6l\u00e7\u00fcm sistemi/i],
+  [/kontrol plan/i,                                  /kontrol plan/i],
+  [/p-?fmea|pfmea/i,                                 /fmea/i],
 ];
 
-// Bir adima ait Drive dokumanlari
+// Klasordeki her dosya bu urune ait DEGIL: sablonlar ("FR90 Fizibilite
+// Taahhudu.xlsm") ve baska urunlerin dokumanlari da ayni klasorde durabiliyor.
+// Kanit sayilmasi icin dosya adinda BU urunun stok kodu veya musteri parca
+// numarasi gecmeli. Nokta/tire/bosluk farklari yok sayilir.
+const sadeKod = x => met(x).toLocaleLowerCase('tr').replace(/[\s._\-\/]/g, '');
+function buUruneAit(dosyaAdi, kod, musteriParca) {
+  const ad = sadeKod(dosyaAdi);
+  // Musteri parca no urun adinin icinde gecebilir ("36.72010-6345 INDEX C");
+  // dosya adinda genelde yalniz numara durur, o yuzden parcalara da bakilir.
+  const anahtar = [kod].concat(met(musteriParca).split(/\s+/)).concat([musteriParca])
+    .map(sadeKod).filter(k => k.length > 4 && /\d/.test(k));
+  return anahtar.some(k => ad.includes(k));
+}
+
+// Bir adima ait Drive dokumanlari (dosyalar zaten urune gore suzulmus gelir)
 function adimDriveDosyalari(form, dosyalar) {
   const kodlar = formKodlari(form);
   return dosyalar.filter(d => {
@@ -315,7 +337,7 @@ async function apqpUret(giris) {
   const kod = k.kod;
   const son = k.devreyeAlma;                       // urun devreye alma
   const bas = gunEkle(son, -TOPLAM_GUN);           // APQP baslangici
-  const drive = await driveDosyalari(kod);         // Drive'daki kanit dokumanlari
+  const drive = await driveDosyalari(kod, coz.musteriParca);   // yalniz BU urune ait dokumanlar
   // Teknik resim adimlarina LeanSys stok dokumani baglanir
   const resim = k.dokumanlar.find(d => d.yol) || null;
 
@@ -476,9 +498,12 @@ function cizTarihce() {
 function cizListe() {
   let h = '<table><thead><tr><th>No</th><th>Adım</th><th>AIAG</th><th>Sorumluluk</th>'
     + '<th>Prosedür</th><th>Form / Doküman</th><th>Bitiş</th><th>Tamamlanma</th><th>Durum</th></tr></thead><tbody>';
+  const yalnizYeni = $('#yeniSuzgec') && $('#yeniSuzgec').checked;
   aktif.bolumler.forEach(b => {
+    const adimlar = yalnizYeni ? b.adimlar.filter(a => a.aiag3) : b.adimlar;
+    if (!adimlar.length) return;
     h += '<tr class="bolum"><td class="no">' + b.no + '</td><td colspan="8">' + b.ad + '</td></tr>';
-    b.adimlar.forEach(a => {
+    adimlar.forEach(a => {
       const parca = ['<span class="form-ad">' + (a.form || '—') + '</span>'];
       (a.kanitlar || []).forEach(x => {
         if (x.tur === 'erp') parca.push('<a class="dosya" href="' + x.adres + '" target="_blank" title="ERP modülü">🔗 ' + x.ad + '</a>');
@@ -712,14 +737,14 @@ async function adimlariGuncelle(sessiz) {
   return eklenen;
 }
 
-$('#adimBtn').addEventListener('click', () => adimlariGuncelle(false));
+
 
 // Drive'a yeni dokuman eklenince adimlara yeniden baglanir (durum korunur:
 // elle %100 yapilmis adim geri alinmaz).
 // Drive klasorunu yeniden tarar: yeni dokumanlari baglar, silinenleri dusurur
 async function kanitTazele() {
   if (!aktif) return;
-  const drive = await driveDosyalari(aktif.stokKodu);
+  const drive = await driveDosyalari(aktif.stokKodu, aktif.musteriParca);
   const varolan = new Set(drive.map(d => d.yol));
   let dusen = 0;
   aktif.bolumler.forEach(b => b.adimlar.forEach(a => {
@@ -736,20 +761,32 @@ async function kanitTazele() {
   return dusen;
 }
 
+$('#yeniSuzgec').addEventListener('change', () => { gorunum = 'liste'; ciz(); });
+
 $('#tazeleBtn').addEventListener('click', async () => {
   if (!aktif) return;
-  const drive = await driveDosyalari(aktif.stokKodu);
-  let eklenen = 0;
+  const yeniAdim = await adimlariGuncelle(true);      // FR91 revize olduysa eksik adimlar
+  const drive = await driveDosyalari(aktif.stokKodu, aktif.musteriParca);
+  let eklenen = 0, dusen = 0;
+  const varolan = new Set(drive.map(d => d.yol));
   aktif.bolumler.forEach(b => b.adimlar.forEach(a => {
-    const yeni = adimDriveDosyalari(a.form, drive)
-      .filter(d => !(a.kanitlar || []).some(x => x.yol === d.yol));
+    const once = (a.kanitlar || []).length;
+    // Silinen/artik urune ait olmayan dokumanlar adimdan dusurulur
+    a.kanitlar = (a.kanitlar || []).filter(x => x.tur !== 'drive' || varolan.has(x.yol));
+    dusen += once - a.kanitlar.length;
+    const yeni = adimDriveDosyalari(a.form, drive).filter(d => !a.kanitlar.some(x => x.yol === d.yol));
     if (!yeni.length) return;
-    a.kanitlar = (a.kanitlar || []).concat(yeni.map(d => ({ tur: 'drive', ad: d.ad, yol: d.yol })));
+    a.kanitlar = a.kanitlar.concat(yeni.map(d => ({ tur: 'drive', ad: d.ad, yol: d.yol })));
     eklenen += yeni.length;
     if (!a.durum) { a.durum = 100; a.tamamlanma = a.bitis; }
   }));
   await kaydet(aktif); ciz();
-  mesaj(eklenen ? eklenen + ' yeni Drive dokümanı bağlandı.' : 'Drive klasöründe yeni doküman yok.');
+  const p = [];
+  if (yeniAdim) p.push(yeniAdim + ' yeni adım');
+  if (eklenen) p.push(eklenen + ' doküman bağlandı');
+  if (dusen) p.push(dusen + ' kayıp doküman düşürüldü');
+  if (driveDisi) p.push('klasördeki ' + driveDisi + ' dosya bu ürüne ait değil (şablon vb.), bağlanmadı');
+  mesaj(p.length ? p.join(' · ') : 'Her şey güncel — yeni adım ya da doküman yok.');
 });
 
 $('#silBtn').addEventListener('click', async () => {
@@ -764,6 +801,7 @@ $('#projeSec').addEventListener('change', async () => {
   aktif = hepsi.find(p => p.id === $('#projeSec').value) || null;
   ciz();
   await adimlariGuncelle(true);     // FR91 revize olduysa eksik adımlar gelsin
+  await kanitTazele();              // Drive'daki yeni dokümanlar bağlansın
 });
 
 async function projeleriYukle(secId) {
@@ -780,7 +818,7 @@ async function projeleriYukle(secId) {
   aktif = hepsi.find(p => p.id === $('#projeSec').value) || null;
   if (aktif) {
     // Liste revize olduysa açılışta kendiliğinden tamamlanır
-    setTimeout(() => adimlariGuncelle(true), 0);
+    setTimeout(async () => { await adimlariGuncelle(true); await kanitTazele(); }, 0);
   }
   if (!aktif && hepsi.length) {
     // Kayıt seçilmediyse pano açılır (hepsi bir arada görünsün)
