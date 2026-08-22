@@ -176,13 +176,18 @@ def _yazi_kutulari(im):
         x, y, g, h, alan = ist[i]
         if alan < 40:
             continue
-        if 18 <= h <= 60 and 6 <= g <= 60:
+        # Rakam BOYUNA olur (11-20 geniş × 22-30 yüksek). Ölçü çizgisinin ok
+        # ucu ENİNE (29×20) ve ölçü sanılıp balonlanıyordu — en/boy ile elenir.
+        if 18 <= h <= 60 and 6 <= g <= 60 and h > g * 1.05:
             kar.append((x, y, g, h, "y"))          # yatay yazı
-        elif 18 <= g <= 60 and 6 <= h <= 60:
+        elif 18 <= g <= 60 and 6 <= h <= 60 and g > h * 1.05:
             kar.append((x, y, g, h, "d"))          # 90° döndürülmüş yazı
 
     def birlestir(kutu, yon):
-        kutu = sorted(kutu, key=lambda k: (k[1], k[0]) if yon == "y" else (k[0], k[1]))
+        # Dikey yazida once SUTUN BANDI, sonra y: yalniz x'e gore siralamak
+        # "485" gibi dikey sayilari boluyor ve her rakama ayri balon dusuyordu
+        kutu = sorted(kutu, key=lambda k: (k[1], k[0]) if yon == "y"
+                      else (k[0] // 24, k[1]))
         grup = []
         for x, y, g, h, _ in kutu:
             for gr in grup:
@@ -260,15 +265,87 @@ def _kutu_oku(im, s):
     return t if abs(hane - beklenen) <= 1 else None
 
 
+def _karakterler(im, s, etiket, ist, n):
+    """Kutunun içindeki tek tek karakterler, okuma sırasına göre."""
+    x0, y0, x1, y1 = s["x"], s["y"], s["x"] + s["g"], s["y"] + s["h"]
+    liste = []
+    for i in range(1, n):
+        x, y, g, h, alan = ist[i]
+        if alan < 40:
+            continue
+        if x >= x0 - 2 and y >= y0 - 2 and x + g <= x1 + 2 and y + h <= y1 + 2:
+            liste.append((x, y, g, h, i))
+    # yatay: soldan sağa · dikey (90° dönük): yukarıdan aşağı
+    return sorted(liste, key=lambda c: c[0] if s["yon"] == "y" else c[1])
+
+
+def _normal(etiket, c, boyut=24):
+    import cv2
+    import numpy as np
+    x, y, g, h, i = c
+    kes = (etiket[y:y + h, x:x + g] == i).astype(np.uint8) * 255
+    return cv2.resize(kes, (boyut, boyut), interpolation=cv2.INTER_AREA).astype(np.float32)
+
+
+def rakam_modeli(im, kutular, etiket, ist, n):
+    """Rakam şablonlarını ÇİZİMİN KENDİSİNDEN öğrenir.
+    OCR'ın güvenle okuduğu kutular tohum olur; çizimde tek font/boyut
+    olduğu için şablon eşleştirme OCR'dan belirgin biçimde daha iyi okur."""
+    import cv2
+    import numpy as np
+    tohum = {}
+    for s in kutular:
+        t = _kutu_oku(im, s)
+        if not t or "." in t:
+            continue
+        kar = _karakterler(im, s, etiket, ist, n)
+        if len(kar) != len(t):
+            continue
+        for c, d in zip(kar, t):
+            a = _normal(etiket, c)
+            if s["yon"] == "d":
+                a = cv2.rotate(a, cv2.ROTATE_90_CLOCKWISE)
+            tohum.setdefault(d, []).append(a)
+    return {d: np.mean(v, axis=0) for d, v in tohum.items() if len(v) >= 2}
+
+
+def _sablonla_oku(model, etiket, s, kar):
+    """Karakterleri öğrenilmiş rakam şablonlarıyla okur."""
+    import cv2
+    import numpy as np
+    if not model or not kar:
+        return None
+    hane, guven = [], []
+    for c in kar:
+        a = _normal(etiket, c)
+        if s["yon"] == "d":
+            a = cv2.rotate(a, cv2.ROTATE_90_CLOCKWISE)
+        en, iyi = None, -2.0
+        for d, m in model.items():
+            p = float(np.corrcoef(a.ravel(), m.ravel())[0, 1])
+            if p > iyi:
+                iyi, en = p, d
+        hane.append(en or "?")
+        guven.append(iyi)
+    t = "".join(hane)
+    return t if ("?" not in t and guven and min(guven) > 0.55) else None
+
+
 def tum_olculer(im, capa, plan_degerleri=()):
     """Çizimdeki tüm ölçü kutuları: [(deger|None, x, y, g, h, kaynak)].
     kaynak: 'plan' (kontrol planıyla doğrulandı) · 'okundu' · None (okunamadı)"""
+    import cv2
+    import numpy as np
     H, W = im.shape
     kutu = [s for s in _yazi_kutulari(im) if not _olcu_disi(s, W, H, capa)]
     plan = {("%g" % float(d)) for d in plan_degerleri}
+    siyah = (im < 128).astype(np.uint8)
+    n_bil, etiket, ist, _ = cv2.connectedComponentsWithStats(siyah, 8)
+    model = rakam_modeli(im, kutu, etiket, ist, n_bil)
     sonuc = []
     for s in kutu:
-        t = _kutu_oku(im, s)
+        kar = _karakterler(im, s, etiket, ist, n_bil)
+        t = _sablonla_oku(model, etiket, s, kar) or _kutu_oku(im, s)
         kaynak = None
         if t is not None:
             kaynak = "plan" if ("%g" % float(t)) in plan else "okundu"
@@ -395,9 +472,9 @@ def uret(kod, tiff_yolu, klasor, kp_satirlari, sablon_kutusu=None, tam=True):
                 # Balon yazinin USTUNE binmesin: yatay yazida soluna,
                 # dikey (90 donuk) yazida ustune konur
                 if o.get("yon") == "d":
-                    bx, by = o["x"] + o["g"] // 2, o["y"] - 56
+                    bx, by = o["x"] + o["g"] // 2, o["y"] - 78
                 else:
-                    bx, by = o["x"] - 56, o["y"] + o["h"] // 2
+                    bx, by = o["x"] - 78, o["y"] + o["h"] // 2
                 atama.append((etiket, bx, by, o["kaynak"]))
                 satirlar.append({"no": etiket, "deger": o["deger"], "kaynak": o["kaynak"],
                                  "pos": pno, "x": o["x"], "y": o["y"]})
