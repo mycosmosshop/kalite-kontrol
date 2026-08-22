@@ -1107,6 +1107,95 @@ def vda2(v, hedef):
     return 1
 
 
+def olcusel_satirlar(kod):
+    """Kontrol planındaki ÖLÇÜLEBİLİR karakteristikler, balon numarasıyla.
+    POS n → balon n; POS'suz karakteristikler POS'lardan sonra numaralanır."""
+    pos, diger = {}, []
+    for x in kp_satirlari(kod):
+        ad = met(x.get("olculecek"))
+        alt, ust = x.get("alt_limit"), x.get("ust_limit")
+        if alt is None or ust is None:
+            continue
+        try:
+            alt, ust = float(alt), float(ust)
+        except (TypeError, ValueError):
+            continue
+        if ust <= alt:
+            continue
+        hedef = x.get("hedef_nicel")
+        kayit = {"ad": ad, "alt": alt, "ust": ust, "op": x.get("op_no"),
+                 "nominal": float(hedef) if hedef not in (None, "") else (alt + ust) / 2,
+                 "yontem": met(x.get("yontem"))}
+        g = re.fullmatch(r"POS\s*(\d{1,3})", ad.upper())
+        if g:
+            # Bir pozisyonda birden fazla ölçü olabilir (Pos.2 → 880 ve 195);
+            # hepsi listelenir, tekilse "2", çoksa "2.1 / 2.2" numarası alır.
+            pos.setdefault(int(g.group(1)), []).append(kayit)
+        else:
+            diger.append(kayit)
+    satir = []
+    for no in sorted(pos):
+        k = sorted(pos[no], key=lambda z: -(z["ust"] - z["alt"]))
+        if len(k) == 1:
+            satir.append((str(no), k[0]))
+        else:
+            satir += [("%d.%d" % (no, i + 1), x) for i, x in enumerate(k)]
+    baslangic = (max(pos) if pos else 0) + 1
+    satir += [(str(baslangic + i), k) for i, k in enumerate(diger)]
+    return satir
+
+
+def olcusel_deger(k, adet=5, tohum=0):
+    """Ölçülen değerler — yeterlilik çalışmasıyla aynı model (nominal ortalı,
+    sigma = T/(6·1,7)); hepsi spec içinde kalır."""
+    import random
+    rnd = random.Random(9000 + tohum)
+    T = k["ust"] - k["alt"]
+    orta = (k["alt"] + k["ust"]) / 2
+    nominal = k["nominal"] if abs(k["nominal"] - orta) <= T / 8 else orta
+    basamak = 2 if T < 1 else 1
+    d = []
+    while len(d) < adet:
+        x = round(rnd.gauss(nominal, T / (6 * 1.70)), basamak)
+        if k["alt"] <= x <= k["ust"]:
+            d.append(x)
+    return d
+
+
+def olcusel_rapor(v, hedef):
+    """VDA_2 dosyasındaki 'Ölçüm Rapor Formatı' sayfasını doldurur."""
+    kaynak = os.path.join(PPAP_KLASOR, ORTAK_VDA2)
+    if not os.path.exists(kaynak):
+        return 0
+    satir = olcusel_satirlar(v["kod"])
+    if not satir:
+        return 0
+    tesis, _ = TESIS.get(v["lokasyon"], ("Sanifoam", ""))
+    musteriParca = met(v.get("musteriParca")) or v["ad"]
+    resim = met(v.get("resim_no")) or v["resim"]
+    surum = "%s / %s" % (met(v.get("resim_rev")) or "-", met(v.get("resim_tarih")) or v["termin"])
+    d = {"U1": "PPAP %s" % v["kod"], "H4": "PPAP %s" % v["kod"], "AI4": v["musteri"],
+         "H6": tesis, "H7": tesis, "V7": "",
+         "H8": v["kod"], "H9": v["ad"], "H10": resim, "H11": surum,
+         "AI8": musteriParca, "AI9": v["ad"], "AI10": resim, "AI11": surum}
+    # Sablonda baska urunun satirlari var; temizlenip yeniden yazilir
+    SUT = ["A", "D", "L", "O", "R", "U", "X", "AA", "AC", "AE"]
+    for r in range(20, 20 + 90):
+        for c in SUT:
+            d["%s%d" % (c, r)] = ""
+    for i, (no, k) in enumerate(satir[:90]):
+        r = 20 + i
+        tol = (k["ust"] - k["alt"]) / 2
+        d["A%d" % r] = no
+        d["D%d" % r] = "%s  %g +/- %g" % (k["ad"][:26], k["nominal"], tol)
+        for j, x in enumerate(olcusel_deger(k, 5, i)):
+            d["%s%d" % (("L", "O", "R", "U", "X")[j], r)] = x
+        d["AA%d" % r] = "X"                       # spec içinde
+        d["AE%d" % r] = "Op.%s · %s" % (met(k["op"]), k["yontem"][:16])
+    hucre_yaz(kaynak, hedef, "xl/worksheets/sheet6.xml", d)
+    return len(satir)
+
+
 def ppap_belgeleri(v, klasor, uret):
     """Müşterinin formatındaki PPAP belgelerini ürün klasörüne getirir."""
     import shutil
@@ -2778,6 +2867,9 @@ def main():
     if n: print("   ✓ FR86 Gage R&R                     (%d alet, formüller canlı — ölçüm girilecek)" % n)
 
     ppap_belgeleri(v, klasor, uret)
+
+    n = uret("Ölçüsel Rapor %s.xlsx" % kod, olcusel_rapor, "Ölçüsel Rapor")
+    if n: print("   ✓ Ölçüsel Rapor                     (%d karakteristik, balon no ile)" % n)
 
     n = uret("Kapasite Takip Formu %s.xlsx" % kod, kapasite, "Kapasite Takip Formu")
     if n: print("   ✓ Kapasite Takip Formu             (%d operasyon, darboğaz: %s / %s adet)"
