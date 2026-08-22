@@ -215,7 +215,9 @@ def _yazi_kutulari(im):
 def _olcu_disi(s, W, H, capa):
     """Çerçeve cetveli, antet, tablo ve 'Pos.' etiketleri ölçü değildir."""
     x, y = s["x"], s["y"]
-    if x < W * 0.035 or x > W * 0.972 or y < H * 0.03 or y > H * 0.965:
+    # Kenar cetveli dar bir bant; pay genis tutulunca cizimin sol kenarindaki
+    # olculer (or. "255") de eleniyordu.
+    if x < W * 0.021 or x > W * 0.978 or y < H * 0.022 or y > H * 0.972:
         return True
     if x > W * 0.655 and y > H * 0.735:
         return True
@@ -259,7 +261,28 @@ def _yakinlari_birlestir(kutular, esik=26):
                 break
         else:
             sonuc.append(dict(s))
-    return sonuc
+    # YON BAGIMSIZ eleme: ayni sayinin bir parcasi bazen "dikey yazi" diye
+    # ayri kutu oluyor ve yan yana IKI balon cikiyordu. Ust uste binen ya da
+    # cok yakin kutulardan BUYUK olan kalir.
+    sonuc.sort(key=lambda z: -(z["g"] * z["h"]))
+    kalanlar = []
+    for s in sonuc:
+        mx, my = s["x"] + s["g"] / 2, s["y"] + s["h"] / 2
+        cakisir = False
+        for g in kalanlar:
+            gx, gy = g["x"] + g["g"] / 2, g["y"] + g["h"] / 2
+            if abs(mx - gx) < 46 and abs(my - gy) < 34:
+                cakisir = True
+                break
+            # kutu tamamen digerinin icindeyse de ayni olcudur
+            if (g["x"] - 6 <= s["x"] and g["y"] - 6 <= s["y"]
+                    and s["x"] + s["g"] <= g["x"] + g["g"] + 6
+                    and s["y"] + s["h"] <= g["y"] + g["h"] + 6):
+                cakisir = True
+                break
+        if not cakisir:
+            kalanlar.append(s)
+    return kalanlar
 
 
 def _kutu_oku(im, s):

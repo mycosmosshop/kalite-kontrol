@@ -98,6 +98,16 @@ def hucre_yaz(kaynak, hedef, sayfa_dosyasi, degerler, ek_xml=None, yeni_parcalar
     ayni yazma isleminde degistirmek icin."""
     zin = zipfile.ZipFile(kaynak)
     xml = _secim_duzelt(zin.read(sayfa_dosyasi).decode("utf-8"))
+    # Yazilmayan sayfalarda da secim tutarsizsa Excel dosyayi ACARKEN
+    # onariyor; hepsi duzeltilir.
+    ek_xml = dict(ek_xml or {})
+    for e in zin.infolist():
+        if re.match(r"xl/worksheets/sheet\d+\.xml$", e.filename) \
+                and e.filename != sayfa_dosyasi and e.filename not in ek_xml:
+            g = zin.read(e.filename).decode("utf-8")
+            d = _secim_duzelt(g)
+            if d != g:
+                ek_xml[e.filename] = d
 
     for ref, deger in degerler.items():
         sayi = isinstance(deger, (int, float))
@@ -1072,6 +1082,21 @@ TESIS = {
     "eskisehir": ("Sanifoam Eskişehir", ""),
 }
 KURULUS = "Sanifoam Endüstri ve Tüketim Ürünleri San. Tic. A.Ş."
+# Musteriye giden belgeleri onaylayan kisi — lokasyona gore
+IMZA = {
+    "ankara":    ("Emre Biçer", "emre.bicer@sanifoam.com.tr"),
+    "eskisehir": ("Ayşegül Ekiz", "aysegul.ekiz@sanifoam.com.tr"),
+    "cerkezkoy": ("Umut Çiftçioğulları", "umut.ciftciogullari@sanifoam.com.tr"),
+}
+
+
+def imza_blogu(v, satir):
+    """Confirmation of organization bloğu. satir: ilk satır (Name) numarası."""
+    ad, posta = IMZA.get(v["lokasyon"], IMZA["eskisehir"])
+    return {"I%d" % satir: ad,
+            "I%d" % (satir + 1): "Quality department",
+            "I%d" % (satir + 3): posta,
+            "I%d" % (satir + 4): v["termin"]}
 DUNS = "50-460-2883"
 
 
@@ -1111,12 +1136,32 @@ def vda2(v, hedef):
                "U9": "İlk devreye alma — APQP %s" % v["kod"],
                "AF9": v["devreye"], "AJ9": v["devreye"], "AT9": KURULUS})
 
-    ara = hedef + ".ara"
-    hucre_yaz(kaynak, ara, "xl/worksheets/sheet1.xml", a2)
-    ara2 = hedef + ".ara2"
-    hucre_yaz(ara, ara2, "xl/worksheets/sheet4.xml", a4)
-    hucre_yaz(ara2, hedef, "xl/worksheets/sheet10.xml", pg)
-    for x in (ara, ara2):
+    # Öz değerlendirme sayfaları: kimlik bloğu (değerlendirme X'leri
+    # şablondaki gibi kalır — kuruluşun kendi beyanı).
+    kimlik = {"H4": rapor, "AI4": v["musteri"], "H6": tesis, "H7": tesis, "V7": "",
+              "H8": v["kod"], "H9": v["ad"], "H10": resim, "H11": surum,
+              "AI8": musteriParca, "AI9": v["ad"], "AI10": resim, "AI11": surum}
+    # Ölçüm Rapor Formatı: şablonda başka ürünün satırları var
+    olcum = dict(kimlik)
+    olcum["U1"] = rapor
+    olcum.update(imza_blogu(v, 130))
+    olcum.update(olcusel_hucreler(v, v.get("balon")))
+    a4.update(imza_blogu(v, 28))
+
+    sayfalar = [("xl/worksheets/sheet1.xml", a2),
+                ("xl/worksheets/sheet2.xml", kimlik),
+                ("xl/worksheets/sheet3.xml", kimlik),
+                ("xl/worksheets/sheet4.xml", a4),
+                ("xl/worksheets/sheet6.xml", olcum),
+                ("xl/worksheets/sheet10.xml", pg)]
+    kayn, gecici = kaynak, []
+    for i, (sayfa, deger) in enumerate(sayfalar):
+        cikti = hedef if i == len(sayfalar) - 1 else "%s.ara%d" % (hedef, i)
+        hucre_yaz(kayn, cikti, sayfa, deger)
+        if kayn != kaynak:
+            gecici.append(kayn)
+        kayn = cikti
+    for x in gecici:
         try:
             os.remove(x)
         except OSError:
@@ -1309,13 +1354,9 @@ def balon_satirlari(v, balon):
     return satir, sinif, uyan, toplam
 
 
-def olcusel_rapor(v, hedef, balon=None):
-    """VDA_2 dosyasındaki 'Ölçüm Rapor Formatı' sayfasını doldurur.
-    balon verilirse çizimdeki TÜM ölçüler listelenir (PPAP tam kapsam);
-    verilmezse yalnız kontrol planı karakteristikleri."""
-    kaynak = os.path.join(PPAP_KLASOR, ORTAK_VDA2)
-    if not os.path.exists(kaynak):
-        return 0
+def olcusel_hucreler(v, balon=None):
+    """'Ölçüm Rapor Formatı' sayfasının hücreleri. Hem tek başına ölçüsel
+    raporda hem VDA_2 dosyasının içinde aynı içerik kullanılır."""
     if balon:
         ham, sinif, uyan, toplam = balon_satirlari(v, balon)
         satir = [(no, k) for no, k, _ in ham]
@@ -1324,7 +1365,7 @@ def olcusel_rapor(v, hedef, balon=None):
         satir = olcusel_satirlar(v["kod"])
         notlar = {}
     if not satir:
-        return 0
+        return {}
     tesis, _ = TESIS.get(v["lokasyon"], ("Sanifoam", ""))
     musteriParca = met(v.get("musteriParca")) or v["ad"]
     resim = met(v.get("resim_no")) or v["resim"]
@@ -1356,8 +1397,20 @@ def olcusel_rapor(v, hedef, balon=None):
         # olarak dogru, ayrica uyari yazilmaz (kullanicinin karari).
         d["AE%d" % r] = notlar.get(no) or (
             "Op.%s · %s (%s)" % (met(k["op"]), alet[:14], coz_ad))
+    d.update(imza_blogu(v, 130))
+    return d
+
+
+def olcusel_rapor(v, hedef, balon=None):
+    """Ölçüsel rapor (PPAP 2.2.9) — VDA_2 'Ölçüm Rapor Formatı' düzeninde."""
+    kaynak = os.path.join(PPAP_KLASOR, ORTAK_VDA2)
+    if not os.path.exists(kaynak):
+        return 0
+    d = olcusel_hucreler(v, balon)
+    if not d:
+        return 0
     hucre_yaz(kaynak, hedef, "xl/worksheets/sheet6.xml", d)
-    return len(satir)
+    return sum(1 for k in d if re.fullmatch(r"A\d+", k) and d[k] != "")
 
 
 def ppap_belgeleri(v, klasor, uret):
@@ -3014,6 +3067,7 @@ def main():
         cizim = balonla.cizim_yolu(v["dok"])
         if cizim:
             n, rapor, balon_satir = balonla.uret(kod, cizim, klasor, kp_satirlari)
+            v["balon"] = balon_satir          # VDA_2 ölçüm sayfası da bunu kullanır
             print("   %s Numaralandırılmış Teknik Resim  (%s)"
                   % ("✓" if n else "!", rapor))
         else:
