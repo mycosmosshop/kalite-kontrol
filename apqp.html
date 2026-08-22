@@ -482,12 +482,14 @@ function cizListe() {
         if (x.tur === 'erp') parca.push('<a class="dosya" href="' + x.adres + '" target="_blank" title="ERP modülü">🔗 ' + x.ad + '</a>');
         else {
           const ac = '<a class="dosya" href="#" data-ac="' + encodeURIComponent(x.yol) + '" title="'
-            + (x.tur === 'drive' ? 'Drive dokümanı' : 'LeanSys stok dokümanı') + ' — yerel ajanla açılır">'
+            + (x.tur === 'drive' ? 'Aç ve düzenle — Excel/Word’de açılır, kaydedince Drive’a gider'
+                                 : 'LeanSys stok dokümanı — yerel ajanla açılır') + '">'
             + (x.tur === 'drive' ? '📁 ' : '📄 ') + x.ad + '</a>';
           // Drive dokümanı düzenlenebilir/silinebilir; LeanSys dokümanına dokunulmaz
+          // Dokümana tıklayınca Excel/Word'de açılır, orada düzenlenip kaydedilir
+          // (Drive senkronlar). Ayrıca yeniden adlandırmaya gerek yok.
           const dugme = x.tur === 'drive'
-            ? ' <a href="#" class="ikon" data-ad="' + encodeURIComponent(x.yol) + '" title="Yeniden adlandır">ad değiştir</a>'
-              + ' <a href="#" class="sil-dugme" data-sil="' + encodeURIComponent(x.yol) + '" title="Geri Dönüşüm Kutusu&#39;na taşı">sil</a>'
+            ? ' <a href="#" class="sil-dugme" data-sil="' + encodeURIComponent(x.yol) + '" title="Geri Dönüşüm Kutusu&#39;na taşı">sil</a>'
             : '';
           parca.push(ac + dugme);
         }
@@ -665,8 +667,9 @@ $('#driveBtn').addEventListener('click', () => aktif && dosyaAc(driveKlasoru(akt
 
 // FR91 listesi revize olduğunda eski kayıtlara eksik adımları getirir.
 // Mevcut adımların durumu, tarihleri ve kanıtları OLDUĞU GİBİ kalır.
-$('#adimBtn').addEventListener('click', async () => {
-  if (!aktif) return;
+// Kayıt açılırken kendiliğinden çalışır; düğme elle tetiklemek için durur.
+async function adimlariGuncelle(sessiz) {
+  if (!aktif) return 0;
   const son = aktif.devreyeAlma || bugun();
   let eklenen = 0, yeniBolum = 0;
   FR91.forEach(fb => {
@@ -692,7 +695,7 @@ $('#adimBtn').addEventListener('click', async () => {
     });
   });
   aktif.bolumler.sort((x, y) => Number(x.no) - Number(y.no));
-  if (!eklenen) { mesaj('Kayıt zaten güncel — eklenecek adım yok.'); return; }
+  if (!eklenen) { if (!sessiz) mesaj('Kayıt zaten güncel — eklenecek adım yok.'); return 0; }
   aktif.tarihce = (aktif.tarihce || []).concat([{
     rev: String((aktif.tarihce || []).length), tarih: bugun(),
     aciklama: eklenen + ' adım eklendi' + (yeniBolum ? ', ' + yeniBolum + ' yeni bölüm' : ''),
@@ -704,7 +707,10 @@ $('#adimBtn').addEventListener('click', async () => {
   ciz();
   mesaj(eklenen + ' adım eklendi' + (yeniBolum ? ' (' + yeniBolum + ' yeni bölüm)' : '')
     + '. Mevcut durum ve tarihler korundu.');
-});
+  return eklenen;
+}
+
+$('#adimBtn').addEventListener('click', () => adimlariGuncelle(false));
 
 // Drive'a yeni dokuman eklenince adimlara yeniden baglanir (durum korunur:
 // elle %100 yapilmis adim geri alinmaz).
@@ -755,6 +761,7 @@ $('#projeSec').addEventListener('change', async () => {
   const hepsi = await hepsiniOku();
   aktif = hepsi.find(p => p.id === $('#projeSec').value) || null;
   ciz();
+  await adimlariGuncelle(true);     // FR91 revize olduysa eksik adımlar gelsin
 });
 
 async function projeleriYukle(secId) {
@@ -769,6 +776,10 @@ async function projeleriYukle(secId) {
     + hepsi.map(p => '<option value="' + p.id + '">' + p.stokKodu + ' — %' + yuzde(p) + '</option>').join('');
   if (secId) $('#projeSec').value = secId;
   aktif = hepsi.find(p => p.id === $('#projeSec').value) || null;
+  if (aktif) {
+    // Liste revize olduysa açılışta kendiliğinden tamamlanır
+    setTimeout(() => adimlariGuncelle(true), 0);
+  }
   if (!aktif && hepsi.length) {
     // Kayıt seçilmediyse pano açılır (hepsi bir arada görünsün)
     gorunum = 'pano';

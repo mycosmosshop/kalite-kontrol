@@ -903,6 +903,101 @@ def program_metrikleri(v, hedef):
     return len(v["apqp_bolumler"])
 
 
+# ── PPAP belgeleri (müşteri bazlı) ───────────────────────────────────────
+PPAP_KLASOR = r"C:\\Users\\User\\Desktop\\ppap docs"
+
+# Müşteri anahtar kelimesi -> o müşteriye ait şablonlar
+MUSTERI_BELGE = {
+    "MERCEDES": ["Cover Sheet Mercedes.doc"],
+    "VW":       ["Flammability Test Report VW.xlsx", "Sanifoam_D_TLD_audit_VW.xlsm"],
+    "VOLKSWAGEN": ["Flammability Test Report VW.xlsx", "Sanifoam_D_TLD_audit_VW.xlsm"],
+    "MAN":      ["VDA_2_2020_Anlagen_Attachments_2-6_7 MAN.xlsx"],
+}
+# Müşteriye özel kapak/ölçü/parça geçmişi yoksa bu şablon kullanılır
+ORTAK_VDA2 = "VDA_2_2020_Anlagen_Attachments_2-6_7 MAN.xlsx"
+# Her müşteride ortak belgeler
+ORTAK_BELGE = ["Parts History.xlsx", "ISO 845 Density&Weight Test Report.xlsx"]
+
+# Ölçüsel rapor kullanıcının vereceği formatla yapılacak; şimdilik üretilmiyor
+URETILMEYEN = ("Dimension Report", "Ölçü Kontrol Raporu")
+
+
+def musteri_belgeleri(musteri):
+    """Müşteriye ait şablon listesi + ortak belgeler. Müşteriye özel kapak
+    yoksa VDA_2 şablonu eklenir (kullanıcının kuralı)."""
+    m = met(musteri).upper()
+    ozel = []
+    for anahtar, dosyalar in MUSTERI_BELGE.items():
+        if anahtar in m:
+            ozel += dosyalar
+    kapak_var = any("Cover Sheet" in d or "VDA_2" in d for d in ozel)
+    if not kapak_var:
+        ozel.append(ORTAK_VDA2)
+    return [d for d in dict.fromkeys(ozel + ORTAK_BELGE)
+            if not any(u in d for u in URETILMEYEN)]
+
+
+def parts_history(v, hedef):
+    """Parts History: ürün bilgisi doldurulur, değişiklik satırları ekipte."""
+    kaynak = os.path.join(PPAP_KLASOR, "Parts History.xlsx")
+    if not os.path.exists(kaynak):
+        return 0
+    d = {"B6": "Designation:  " + v["ad"],
+         "B8": "Part no.: " + (v.get("musteriParca") or v["kod"]),
+         "B10": "Assembl no.: " + v["kod"]}
+    hucre_yaz(kaynak, hedef, "xl/worksheets/sheet1.xml", d)
+    return 1
+
+
+def vda2(v, hedef):
+    """VDA_2 Anlagen: PPA Agreement sayfasındaki kuruluş/ürün bilgileri."""
+    kaynak = os.path.join(PPAP_KLASOR, ORTAK_VDA2)
+    if not os.path.exists(kaynak):
+        return 0
+    rols = dict(v["ekip"])
+    d = {"B5": "Sanifoam Endüstri ve Tüketim Ürünleri San. Tic. A.Ş.",
+         "B6": v["lokasyon_ad"],
+         "B11": "PPAP " + v["kod"],
+         "B12": "1",
+         "H23": rols.get("Kalite Güvence Müdürü", ""),
+         "H25": rols.get("AR&GE Proje Yöneticisi", "")}
+    hucre_yaz(kaynak, hedef, "xl/worksheets/sheet1.xml", d)
+    return 1
+
+
+def ppap_belgeleri(v, klasor, uret):
+    """Müşterinin formatındaki PPAP belgelerini ürün klasörüne getirir."""
+    import shutil
+    sayac = 0
+    for dosya in musteri_belgeleri(v["musteri"]):
+        kaynak = os.path.join(PPAP_KLASOR, dosya)
+        if not os.path.exists(kaynak):
+            print("   ! %-34s şablon bulunamadı" % dosya[:34])
+            continue
+        kok, uzanti = os.path.splitext(dosya)
+        hedef_ad = "%s %s%s" % (kok, v["kod"], uzanti)
+        hedef = os.path.join(klasor, hedef_ad)
+        # Doldurulabilenler doldurulur; eski biçimler (.doc/.xls) kopyalanır
+        if dosya == "Parts History.xlsx":
+            if uret(hedef_ad, parts_history, "Parts History"):
+                print("   ✓ Parts History                     (ürün bilgisi dolduruldu)")
+                sayac += 1
+            continue
+        if dosya == ORTAK_VDA2:
+            if uret(hedef_ad, vda2, "VDA_2 Anlagen"):
+                print("   ✓ VDA_2 Anlagen (kapak/ölçü/geçmiş)  (kuruluş bilgisi dolduruldu)")
+                sayac += 1
+            continue
+        try:
+            shutil.copy2(kaynak, hedef)
+            not_ = " — eski biçim, elle doldurulacak" if uzanti.lower() in (".doc", ".xls") else ""
+            print("   ✓ %-33s (müşteri formatı%s)" % (kok[:33], not_))
+            sayac += 1
+        except PermissionError:
+            print("   ! %-33s dosya açık, kopyalanamadı" % kok[:33])
+    return sayac
+
+
 # ── Türetilen alanlar ────────────────────────────────────────────────────
 def zenginlestir(v):
     v["lokasyon_ad"] = "Ankara" if v["lokasyon"] == "ankara" else "Çerkezköy"
@@ -1072,6 +1167,8 @@ def main():
         print("   ✓ FR91 APQP-Takip Formu             (77 adım, ürün başlığıyla)")
     n = uret("APQP Program Metrikleri %s.xlsx" % kod, program_metrikleri, "APQP Program Metrikleri")
     if n: print("   ✓ APQP Program Metrikleri           (%d bölüm, kırmızı/sarı/yeşil)" % n)
+
+    ppap_belgeleri(v, klasor, uret)
 
     n = uret("Kapasite Takip Formu %s.xlsx" % kod, kapasite, "Kapasite Takip Formu")
     if n: print("   ✓ Kapasite Takip Formu             (%d operasyon, darboğaz: %s / %s adet)"
