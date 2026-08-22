@@ -1,0 +1,488 @@
+[
+ {
+  "cihaz": "KUMPAS",
+  "seri": "20244562",
+  "kod": "KUM02",
+  "tarih": "10.06.2026",
+  "marka": "BTS",
+  "klasor": "1000mm'lik MANUEL KUMPAS",
+  "dosya": "0128K-0626-02275 (1).pdf"
+ },
+ {
+  "cihaz": "KUMPAS",
+  "seri": "20244562",
+  "kod": "KUM02",
+  "tarih": "10.06.2026",
+  "marka": "BTS",
+  "klasor": "1000mm'lik MANUEL KUMPAS",
+  "dosya": "0128K-0626-02275.pdf"
+ },
+ {
+  "cihaz": "KUMPAS",
+  "seri": "B18100990",
+  "kod": "KUM01",
+  "tarih": "10.06.2026",
+  "marka": "MİTUTOYO",
+  "klasor": "DİGİTAL KUMPAS- LABORATUVAR (MEVCUT)",
+  "dosya": "0128K-0626-02276.pdf"
+ },
+ {
+  "cihaz": "KUMPAS",
+  "seri": "20244557",
+  "kod": "",
+  "tarih": "10.06.2026",
+  "marka": "-",
+  "klasor": "DİGİTAL KUMPAS- LABORATUVAR (MEVCUT)",
+  "dosya": "0128K-0626-02278.pdf"
+ },
+ {
+  "cihaz": "MİKROMETRE",
+  "seri": "66474765",
+  "kod": "MİK01",
+  "tarih": "10.06.2026",
+  "marka": "MİTUTOYO",
+  "klasor": "DİGİTAL MİKROMETRE- LABORATUVAR",
+  "dosya": "0128K-0626-02277.pdf"
+ },
+ {
+  "cihaz": "ETÜV",
+  "seri": "05-4373",
+  "kod": "ETÜV-1",
+  "tarih": "08.06.2026",
+  "marka": "NÜVE",
+  "klasor": "ETÜV - LABORATUVAR",
+  "dosya": "0128K-0626-01251.pdf"
+ },
+ {
+  "cihaz": "GRAMAJ ALETİ",
+  "seri": "",
+  "kod": "",
+  "tarih": "08.06.2026",
+  "marka": "-",
+  "klasor": "GRAMAJ KESME ALETİ",
+  "dosya": "SAN2620104.pdf"
+ },
+ {
+  "cihaz": "TERAZİ",
+  "seri": "554356",
+  "kod": "HT 01",
+  "tarih": "08.06.2026",
+  "marka": "RADWAG",
+  "klasor": "HASSAS TERAZİ -LABORATUVAR",
+  "dosya": "0128K-0626-01254.pdf"
+ },
+ {
+  "cihaz": "KALINLIK KOMPARATÖRÜ",
+  "seri": "AEX70730N",
+  "kod": "",
+  "tarih": "10.07.2025",
+  "marka": "KÖFER",
+  "klasor": "KALINLIK KOMPARATÖRÜ - LABORATUVAR",
+  "dosya": "SAN2526381.pdf"
+ },
+ {
+  "cihaz": "KRONOMETRE",
+  "seri": "20244559",
+  "kod": "KR01",
+  "tarih": "12.06.2026",
+  "marka": "LOYKA",
+  "klasor": "Kronometre",
+  "dosya": "0128K-0626-02402.pdf"
+ },
+ {
+  "cihaz": "RADYASYON TERMOMETRESİ",
+  "seri": "20243163",
+  "kod": "",
+  "tarih": "11.06.2026",
+  "marka": "CETA FORM",
+  "klasor": "LAZER TERMOMETRE",
+  "dosya": "0128K-0626-02395.pdf"
+ },
+ {
+  "cihaz": "RADYÜS MASTARI",
+  "seri": "40709348",
+  "kod": "",
+  "tarih": "23.06.2026",
+  "marka": "ACCUD",
+  "klasor": "Radius Gauge Set (1–7 mm)",
+  "dosya": "0128K-0626-05155 (1).pdf"
+ },
+ {
+  "cihaz": "RADYÜS MASTARI",
+  "seri": "40709348",
+  "kod": "",
+  "tarih": "23.06.2026",
+  "marka": "ACCUD",
+  "klasor": "Radius Gauge Set (1–7 mm)",
+  "dosya": "0128K-0626-05155.pdf"
+ },
+ {
+  "cihaz": "RADYÜS MASTARI",
+  "seri": "40427112",
+  "kod": "",
+  "tarih": "23.06.2026",
+  "marka": "ACCUD",
+  "klasor": "Radius Gauge Set (7.5–15 mm)",
+  "dosya": "0128K-0626-05156.pdf"
+ },
+ {
+  "cihaz": "SICAKLIK NEM ÖLÇER",
+  "seri": "20244558",
+  "kod": "SN02",
+  "tarih": "11.06.2026",
+  "marka": "TFA",
+  "klasor": "SICAKLIK NEM ÖLÇER",
+  "dosya": "0128K-0626-02393.pdf"
+ },
+ {
+  "cihaz": "SICAKLIK NEM ÖLÇER",
+  "seri": "919671509",
+  "kod": "",
+  "tarih": "11.06.2026",
+  "marka": "LOYKA",
+  "klasor": "SICAKLIK NEM ÖLÇER",
+  "dosya": "0128K-0626-02394.pdf"
+ },
+ {
+  "cihaz": "GÖSTERGELİ SICAKLIK ÖLÇER",
+  "seri": "",
+  "kod": "6. BÖLGE",
+  "tarih": "08.06.2026",
+  "marka": "DELTA",
+  "klasor": "Sıcaklık Göstergesi",
+  "dosya": "0128K-0626-01252.pdf"
+ },
+ {
+  "cihaz": "GÖSTERGELİ SICAKLIK ÖLÇER",
+  "seri": "",
+  "kod": "",
+  "tarih": "08.06.2026",
+  "marka": "DELTA",
+  "klasor": "Sıcaklık Göstergesi",
+  "dosya": "0128K-0626-01253.pdf"
+ },
+ {
+  "cihaz": "TERAZİ",
+  "seri": "415146",
+  "kod": "",
+  "tarih": "08.06.2026",
+  "marka": "KULELİ",
+  "klasor": "TERAZİ-DEPO",
+  "dosya": "0128K-0626-01255.pdf"
+ },
+ {
+  "cihaz": "Çekme / Basma Test Makinesi (Çift Yön)",
+  "seri": "346-55900-01",
+  "kod": "ÇKT01",
+  "tarih": "11.06.2026",
+  "marka": "SHIMADZU",
+  "klasor": "ÇEKME-KOPMA TEST CİHAZI- LABORATUVAR",
+  "dosya": "0128k-0626-02134 (1).pdf"
+ },
+ {
+  "cihaz": "Çekme / Basma Test Makinesi (Çift Yön)",
+  "seri": "346-55900-01",
+  "kod": "ÇKT01",
+  "tarih": "11.06.2026",
+  "marka": "SHIMADZU",
+  "klasor": "ÇEKME-KOPMA TEST CİHAZI- LABORATUVAR",
+  "dosya": "0128k-0626-02134.pdf"
+ },
+ {
+  "cihaz": "ÇELİK CETVEL",
+  "seri": "20244560",
+  "kod": "ÇC02",
+  "tarih": "21.11.2024",
+  "marka": "ETONA",
+  "klasor": "ÇELİK CETVEL LABORATUVAR",
+  "dosya": "SAN24424417.pdf"
+ },
+ {
+  "cihaz": "ÇELİK CETVEL",
+  "seri": "20244561",
+  "kod": "ÇC01",
+  "tarih": "21.11.2024",
+  "marka": "-",
+  "klasor": "ÇELİK CETVEL LABORATUVAR",
+  "dosya": "SAN24424418.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-01",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 1.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-10",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 10.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-11",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 11.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-12",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 12.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-13",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 13.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-14",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 14 (1).pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-14",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 14.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-15",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 15.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-16",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 16.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-17",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 17.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-18",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 18.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-19",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 19.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-02",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 2.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-20",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 20.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-21",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 21.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-22",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 22.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-23",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 23.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-24",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 24.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-25",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 25.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-26",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 26.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-27",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 27.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-28",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 28.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-29",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 29.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-03",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 3.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-30",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 30.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-04",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 4.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-05",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 5.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-06",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 6.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-07",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 7.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-08",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 8.pdf"
+ },
+ {
+  "cihaz": "Şeritmetre",
+  "seri": "",
+  "kod": "SERITMET-09",
+  "tarih": "1.12.2025",
+  "marka": "UNI-MATIC",
+  "klasor": "Şerit Metre",
+  "dosya": "Şeritmetre 9.pdf"
+ }
+]

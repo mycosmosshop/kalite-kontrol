@@ -1501,6 +1501,88 @@ def msa_secenekleri(tolerans):
 
 
 LOK_KISA = {"ankara": "ANK", "cerkezkoy": "CRK", "eskisehir": "ESK"}
+# Çerkezköy kalibrasyon sertifikaları (Drive). Ankara'da henüz kayıt yok.
+KALIBRASYON_KOK = r"G:\Drive'ım\Kalibrasyon Raporları"
+KALIBRASYON_ONBELLEK = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    "kalibrasyon_cihazlari.json")
+KALIBRASYON_LOKASYON = "cerkezkoy"
+
+
+def _tr_sade(x):
+    return re.sub(r"[^A-Z0-9]+", " ", met(x).upper()
+                  .replace("Ç", "C").replace("Ğ", "G").replace("İ", "I").replace("I", "I")
+                  .replace("Ö", "O").replace("Ş", "S").replace("Ü", "U")).strip()
+
+
+def kalibrasyon_cihazlari(yenile=False):
+    """Sertifika PDF'lerinden cihaz adı / seri no / cihaz kodu / tarih.
+    54 PDF her çalıştırmada okunmasın diye sonuç yanına JSON olarak saklanır."""
+    if not yenile and os.path.exists(KALIBRASYON_ONBELLEK):
+        try:
+            return json.load(io.open(KALIBRASYON_ONBELLEK, encoding="utf-8"))
+        except Exception:
+            pass
+    try:
+        import fitz
+    except ImportError:
+        return []
+    kayit = []
+    for klasor in sorted(os.listdir(KALIBRASYON_KOK)):
+        yol = os.path.join(KALIBRASYON_KOK, klasor)
+        if not os.path.isdir(yol):
+            continue
+        for f in sorted(os.listdir(yol)):
+            if not f.lower().endswith(".pdf"):
+                continue
+            try:
+                t = fitz.open(os.path.join(yol, f))[0].get_text()
+            except Exception:
+                continue
+            arasi = lambda a, b: (re.search(a + r"\s*\n(.*?)\n" + b, t, re.S) or [None, ""])[1].strip()
+            # Düzen A — dış laboratuvar (ARTI Kalibrasyon)
+            cihaz = arasi(r"Makina / Cihaz:", r"Instrument")
+            seri = arasi(r"Seri Numarası / Cihaz\s*\n?Kodu:", r"Serial Number")
+            tarih = arasi(r"Kalibrasyon Tarihi:", r"Date of Calibration")
+            marka = arasi(r"İmalatçı", r"Manufacturer")
+            kod = ""
+            if seri and "/" in seri:
+                seri, kod = [x.strip() for x in seri.split("/", 1)]
+            # Düzen B — Sanifoam iç kalibrasyon formu (FR39)
+            if not cihaz:
+                # DİKKAT: formda hem "REF. CİHAZ ADI" hem "CİHAZ ADI" var;
+                # satır başına sabitlenmezse REFERANS cihaz okunuyor.
+                al = lambda a: (re.search(r"(?m)^\s*" + a + r"\s*$\n\s*:\s*(.+)$", t)
+                                or [None, ""])[1].strip()
+                cihaz = al(r"CİHAZ ADI")
+                no = al(r"CİHAZ NO")
+                marka = al(r"MARKASI")
+                kod = "%s-%s" % (_tr_sade(cihaz)[:8].replace(" ", ""), no.zfill(2)) if no else ""
+                tarih = (re.findall(r"\d{1,2}\.\d{1,2}\.\d{4}", t) or [""])[-1]
+            if not met(cihaz):
+                continue
+            kayit.append({"cihaz": cihaz, "seri": met(seri).strip(" -"), "kod": met(kod).strip(" -"),
+                          "tarih": tarih, "marka": marka, "klasor": klasor, "dosya": f})
+    try:
+        json.dump(kayit, io.open(KALIBRASYON_ONBELLEK, "w", encoding="utf-8"),
+                  ensure_ascii=False, indent=1)
+    except Exception:
+        pass
+    return kayit
+
+
+def kalibrasyon_esle(alet):
+    """Kontrol planındaki ölçüm yöntemine karşılık gelen kalibre cihaz kaydı."""
+    a = _tr_sade(alet)
+    if len(a) < 4:
+        return None
+    uygun = []
+    for c in kalibrasyon_cihazlari():
+        m = _tr_sade(c["cihaz"]) + " " + _tr_sade(c["klasor"])
+        if a in m or any(k and k in a for k in _tr_sade(c["cihaz"]).split()):
+            uygun.append(c)
+    # Seri/kod tasiyan en guncel kayit tercih edilir
+    uygun.sort(key=lambda c: (bool(c["seri"] or c["kod"]), met(c["tarih"])[-4:]), reverse=True)
+    return uygun[0] if uygun else None
 
 
 def cihaz_kodu(v, alet):
@@ -1512,18 +1594,25 @@ def cihaz_kodu(v, alet):
 
 
 def cihaz_kaydet(v, g):
-    """Ölçüm cihazını MSA modülünün cihaz listesine ekler (varsa dokunmaz)."""
-    kod = cihaz_kodu(v, g["alet"])
+    """Ölçüm cihazını MSA modülünün cihaz listesine ekler (varsa dokunmaz).
+    Çerkezköy'de kalibrasyon sertifikası varsa GERÇEK seri no / cihaz kodu
+    kullanılır; Ankara'da kayıt olmadığı için kod yöntemden türetilir."""
+    kalibre = kalibrasyon_esle(g["alet"]) if v["lokasyon"] == KALIBRASYON_LOKASYON else None
+    kod = met(kalibre and (kalibre["kod"] or kalibre["seri"])) or cihaz_kodu(v, g["alet"])
+    seri = met(kalibre and kalibre["seri"]) or kod
+    aciklama = "Kontrol planındaki ölçüm yöntemi — %s (%s)" % (
+        g.get("dar_kar") or ", ".join(g["kar"])[:60], v["lokasyon_ad"])
+    if kalibre:
+        aciklama += " · kalibrasyon %s%s" % (kalibre["tarih"],
+                                             " · " + kalibre["marka"] if kalibre["marka"] else "")
     try:
-        varolan = sorgu("/msa_equipment?select=id&device_number=eq.%s"
-                        % urllib.parse.quote(kod))
+        varolan = sorgu("/msa_equipment?select=id&device_number=eq.%s" % urllib.parse.quote(kod))
         if varolan:
             return kod
         yaz("/msa_equipment", {
-            "name": g["alet"], "serial_number": kod, "device_number": kod,
-            "description": "Kontrol planındaki ölçüm yöntemi — %s (%s)"
-                           % (g.get("dar_kar") or ", ".join(g["kar"])[:60], v["lokasyon_ad"]),
-            "location": v["lokasyon_ad"], "is_active": True, "created_by_email": KULLANICI})
+            "name": g["alet"], "serial_number": seri, "device_number": kod,
+            "description": aciklama, "location": v["lokasyon_ad"],
+            "is_active": True, "created_by_email": KULLANICI})
     except Exception as e:
         print("   ! Cihaz kaydedilemedi (%s): %s" % (g["alet"], str(e)[:60]))
     return kod
