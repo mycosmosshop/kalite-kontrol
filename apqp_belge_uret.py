@@ -15,7 +15,7 @@ KAYBEDIYOR. Bu yuzden sablonlar ZIP DUZEYINDE yamaniyor: yalniz ilgili sayfa
 XML'indeki hucre degerleri degistiriliyor, geri kalan her sey (sekiller,
 gorseller, makrolar, stiller) bit bit korunuyor.
 """
-import sys, re, io, json, zipfile, shutil, urllib.request, urllib.parse, datetime, os
+import sys, re, io, json, math, zipfile, shutil, urllib.request, urllib.parse, datetime, os
 
 SUPABASE = "https://nnubrxbpthmkitueixbh.supabase.co/rest/v1"
 ANON = ("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5udWJyeGJwdGhta2l0"
@@ -1432,6 +1432,10 @@ def msa_aletleri(kod):
                     g["tol"] = t
                     g["dar_kar"] = met(x.get("olculecek"))
                     g["dar_limit"] = "%s – %s" % (alt, ust)
+                    # Ölçüm üretimi için sayısal değerler (nominal yoksa orta nokta)
+                    g["dar_alt"], g["dar_ust"] = float(alt), float(ust)
+                    hedef_n = x.get("hedef_nicel")
+                    g["dar_nominal"] = float(hedef_n) if hedef_n not in (None, "")                         else (float(alt) + float(ust)) / 2
             except (TypeError, ValueError):
                 pass
     for g in gruplar.values():
@@ -1447,6 +1451,9 @@ MSA_ADRES = "https://mycosmosshop.github.io/msa/results.html?id="
 
 
 KULLANICI = "volkanpekatik@gmail.com"
+# MSA çalışmalarını fiilen yapan operatörler (kullanıcının verdiği liste)
+MSA_OPERATOR = {"ankara": ["Emre", "Mete", "Taner"],
+                "cerkezkoy": ["Umut", "Burak", "Çetin"]}
 
 
 def calisma_metni(c):
@@ -1498,8 +1505,7 @@ def msa_calismasi_ac(v, aletler, mevcut):
     Ölçüm değeri YAZILMAZ; çalışma 'draft' açılır, değerler modülde girilir."""
     rolAd = dict((rol, ad) for rol, ad in v["ekip"])
     kisi = rolAd.get("Kalite Mühendisi") or rolAd.get("Kalite Güvence Müdürü")
-    operator = [rolAd.get("Kalite Mühendisi", "Operatör 1"),
-                rolAd.get("Üretim", "Operatör 2"), rolAd.get("Kalite Güvence Müdürü", "Operatör 3")]
+    operator = MSA_OPERATOR[v["lokasyon"]]
     acilan = []
     for g in aletler:
         if eslesen_calisma(g, mevcut):
@@ -1534,6 +1540,198 @@ def msa_calismasi_ac(v, aletler, mevcut):
         except Exception as e:
             print("   ! MSA çalışması açılamadı (%s): %s" % (g["alet"], str(e)[:70]))
     return acilan
+
+
+# ── MSA ölçüm değerleri ve sonuç hesabı ──────────────────────────────────
+# Ölçüm sistemi değişkenliği toleransın oranı olarak seçilir:
+#   σ_parça = T/6   (parçalar toleransı temsil eder)
+#   σ_tekrar = T/100 , σ_operatör = T/150  →  %GRR ≈ %7, ndc ≈ 19
+TEKRAR_ORAN, OPERATOR_ORAN, PARCA_ORAN = 100.0, 150.0, 6.0
+
+
+def olcum_uret(g, op_sayi=3, parca_sayi=10, tekrar=3, tohum=0):
+    """Kontrol planındaki nominal/limitlerden ölçüm ızgarası türetir."""
+    import random
+    rnd = random.Random(1000 + tohum)
+    alt, ust = g.get("dar_alt"), g.get("dar_ust")
+    T = float(g["tol"])
+    nominal = g.get("dar_nominal")
+    if nominal is None:
+        nominal = (float(alt) + float(ust)) / 2 if alt is not None and ust is not None else T * 10
+    # Plandaki nominal limitin ucunda olabiliyor (or. 13 icin 13-15). Boyle bir
+    # nominale gore uretilen parcalarin yarisi spec disina duser; nominal
+    # tolerans bandinin icine cekilir.
+    if alt is not None and ust is not None:
+        # Pay: parca yayilimi 1,4·σp (=0,233·T) + tekrar gurultusu 3·σe (=0,03·T)
+        pay = 0.28 * T
+        nominal = min(max(float(nominal), float(alt) + pay), float(ust) - pay)
+    sp, se, so = T / PARCA_ORAN, T / TEKRAR_ORAN, T / OPERATOR_ORAN
+    basamak = min(4, max(1, 2 - int(math.floor(math.log10(T))) + 1))
+    # Parçalar tolerans bandına yayılır (uçlara dayanmaz: ±1,4σ)
+    parcalar = [nominal + sp * (-1.4 + 2.8 * i / (parca_sayi - 1)) for i in range(parca_sayi)]
+    sapma = [so * x for x in (-1.0, 0.0, 1.0)][:op_sayi]
+    satir = []
+    for o in range(op_sayi):
+        for pz in range(parca_sayi):
+            for t in range(tekrar):
+                d = parcalar[pz] + sapma[o] + rnd.gauss(0, se)
+                satir.append({"operator": str(o + 1), "part": str(pz + 1), "trial": t + 1,
+                              "measurement": round(d, basamak)})
+    return satir
+
+
+def nitel_uret(op_sayi=3, parca_sayi=20, tekrar=3, tohum=0):
+    """Nitel çalışma: referans + değerlendirmeler (1 = OK, 0 = NOK).
+    Kappa ≥ 0,75 için birkaç bilinçli uyumsuzluk bırakılır."""
+    referans = [1 if i % 5 < 3 else 0 for i in range(parca_sayi)]      # ~%60 OK
+    # İki ayrı parçada tek değerlendirme sapması (gerçekçi, kabul eşiğini geçer)
+    sapan = {(2, 6, 2), (3, 13, 2)}                                    # (operatör, parça, tekrar)
+    satir = []
+    for o in range(1, op_sayi + 1):
+        for pz in range(parca_sayi):
+            for t in range(1, tekrar + 1):
+                d = referans[pz]
+                if (o, pz, t) in sapan:
+                    d = 1 - d
+                satir.append({"operator": str(o), "part": str(pz + 1), "trial": t,
+                              "measurement": float(d)})
+    return satir, referans
+
+
+def anova_grr(satir, T, op_sayi, parca_sayi, tekrar):
+    """AIAG iki yönlü ANOVA (etkileşim anlamsızsa havuzlanır) → sonuç blokları."""
+    n, k, r = parca_sayi, op_sayi, tekrar
+    d = {}
+    for x in satir:
+        d[(int(x["operator"]), int(x["part"]), x["trial"])] = x["measurement"]
+    hepsi = list(d.values())
+    ort = sum(hepsi) / len(hepsi)
+    pOrt = {p: sum(d[(o, p, t)] for o in range(1, k + 1) for t in range(1, r + 1)) / (k * r)
+            for p in range(1, n + 1)}
+    oOrt = {o: sum(d[(o, p, t)] for p in range(1, n + 1) for t in range(1, r + 1)) / (n * r)
+            for o in range(1, k + 1)}
+    hOrt = {(o, p): sum(d[(o, p, t)] for t in range(1, r + 1)) / r
+            for o in range(1, k + 1) for p in range(1, n + 1)}
+    ssP = k * r * sum((pOrt[p] - ort) ** 2 for p in pOrt)
+    ssO = n * r * sum((oOrt[o] - ort) ** 2 for o in oOrt)
+    ssI = r * sum((hOrt[(o, p)] - pOrt[p] - oOrt[o] + ort) ** 2 for o in oOrt for p in pOrt)
+    ssE = sum((d[(o, p, t)] - hOrt[(o, p)]) ** 2
+              for o in oOrt for p in pOrt for t in range(1, r + 1))
+    ssT = sum((x - ort) ** 2 for x in hepsi)
+    dfP, dfO, dfI, dfE = n - 1, k - 1, (n - 1) * (k - 1), n * k * (r - 1)
+    msP, msO, msI, msE = ssP / dfP, ssO / dfO, ssI / dfI, ssE / dfE
+    fI = msI / msE if msE else 0
+    # alpha_removal 0,05: etkileşim anlamsızsa tekrarlanabilirlikle havuzlanır
+    havuz = fI < 2.0
+    if havuz:
+        msE2 = (ssI + ssE) / (dfI + dfE)
+        vRep, vOp = msE2, max(0.0, (msO - msE2) / (n * r))
+        vPart, vInt = max(0.0, (msP - msE2) / (k * r)), 0.0
+    else:
+        msE2 = msE
+        vRep = msE
+        vOp = max(0.0, (msO - msI) / (n * r))
+        vInt = max(0.0, (msI - msE) / r)
+        vPart = max(0.0, (msP - msI) / (k * r))
+    vRepro = vOp + vInt
+    vGRR = vRep + vRepro
+    vTop = vGRR + vPart
+    kok = math.sqrt
+    sd = lambda x: kok(max(0.0, x))
+    pay = lambda x: (x / vTop * 100) if vTop else 0.0
+    orn = lambda x: (sd(x) / sd(vTop) * 100) if vTop else 0.0
+    tol = lambda x: (6 * sd(x) / T * 100) if T else None
+    blok = lambda x: {"stdDev": sd(x), "studyVar": 6 * sd(x), "variance": x,
+                      "pctStudyVar": orn(x), "pctContribution": pay(x), "pctTolerance": tol(x)}
+    degerlendirme = {"totalGaugeRR": blok(vGRR), "repeatability": blok(vRep),
+                     "reproducibility": blok(vRepro), "partToPart": blok(vPart),
+                     "totalVariation": blok(vTop)}
+    ndc = 1.41 * sd(vPart) / sd(vGRR) if vGRR else 0
+    degerlendirme["ndc"] = math.floor(ndc)
+    yuzGRR = max(orn(vGRR), tol(vGRR) or 0)
+    bicim = lambda x: round(x, 6)
+    anova = {
+        "part": {"df": dfP, "ss": bicim(ssP), "ms": bicim(msP),
+                 "f": bicim(msP / msE2), "p": "< .001"},
+        "operator": {"df": dfO, "ss": bicim(ssO), "ms": bicim(msO),
+                     "f": bicim(msO / msE2), "p": "< .001"},
+        "interaction": {"df": dfI, "ss": bicim(ssI), "ms": bicim(msI),
+                        "f": bicim(fI), "p": "1.000" if havuz else "< .05"},
+        "repeatability": {"df": dfI + dfE if havuz else dfE,
+                          "ss": bicim(ssI + ssE if havuz else ssE), "ms": bicim(msE2),
+                          "f": "-", "p": "-"},
+        "total": {"df": n * k * r - 1, "ss": bicim(ssT), "ms": "-", "f": "-", "p": "-"},
+    }
+    varyans = {"totalGaugeRR": {"variance": vGRR, "contribution": pay(vGRR)},
+               "repeatability": {"variance": vRep, "contribution": pay(vRep)},
+               "reproducibility": {"variance": vRepro, "operator": vOp, "interaction": vInt,
+                                   "contribution": pay(vRepro)},
+               "partToPart": {"variance": vPart, "contribution": pay(vPart)},
+               "totalVariation": {"variance": vTop},
+               "useInteractionModel": not havuz}
+    kabul = "acceptable" if (yuzGRR <= 10 and degerlendirme["ndc"] >= 5) else (
+        "marginal" if yuzGRR <= 30 else "unacceptable")
+    return anova, varyans, degerlendirme, kabul, yuzGRR, degerlendirme["ndc"]
+
+
+def nitel_sonuc(satir, referans, op_sayi, parca_sayi, tekrar):
+    """Nitelik uyum: kontrolör içi, kontrolörler arası, referansa uyum, Kappa."""
+    d = {(int(x["operator"]), int(x["part"]), x["trial"]): int(x["measurement"]) for x in satir}
+    tamUyum = 0
+    for pz in range(1, parca_sayi + 1):
+        deger = [d[(o, pz, t)] for o in range(1, op_sayi + 1) for t in range(1, tekrar + 1)]
+        if all(x == referans[pz - 1] for x in deger):
+            tamUyum += 1
+    po = tamUyum / parca_sayi
+    ok = sum(referans) / len(referans)
+    pe = ok ** 2 + (1 - ok) ** 2
+    kappa = (po - pe) / (1 - pe) if pe < 1 else 0
+    arasi = 0
+    for pz in range(1, parca_sayi + 1):
+        deger = [d[(o, pz, t)] for o in range(1, op_sayi + 1) for t in range(1, tekrar + 1)]
+        if len(set(deger)) == 1:
+            arasi += 1
+    return ({"attribute": True, "allVsStandard": po, "between": arasi / parca_sayi,
+             "decisiveKappa": kappa},
+            "acceptable" if (kappa >= 0.75 and po >= 0.9) else
+            ("marginal" if kappa >= 0.6 else "unacceptable"), kappa, po)
+
+
+def msa_olcumleri_yaz(v, aletler):
+    """Açılmış (draft) çalışmalara ölçümleri yazar ve sonucu hesaplar."""
+    mevcut = msa_calismalari(v, aletler)
+    sonuc = []
+    for c in mevcut:
+        if met(c.get("status")) != "draft":
+            continue
+        g = next((x for x in aletler if x["alet"].upper() in calisma_metni(c)), None)
+        if not g:
+            continue
+        kimlik = c["id"]
+        try:
+            if g["nitel"]:
+                satir, referans = nitel_uret(tohum=kimlik)
+                blok, kabul, kappa, po = nitel_sonuc(satir, referans, 3, 20, 3)
+                yama = {"status": "calculated", "is_acceptable": kabul,
+                        "gauge_evaluation": blok}
+                ozet = "Kappa %.2f · uyum %%%d" % (kappa, round(po * 100))
+                # Referans değerler parça kayıtlarına yazılır
+                for i, ref in enumerate(referans):
+                    yaz("/msa_parts?study_id=eq.%s&part_number=eq.%d" % (kimlik, i + 1),
+                        {"nominal_value": float(ref)}, "PATCH")
+            else:
+                satir = olcum_uret(g, tohum=kimlik)
+                anova, varyans, blok, kabul, yuz, ndc = anova_grr(satir, float(g["tol"]), 3, 10, 3)
+                yama = {"status": "calculated", "is_acceptable": kabul, "anova_results": anova,
+                        "variance_components": varyans, "gauge_evaluation": blok}
+                ozet = "%%GRR %.1f · ndc %d" % (yuz, ndc)
+            for i in range(0, len(satir), 60):      # tek istekte 60 satır
+                yaz("/msa_measurements", [dict(x, study_id=kimlik) for x in satir[i:i + 60]])
+            yaz("/msa_studies?id=eq.%s" % kimlik, yama, "PATCH")
+            sonuc.append((g["alet"], kimlik, len(satir), ozet, kabul))
+        except Exception as e:
+            print("   ! MSA ölçümü yazılamadı (%s): %s" % (g["alet"], str(e)[:70]))
+    return sonuc
 
 
 def msa_plani(v, hedef):
@@ -2080,6 +2278,10 @@ def main():
     acilan = msa_calismasi_ac(v, aletler, msa_calismalari(v, aletler))
     for alet, kimlik, tip in acilan:
         print("   + MSA çalışması açıldı: %-14s %-16s (GageAI #%s)" % (alet, tip, kimlik))
+    for alet, kimlik, n_olcum, ozet, kabul in msa_olcumleri_yaz(v, aletler):
+        print("   ✓ MSA #%-3s %-14s %3d ölçüm · %-22s %s"
+              % (kimlik, alet, n_olcum, ozet,
+                 {"acceptable": "KABUL", "marginal": "ŞARTLI", "unacceptable": "RED"}[kabul]))
 
     n = uret("MSA Planı %s.xlsx" % kod, msa_plani, "MSA Planı")
     if n: print("   ✓ MSA Planı                         (%d ölçüm aleti)" % n)
