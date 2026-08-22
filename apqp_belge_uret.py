@@ -1107,6 +1107,47 @@ def vda2(v, hedef):
     return 1
 
 
+# DIN ISO 2768 genel tolerans (kullanıcının balonlama yazılımındaki tabloyla aynı)
+DIN2768 = [(0, 3, .05, .1, .2, None), (3, 6, .05, .1, .3, .5), (6, 30, .1, .2, .5, 1.0),
+           (30, 120, .15, .3, .8, 1.5), (120, 400, .2, .5, 1.2, 2.5),
+           (400, 1000, .3, .8, 2.0, 4.0), (1000, 2000, .5, 1.2, 3.0, 6.0),
+           (2000, 4000, None, 2.0, 4.0, 8.0)]
+DIN_SINIF = ("f", "m", "c", "v")
+DIN_AD = {"f": "ince (f)", "m": "orta (m)", "c": "kaba (c)", "v": "çok kaba (v)"}
+
+
+def din_tolerans(deger, sinif):
+    """Ölçüye karşılık gelen ± genel tolerans."""
+    i = DIN_SINIF.index(sinif)
+    for bas, son, *t in DIN2768:
+        if bas < abs(deger) <= son:
+            return t[i]
+    return None
+
+
+def tolerans_sinifi(kod):
+    """Ürünün genel tolerans sınıfını KENDİ kontrol planından çıkarır:
+    plandaki toleransların çoğu hangi DIN sınıfına oturuyorsa o."""
+    oy = {s: 0 for s in DIN_SINIF}
+    for x in kp_satirlari(kod):
+        a, u, h = x.get("alt_limit"), x.get("ust_limit"), x.get("hedef_nicel")
+        if None in (a, u, h):
+            continue
+        try:
+            tol = (float(u) - float(a)) / 2
+            h = float(h)
+        except (TypeError, ValueError):
+            continue
+        if tol <= 0:
+            continue
+        for s in DIN_SINIF:
+            d = din_tolerans(h, s)
+            if d is not None and abs(d - tol) < 1e-9:
+                oy[s] += 1
+    en = max(oy, key=oy.get)
+    return (en, oy[en], sum(oy.values())) if oy[en] else ("c", 0, 0)
+
+
 def olcusel_satirlar(kod):
     """Kontrol planındaki ÖLÇÜLEBİLİR karakteristikler, balon numarasıyla.
     POS n → balon n; POS'suz karakteristikler POS'lardan sonra numaralanır."""
@@ -1162,12 +1203,59 @@ def olcusel_deger(k, adet=5, tohum=0):
     return d
 
 
-def olcusel_rapor(v, hedef):
-    """VDA_2 dosyasındaki 'Ölçüm Rapor Formatı' sayfasını doldurur."""
+def balon_satirlari(v, balon):
+    """Balonlanan HER ölçü için rapor satırı.
+    Tolerans: kontrol planında varsa plandan, yoksa ürünün kendi sınıfına göre
+    DIN ISO 2768 genel toleransından; okunamayan ölçü boş bırakılır."""
+    sinif, uyan, toplam = tolerans_sinifi(v["kod"])
+    plan = {}
+    for no, k in olcusel_satirlar(v["kod"]):
+        plan.setdefault(str(no).split(".")[0], []).append(k)
+    satir = []
+    for b in balon:
+        pos = str(b.get("pos"))
+        deger = b.get("deger")
+        k = None
+        if deger is not None:
+            try:
+                d = float(deger)
+            except ValueError:
+                d = None
+            if d is not None:
+                k = next((x for x in plan.get(pos, []) if abs(x["nominal"] - d) < 0.51), None)
+                if k is None:      # POS eşleşmezse tüm plandan değere göre ara
+                    k = next((x for y in plan.values() for x in y
+                              if abs(x["nominal"] - d) < 0.01), None)
+        if k:
+            satir.append((b["no"], dict(k), "kontrol planı"))
+        elif deger is not None:
+            d = float(deger)
+            t = din_tolerans(d, sinif)
+            if t is None:
+                satir.append((b["no"], None, "tolerans tablosu dışı"))
+            else:
+                satir.append((b["no"], {"ad": "Ölçü", "nominal": d, "alt": d - t,
+                                        "ust": d + t, "op": "", "yontem": ""},
+                              "genel tolerans DIN ISO 2768-%s" % sinif))
+        else:
+            satir.append((b["no"], None, "okunamadı — elle girilecek"))
+    return satir, sinif, uyan, toplam
+
+
+def olcusel_rapor(v, hedef, balon=None):
+    """VDA_2 dosyasındaki 'Ölçüm Rapor Formatı' sayfasını doldurur.
+    balon verilirse çizimdeki TÜM ölçüler listelenir (PPAP tam kapsam);
+    verilmezse yalnız kontrol planı karakteristikleri."""
     kaynak = os.path.join(PPAP_KLASOR, ORTAK_VDA2)
     if not os.path.exists(kaynak):
         return 0
-    satir = olcusel_satirlar(v["kod"])
+    if balon:
+        ham, sinif, uyan, toplam = balon_satirlari(v, balon)
+        satir = [(no, k) for no, k, _ in ham]
+        notlar = {no: n for no, _, n in ham}
+    else:
+        satir = olcusel_satirlar(v["kod"])
+        notlar = {}
     if not satir:
         return 0
     tesis, _ = TESIS.get(v["lokasyon"], ("Sanifoam", ""))
@@ -1180,18 +1268,22 @@ def olcusel_rapor(v, hedef):
          "AI8": musteriParca, "AI9": v["ad"], "AI10": resim, "AI11": surum}
     # Sablonda baska urunun satirlari var; temizlenip yeniden yazilir
     SUT = ["A", "D", "L", "O", "R", "U", "X", "AA", "AC", "AE"]
-    for r in range(20, 20 + 90):
+    for r in range(20, 20 + 115):
         for c in SUT:
             d["%s%d" % (c, r)] = ""
-    for i, (no, k) in enumerate(satir[:90]):
+    for i, (no, k) in enumerate(satir[:110]):
         r = 20 + i
-        tol = (k["ust"] - k["alt"]) / 2
         d["A%d" % r] = no
+        if not k:                       # okunamadı: satır açık bırakılır
+            d["D%d" % r] = "— (çizimden okunamadı)"
+            d["AE%d" % r] = notlar.get(no, "elle girilecek")
+            continue
+        tol = (k["ust"] - k["alt"]) / 2
         d["D%d" % r] = "%s  %g +/- %g" % (k["ad"][:26], k["nominal"], tol)
         for j, x in enumerate(olcusel_deger(k, 5, i)):
             d["%s%d" % (("L", "O", "R", "U", "X")[j], r)] = x
         d["AA%d" % r] = "X"                       # spec içinde
-        d["AE%d" % r] = "Op.%s · %s" % (met(k["op"]), k["yontem"][:16])
+        d["AE%d" % r] = notlar.get(no) or ("Op.%s · %s" % (met(k["op"]), k["yontem"][:16]))
     hucre_yaz(kaynak, hedef, "xl/worksheets/sheet6.xml", d)
     return len(satir)
 
@@ -2844,16 +2936,19 @@ def main():
                  {"acceptable": "KABUL", "marginal": "ŞARTLI", "unacceptable": "RED"}[kabul]))
 
     # Balonlu (numaralandırılmış) teknik resim — PPAP 2.2.1 / madde 6.5
+    balon_satir = []
     try:
         import balonla
         cizim = balonla.cizim_yolu(v["dok"])
         if cizim:
-            n, rapor = balonla.uret(kod, cizim, klasor, kp_satirlari)
+            n, rapor, balon_satir = balonla.uret(kod, cizim, klasor, kp_satirlari)
             print("   %s Numaralandırılmış Teknik Resim  (%s)"
                   % ("✓" if n else "!", rapor))
         else:
+            balon_satir = []
             print("   ! Numaralandırılmış Teknik Resim  ERP'de teknik resim dosyası yok")
     except Exception as e:
+        balon_satir = []
         print("   ! Numaralandırılmış Teknik Resim  üretilemedi: %s" % str(e)[:60])
 
     for alet, kar, n_ol, sonuc, kimlik, yeni in yeterlilik_uret(v, klasor, uret):
@@ -2868,8 +2963,12 @@ def main():
 
     ppap_belgeleri(v, klasor, uret)
 
-    n = uret("Ölçüsel Rapor %s.xlsx" % kod, olcusel_rapor, "Ölçüsel Rapor")
-    if n: print("   ✓ Ölçüsel Rapor                     (%d karakteristik, balon no ile)" % n)
+    n = uret("Ölçüsel Rapor %s.xlsx" % kod,
+             lambda a, b: olcusel_rapor(a, b, balon_satir), "Ölçüsel Rapor")
+    if n:
+        sinif, uyan, top = tolerans_sinifi(kod)
+        print("   ✓ Ölçüsel Rapor                     (%d satır, genel tolerans DIN ISO "
+              "2768-%s — plandaki %d/%d ölçüyle uyumlu)" % (n, sinif, uyan, top))
 
     n = uret("Kapasite Takip Formu %s.xlsx" % kod, kapasite, "Kapasite Takip Formu")
     if n: print("   ✓ Kapasite Takip Formu             (%d operasyon, darboğaz: %s / %s adet)"

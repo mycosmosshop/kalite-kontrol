@@ -163,24 +163,147 @@ def _serbest_ata(im, capa):
     return sonuc
 
 
+# ── Tam balonlama: çizimdeki her ölçü ────────────────────────────────────
+def _yazi_kutulari(im):
+    """Bağlantılı bileşenle rakam boyutundaki yazıları bulur, sözcüğe birleştirir.
+    Balonun YERİ buradan gelir; OCR'a bağlı değildir."""
+    import cv2
+    import numpy as np
+    siyah = (im < 128).astype(np.uint8)
+    n, _, ist, _ = cv2.connectedComponentsWithStats(siyah, 8)
+    kar = []
+    for i in range(1, n):
+        x, y, g, h, alan = ist[i]
+        if alan < 40:
+            continue
+        if 18 <= h <= 60 and 6 <= g <= 60:
+            kar.append((x, y, g, h, "y"))          # yatay yazı
+        elif 18 <= g <= 60 and 6 <= h <= 60:
+            kar.append((x, y, g, h, "d"))          # 90° döndürülmüş yazı
+
+    def birlestir(kutu, yon):
+        kutu = sorted(kutu, key=lambda k: (k[1], k[0]) if yon == "y" else (k[0], k[1]))
+        grup = []
+        for x, y, g, h, _ in kutu:
+            for gr in grup:
+                # Bosluk esigi karakter yuksekligine gore: sabit 22 px'te
+                # "188" gibi sayilar parcalanip birden fazla balon aliyordu
+                bosluk = max(24, int(0.75 * (h if yon == "y" else g)))
+                if yon == "y":
+                    yakin = abs(y - gr["y"]) < 16 and -6 <= x - (gr["x"] + gr["g"]) < bosluk
+                else:
+                    yakin = abs(x - gr["x"]) < 16 and -6 <= y - (gr["y"] + gr["h"]) < bosluk
+                if yakin:
+                    gr["g"] = max(gr["x"] + gr["g"], x + g) - min(gr["x"], x)
+                    gr["h"] = max(gr["y"] + gr["h"], y + h) - min(gr["y"], y)
+                    gr["x"] = min(gr["x"], x)
+                    gr["y"] = min(gr["y"], y)
+                    break
+            else:
+                grup.append({"x": x, "y": y, "g": g, "h": h, "yon": yon})
+        return grup
+
+    return birlestir([k for k in kar if k[4] == "y"], "y") + \
+           birlestir([k for k in kar if k[4] == "d"], "d")
+
+
+def _olcu_disi(s, W, H, capa):
+    """Çerçeve cetveli, antet, tablo ve 'Pos.' etiketleri ölçü değildir."""
+    x, y = s["x"], s["y"]
+    if x < W * 0.035 or x > W * 0.972 or y < H * 0.03 or y > H * 0.965:
+        return True
+    if x > W * 0.655 and y > H * 0.735:
+        return True
+    if x > W * 0.825 and H * 0.49 < y < H * 0.78:
+        return True
+    return any(abs(x - cx) < 380 and abs(y - cy) < 70 for cx, cy in capa)
+
+
+def _kutu_oku(im, s):
+    """Küçük kırpma üzerinden çoklu geçiş okuma (ölçek × psm × yön oylaması)."""
+    import pytesseract
+    from PIL import Image
+    pytesseract.pytesseract.tesseract_cmd = TESSERACT
+    p = 10
+    kirp = im[max(0, s["y"] - p):s["y"] + s["h"] + p, max(0, s["x"] - p):s["x"] + s["g"] + p]
+    if kirp.size == 0:
+        return None
+    ham = Image.fromarray(kirp)
+    oy = {}
+    # Erken cikis: ilk gecis net bir sonuc verirse digerleri denenmez
+    # (140 kutu x 9 gecis ~2000 OCR cagrisi cok yavas).
+    for aci in ([-90, 90] if s["yon"] == "d" else [0]):
+        b0 = ham.rotate(aci, expand=True) if aci else ham
+        for kat in (6, 4, 8):
+            if oy and max(oy.values()) >= 2:
+                break
+            b = b0.resize((b0.width * kat, b0.height * kat), Image.LANCZOS)
+            for psm in ("7", "8", "13"):
+                try:
+                    t = pytesseract.image_to_string(
+                        b, config="--psm " + psm +
+                        " -c tessedit_char_whitelist=0123456789.,").strip()
+                except Exception:
+                    continue
+                t = t.replace(",", ".").strip(" .")
+                if re.fullmatch(r"\d{1,4}(\.\d{1,2})?", t or ""):
+                    oy[t] = oy.get(t, 0) + 1
+    if not oy:
+        return None
+    t = max(oy, key=oy.get)
+    # GENISLIK TUTARLILIGI: kutu 3 hane genisligindeyse okuma da 3 haneli
+    # olmali. "714" kutusundan "7" okunmasi boyle elenir; yanlis deger yerine
+    # bos birakmak PPAP kaydinda daha dogru.
+    uzun = s["g"] if s["yon"] == "y" else s["h"]
+    hane = len(t.replace(".", ""))
+    beklenen = max(1, round(uzun / max(12.0, s["h"] if s["yon"] == "y" else s["g"]) * 1.55))
+    return t if abs(hane - beklenen) <= 1 else None
+
+
+def tum_olculer(im, capa, plan_degerleri=()):
+    """Çizimdeki tüm ölçü kutuları: [(deger|None, x, y, g, h, kaynak)].
+    kaynak: 'plan' (kontrol planıyla doğrulandı) · 'okundu' · None (okunamadı)"""
+    H, W = im.shape
+    kutu = [s for s in _yazi_kutulari(im) if not _olcu_disi(s, W, H, capa)]
+    plan = {("%g" % float(d)) for d in plan_degerleri}
+    sonuc = []
+    for s in kutu:
+        t = _kutu_oku(im, s)
+        kaynak = None
+        if t is not None:
+            kaynak = "plan" if ("%g" % float(t)) in plan else "okundu"
+        sonuc.append((t, s["x"], s["y"], s["g"], s["h"], kaynak, s["yon"]))
+    return sonuc
+
+
+def _en_yakin_pos(x, y, capa_no):
+    """Ölçüyü ait olduğu pozisyona bağlar (en yakın 'Pos.' etiketi)."""
+    if not capa_no:
+        return None
+    return min(capa_no, key=lambda c: (c[1] - x) ** 2 + (c[2] - y) ** 2)[0]
+
+
 def balonla(tiff_yolu, hedef_png, atamalar, baslik=""):
     """Balonları çizip kaydeder. Okunamayan balon SARI çizilir (gözden geçir)."""
     from PIL import Image, ImageDraw, ImageFont
     renk = Image.open(tiff_yolu).convert("RGB")
     ciz = ImageDraw.Draw(renk)
     try:
-        yazi = ImageFont.truetype("arialbd.ttf", 44)
+        yazi = ImageFont.truetype("arialbd.ttf", 40)
+        kucuk_no = ImageFont.truetype("arialbd.ttf", 26)
         kucuk = ImageFont.truetype("arial.ttf", 30)
     except OSError:
-        yazi = kucuk = ImageFont.load_default()
+        yazi = kucuk = kucuk_no = ImageFont.load_default()
+    RENK = {"plan": (200, 0, 0), "okundu": (0, 90, 200), "sıradan": (0, 90, 200)}
     for no, x, y, kaynak in atamalar:
-        cx, cy = x - 72, y + 26
-        boya = (200, 0, 0) if kaynak == "okundu" else (
-            (0, 90, 200) if kaynak == "sıradan" else (210, 150, 0))
-        ciz.ellipse([cx - 44, cy - 44, cx + 44, cy + 44], outline=boya, width=7)
+        cx, cy = x, y
+        boya = RENK.get(kaynak, (215, 150, 0))       # bilinmiyorsa sarı
         e = str(no) if no is not None else "?"
-        k = ciz.textbbox((0, 0), e, font=yazi)
-        ciz.text((cx - (k[2] - k[0]) / 2, cy - (k[3] - k[1]) / 2 - 8), e, fill=boya, font=yazi)
+        r = 34 if len(e) > 2 else 40
+        ciz.ellipse([cx - r, cy - r, cx + r, cy + r], outline=boya, width=6)
+        f = kucuk_no if len(e) > 3 else yazi
+        k = ciz.textbbox((0, 0), e, font=f)
+        ciz.text((cx - (k[2] - k[0]) / 2, cy - (k[3] - k[1]) / 2 - 6), e, fill=boya, font=f)
     if baslik:
         ciz.rectangle([20, 20, 20 + 15 * len(baslik), 74], fill=(255, 255, 255))
         ciz.text((28, 30), baslik, fill=(0, 0, 0), font=kucuk)
@@ -213,54 +336,86 @@ def _yerele_al(yol):
         return yol, False
     try:
         uz = os.path.splitext(yol)[1] or ".tiff"
-        g = os.path.join(tempfile.gettempdir(), "apqp_cizim" + uz)
-        shutil.copy2(yol, g)
+        # Sabit ad kullanilirsa onceki calismanin gecici dosyasi silinip
+        # yenisi acilamadan kullanilabiliyor; her cagriya ozel ad verilir.
+        g = os.path.join(tempfile.gettempdir(),
+                         "apqp_cizim_%d%s" % (abs(hash(yol)) % 10 ** 8, uz))
+        if not os.path.exists(g):
+            shutil.copy2(yol, g)
         return g, True
     except OSError:
         return yol, False
 
 
-def uret(kod, tiff_yolu, klasor, kp_satirlari, sablon_kutusu=None):
-    """Ürün için balonlu teknik resmi üretir. Dönüş: (balon sayısı, rapor)."""
+def uret(kod, tiff_yolu, klasor, kp_satirlari, sablon_kutusu=None, tam=True):
+    """Ürün için balonlu teknik resmi üretir.
+    tam=True → çizimdeki HER ölçü balonlanır (PPAP 2.2.1 tam kapsam).
+    Dönüş: (balon sayısı, rapor metni, satırlar)
+      satırlar: [{"no","deger","kaynak","pos","x","y"}] — ölçüsel rapor için.
+    """
     import cv2
-    tiff_yolu, gecici = _yerele_al(tiff_yolu)
+    tiff_yolu, _ = _yerele_al(tiff_yolu)
     if tiff_yolu.lower().endswith(".pdf"):
-        tiff_yolu, gecici = _pdf_goruntu(tiff_yolu), True
+        tiff_yolu = _pdf_goruntu(tiff_yolu)
     im = cv2.imread(tiff_yolu, cv2.IMREAD_GRAYSCALE)
-    if im is None:
-        return 0, "çizim okunamadı: " + tiff_yolu
+    if im is None or not os.path.exists(tiff_yolu):
+        return 0, "çizim okunamadı: " + tiff_yolu, []
     pos = _pos_kumesi(kp_satirlari, kod)
 
-    # Şablon: "Pos." yazısının bir örneği. Verilmezse ilk etiketten öğrenilir.
     if sablon_kutusu:
         y0, y1, x0, x1 = sablon_kutusu
         sablon = im[y0:y1, x0:x1]
     else:
         sablon = _sablon_ogren(im)
-        if sablon is None:
-            return 0, "'Pos.' etiketi bulunamadı"
+    if sablon is None:
+        return 0, "'Pos.' etiketi bulunamadı", []
 
     capa = _capalar(im, sablon)
     if not capa:
-        return 0, "pozisyon etiketi bulunamadı"
-    # Kontrol planında POS karakteristiği yoksa (ör. ÖLÇÜ1/ÖLÇÜ2 diye
-    # adlandırılmış ürünler) çizimdeki numaralar okunur; küme kısıtı olmadan
-    # da balon konur, okunamayan sarı işaretlenir.
-    atama = numaralari_ata(im, capa, set(pos)) if pos else _serbest_ata(im, capa)
+        return 0, "pozisyon etiketi bulunamadı", []
+    capa_no = numaralari_ata(im, capa, set(pos)) if pos else _serbest_ata(im, capa)
+
+    if not tam:
+        atama = [(a[0], a[1], a[2], a[3]) for a in capa_no]
+        satirlar = []
+    else:
+        plan_deger = [d[0] for k in pos.values() for d in k]
+        olcu = tum_olculer(im, capa, plan_deger)
+        # Her ölçü en yakın pozisyona bağlanır, o grupta okuma sırasıyla numaralanır
+        gruplar = {}
+        for deger, x, y, g, h, kaynak, yon in olcu:
+            gruplar.setdefault(_en_yakin_pos(x, y, capa_no), []).append(
+                {"deger": deger, "x": x, "y": y, "g": g, "h": h,
+                 "kaynak": kaynak, "yon": yon})
+        atama, satirlar = [], []
+        for pno in sorted(gruplar, key=lambda z: (z is None, z)):
+            liste = sorted(gruplar[pno], key=lambda o: (o["y"] // 60, o["x"]))
+            for i, o in enumerate(liste):
+                etiket = "%s.%d" % (pno, i + 1) if pno is not None else "?.%d" % (i + 1)
+                # Balon yazinin USTUNE binmesin: yatay yazida soluna,
+                # dikey (90 donuk) yazida ustune konur
+                if o.get("yon") == "d":
+                    bx, by = o["x"] + o["g"] // 2, o["y"] - 56
+                else:
+                    bx, by = o["x"] - 56, o["y"] + o["h"] // 2
+                atama.append((etiket, bx, by, o["kaynak"]))
+                satirlar.append({"no": etiket, "deger": o["deger"], "kaynak": o["kaynak"],
+                                 "pos": pno, "x": o["x"], "y": o["y"]})
 
     ad = "Numaralandırılmış Teknik Resim %s" % kod
     png = os.path.join(klasor, ad + ".png")
     balonla(tiff_yolu, png, atama,
-            "%s — balon no = kontrol planı POS no (kırmızı: okundu, mavi: sıradan)" % kod)
+            "%s — tüm ölçüler balonlu · kırmızı: kontrol planıyla doğrulandı · "
+            "mavi: okundu · sarı: okunamadı (gözden geçirin)" % kod)
     pdf_yaz(png, os.path.join(klasor, ad + ".pdf"))
 
-    okunan = sum(1 for a in atama if a[3] == "okundu")
-    supheli = sum(1 for a in atama if a[0] is None)
-    rapor = "%d balon (%d okundu, %d sıradan%s)%s" % (
-        len(atama), okunan, len(atama) - okunan - supheli,
-        ", %d okunamadı" % supheli if supheli else "",
-        ", kontrol planı POS: %d" % len(pos) if pos else " — çizim numaralandırması")
-    return len(atama), rapor
+    dogru = sum(1 for a in atama if a[3] == "plan")
+    okundu = sum(1 for a in atama if a[3] == "okundu")
+    kalan = len(atama) - dogru - okundu
+    rapor = ("%d balon — %d kontrol planıyla doğrulandı, %d okundu, %d okunamadı"
+             % (len(atama), dogru, okundu, kalan)) if tam else (
+        "%d pozisyon balonu" % len(atama))
+    return len(atama), rapor, satirlar
 
 
 def _pdf_goruntu(pdf_yolu, dpi=200):
@@ -305,5 +460,5 @@ if __name__ == "__main__":
     resim = cizim_yolu(v["dok"])
     if not resim:
         raise SystemExit("bu ürünün teknik resmi ERP'de yok")
-    n, rapor = uret(kod, resim, os.path.join(ag.DRIVE, kod), ag.kp_satirlari)
+    n, rapor, satir = uret(kod, resim, os.path.join(ag.DRIVE, kod), ag.kp_satirlari)
     print("%s → %s" % (kod, rapor))
