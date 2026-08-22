@@ -379,6 +379,85 @@ def kapasite(v, hedef):
     return len(v["kapasite_satirlari"])
 
 
+# ── PL11 Onaylı Tedarikçi Listesi ────────────────────────────────────────
+# Kaynak: onayli_tedarikci tablosu (tedarikçi modülü "Onaylı Listeyi Buluta
+# Yaz" ile doldurur). Ürünün LOKASYONUNA göre süzülür — Ankara ve Çerkezköy
+# onaylı listeleri farklıdır — ve Tip A (Otomotiv) tedarikçiler alınır.
+def pl11(v, hedef):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill
+
+    try:
+        hepsi = sorgu("/onayli_tedarikci?select=*&order=sinif,ad")
+    except Exception as e:
+        print("   ! PL11 atlandı — onayli_tedarikci okunamadı (%s)" % str(e)[:60])
+        print("     onayli_tedarikci.sql çalıştırıldı mı? Tedarikçi modülünde")
+        print("     'Onaylı Listeyi Buluta Yaz' bir kez tıklandı mı?")
+        return 0
+
+    lok = v["lokasyon_ad"]
+    liste = [t for t in hepsi
+             if t.get("otomotiv") and lok in (t.get("lokasyon") or [])]
+    if not liste:                      # lokasyon işaretlenmemişse otomotiv olanların tümü
+        liste = [t for t in hepsi if t.get("otomotiv")]
+        kapsam = "tüm lokasyonlar (bu lokasyona işaretli tedarikçi yok)"
+    else:
+        kapsam = lok
+
+    wb = Workbook(); ws = wb.active; ws.title = "Onaylı Tedarikçi"
+    ws.sheet_view.showGridLines = False
+    for h, g in zip("ABCDEFGH", (6, 42, 20, 10, 10, 10, 14, 44)):
+        ws.column_dimensions[h].width = g
+
+    kutu = antet(ws, "ONAYLI TEDARİKÇİ LİSTESİ", "PL 11",
+                 datetime.date.today().strftime("%d.%m.%Y"), son_sutun=8)
+
+    for i, (e, d) in enumerate([("Lokasyon :", kapsam),
+                                ("Kapsam :", "Tip A (Otomotiv) tedarikçiler"),
+                                ("İlgili Ürün :", "%s (%s)" % (v["ad"], v["kod"]))]):
+        c = ws.cell(6 + i, 1, e)
+        c.font = Font(bold=True, size=10); c.alignment = Alignment(horizontal="right")
+        ws.cell(6 + i, 2, d)
+
+    ust = 10
+    for i, b in enumerate(["Sıra", "Tedarikçi", "Lokasyon", "Sınıf", "Puan",
+                           "PPM", "IATF / ISO", "Not"]):
+        c = ws.cell(ust, 1 + i, b)
+        c.font = Font(bold=True, size=10, color="FFFFFF")
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        c.fill = PatternFill("solid", fgColor="1F3864"); c.border = kutu
+    ws.row_dimensions[ust].height = 24
+
+    renk = {"A": "E2EFDA", "B": "FFF2CC", "C": "FCE4D6", "D": "F2DCDB"}
+    for i, t in enumerate(liste):
+        r = ust + 1 + i
+        belge = " / ".join(x for x in [("IATF" if t.get("iatf") else ""),
+                                       ("ISO 9001" if t.get("iso9001") else "")] if x) or "—"
+        satir = [i + 1, met(t.get("ad")), ", ".join(t.get("lokasyon") or []),
+                 met(t.get("sinif")), t.get("puan"), t.get("ppm"), belge,
+                 met(t.get("tavan_not"))]
+        for j, deger in enumerate(satir):
+            c = ws.cell(r, 1 + j, deger)
+            c.border = kutu; c.font = Font(size=10)
+            c.alignment = Alignment(wrap_text=(j in (1, 7)), vertical="center",
+                                    horizontal="left" if j in (1, 7) else "center")
+            if j == 3 and met(t.get("sinif")) in renk:
+                c.fill = PatternFill("solid", fgColor=renk[met(t.get("sinif"))])
+        ws.row_dimensions[r].height = 20
+
+    son = ust + len(liste) + 2
+    ws.cell(son, 1, "Kaynak: ERP Onaylı Tedarikçi Değerlendirme modülü — "
+                    "otomotiv (Tip A) filtresi, %s lokasyonu. Sınıf tavanı uygulanan "
+                    "tedarikçilerde gerekçe Not sütunundadır." % kapsam
+            ).font = Font(size=8, italic=True, color="808080")
+    ws.merge_cells(start_row=son, start_column=1, end_row=son, end_column=8)
+    ws.print_area = "A1:H%d" % son
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+    wb.save(hedef)
+    return len(liste)
+
+
 # ── Türetilen alanlar ────────────────────────────────────────────────────
 def zenginlestir(v):
     v["lokasyon_ad"] = "Ankara" if v["lokasyon"] == "ankara" else "Çerkezköy"
@@ -443,18 +522,47 @@ def main():
           % (v["musteri"], v["lokasyon_ad"], v["devreye"]))
     print("   klasör : %s" % klasor)
 
-    p = os.path.join(klasor, "PL74 Proses Akış Diyagramı %s.xlsx" % kod)
-    n = pl74(v, p); print("   ✓ PL74 Proses Akış Diyagramı      (%d adım)" % n)
+    def uret(dosya, islev, etiket):
+        """Belgeyi gecici ada yazip yerine koyar. Dosya Excel'de acikken
+        (Permission denied) tum uretim durmasin diye tek tek yakalanir."""
+        yol = os.path.join(klasor, dosya)
+        gecici = yol + ".yeni"
+        try:
+            sonuc = islev(v, gecici)
+            if not sonuc or not os.path.exists(gecici):
+                # Uretilmedi (or. PL11 kaynagi yok) - bos dosya birakma
+                if os.path.exists(gecici): os.remove(gecici)
+                return None
+            os.replace(gecici, yol)
+            return sonuc
+        except PermissionError:
+            try: os.remove(gecici)
+            except OSError: pass
+            print("   ! %-32s dosya açık, yazılamadı — Excel'de kapatıp tekrar çalıştırın" % etiket)
+            return None
+        except Exception as e:
+            try: os.remove(gecici)
+            except OSError: pass
+            print("   ! %-32s üretilemedi: %s" % (etiket, str(e)[:70]))
+            return None
 
-    p = os.path.join(klasor, "FR90 Fizibilite Taahhüdü %s.xlsm" % kod)
-    fr90(v, p); print("   ✓ FR90 Fizibilite Taahhüdü         (başlık dolduruldu, cevaplar ekipte)")
+    n = uret("PL74 Proses Akış Diyagramı %s.xlsx" % kod, pl74, "PL74 Proses Akış Diyagramı")
+    if n: print("   ✓ PL74 Proses Akış Diyagramı      (%d adım)" % n)
 
-    p = os.path.join(klasor, "FR81 Toplantı Tutanağı %s.xlsx" % kod)
-    n = fr81(v, p); print("   ✓ FR81 Toplantı Tutanağı           (%d gündem maddesi)" % n)
+    if uret("FR90 Fizibilite Taahhüdü %s.xlsm" % kod, lambda a, b: (fr90(a, b), 1)[1],
+            "FR90 Fizibilite Taahhüdü"):
+        print("   ✓ FR90 Fizibilite Taahhüdü         (başlık dolduruldu, cevaplar ekipte)")
 
-    p = os.path.join(klasor, "Kapasite Takip Formu %s.xlsx" % kod)
-    n = kapasite(v, p); print("   ✓ Kapasite Takip Formu             (%d operasyon, darboğaz: %s / %s adet)"
-                              % (n, v["darbogaz"]["makine"][:26], v["darbogaz"]["kap"]))
+    n = uret("FR81 Toplantı Tutanağı %s.xlsx" % kod, fr81, "FR81 Toplantı Tutanağı")
+    if n: print("   ✓ FR81 Toplantı Tutanağı           (%d gündem maddesi)" % n)
+
+    n = uret("PL11 Onaylı Tedarikçi Listesi %s.xlsx" % kod, pl11, "PL11 Onaylı Tedarikçi Listesi")
+    if n:
+        print("   ✓ PL11 Onaylı Tedarikçi Listesi     (%d otomotiv tedarikçi, %s)" % (n, v["lokasyon_ad"]))
+
+    n = uret("Kapasite Takip Formu %s.xlsx" % kod, kapasite, "Kapasite Takip Formu")
+    if n: print("   ✓ Kapasite Takip Formu             (%d operasyon, darboğaz: %s / %s adet)"
+                % (n, v["darbogaz"]["makine"][:26], v["darbogaz"]["kap"]))
 
 
 if __name__ == "__main__":
