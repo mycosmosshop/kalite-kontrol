@@ -75,12 +75,29 @@ def _sutun_no(h):
     return n
 
 
+def _secim_duzelt(xml):
+    """<selection activeCell=... sqref=...> tutarsizsa Excel dosyayi ACARKEN
+    "Gorunum onarildi" uyarisi veriyor. Etkin hucre, secim araliginin ILK
+    hucresine esitlenir."""
+    def onar(m):
+        oz = m.group(1)
+        g = re.search(r'sqref="([A-Z]+\d+)', oz)
+        if not g:
+            return m.group(0)
+        if "activeCell" in oz:
+            return "<selection%s/>" % re.sub(r'activeCell="[A-Z]+\d+"',
+                                             'activeCell="%s"' % g.group(1), oz)
+        return '<selection activeCell="%s"%s/>' % (g.group(1), oz)
+
+    return re.sub(r"<selection([^/>]*)/>", onar, xml)
+
+
 def hucre_yaz(kaynak, hedef, sayfa_dosyasi, degerler, ek_xml=None, yeni_parcalar=None):
     """degerler: {'C6': 'metin', 'B12': 3, ...}  -> hedef dosyaya yazar.
     ek_xml: {zip_ici_yol: yeni_xml} — cizim/stil gibi baska parcalari da
     ayni yazma isleminde degistirmek icin."""
     zin = zipfile.ZipFile(kaynak)
-    xml = zin.read(sayfa_dosyasi).decode("utf-8")
+    xml = _secim_duzelt(zin.read(sayfa_dosyasi).decode("utf-8"))
 
     for ref, deger in degerler.items():
         sayi = isinstance(deger, (int, float))
