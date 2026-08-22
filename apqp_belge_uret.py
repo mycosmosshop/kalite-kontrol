@@ -42,6 +42,17 @@ def sorgu(yol):
         return json.load(f)
 
 
+def yaz(yol, veri, yontem="POST"):
+    """Supabase'e kayit yazar (yalniz APQP/MSA tablolari — LeanSys'e DOKUNULMAZ)."""
+    g = json.dumps(veri, ensure_ascii=False).encode("utf-8")
+    r = urllib.request.Request(SUPABASE + yol, data=g, method=yontem, headers={
+        "apikey": ANON, "Authorization": "Bearer " + ANON,
+        "Content-Type": "application/json", "Prefer": "return=representation"})
+    with urllib.request.urlopen(r, timeout=60) as f:
+        govde = f.read().decode("utf-8")
+        return json.loads(govde) if govde.strip() else []
+
+
 def met(x):
     return "" if x is None else str(x).strip()
 
@@ -1435,25 +1446,94 @@ MSA_SONUC = {"acceptable": "KABUL", "marginal": "ŞARTLI", "unacceptable": "RED"
 MSA_ADRES = "https://mycosmosshop.github.io/msa/results.html?id="
 
 
+KULLANICI = "volkanpekatik@gmail.com"
+
+
+def calisma_metni(c):
+    return " ".join(met(c.get(k)).upper() for k in
+                    ("gauge_name", "gauge_number", "characteristic", "part_name", "study_name"))
+
+
+def eslesen_calisma(g, mevcut):
+    """Bu alete ait ERP çalışması (varsa) — en yenisi.
+    DİKKAT: mevcut listesi ZATEN ürüne göre süzülmüş gelir. Yalnız alet adına
+    bakmak başka ürünün aynı isimli aletindeki çalışmayı buraya taşıyordu."""
+    ad = g["alet"].upper()
+    uygun = [c for c in mevcut if ad in calisma_metni(c)]
+    return sorted(uygun, key=lambda c: met(c.get("study_date")), reverse=True)[0] if uygun else None
+
+
 def msa_calismalari(v, aletler):
-    """Alet adı / karakteristik / parça adı üzerinden eşleşen ERP çalışmaları."""
+    """Bu ürünle ya da aletleriyle eşleşen ERP (GageAI) çalışmaları — düz liste."""
     try:
         hepsi = sorgu("/msa_studies?select=id,study_name,study_type,status,is_acceptable,"
                       "gauge_name,gauge_number,characteristic,part_name,study_date"
                       "&copied_from_id=is.null&limit=500")
     except Exception:
-        return {}
-    esler = {}
-    anahtar = [v["kod"]] + ([met(v.get("musteriParca"))] if met(v.get("musteriParca")) else [])
-    for c in hepsi:
-        metin = " ".join(met(c.get(k)).upper() for k in
-                         ("gauge_name", "gauge_number", "characteristic", "part_name", "study_name"))
-        if any(a and a.upper() in metin for a in anahtar):
-            esler.setdefault("__urun__", []).append(c)
-        for g in aletler:
-            if len(g["alet"]) > 3 and g["alet"].upper() in metin:
-                esler.setdefault(g["alet"].upper(), []).append(c)
-    return esler
+        return []
+    # Çalışma BU ÜRÜNE ait olmalı: yalnız alet adına bakmak, aynı isimli aleti
+    # kullanan başka ürünün çalışmasını bu ürünün kanıtı gibi gösteriyordu.
+    urun = [a.upper() for a in ([v["kod"]] + met(v.get("musteriParca")).split())
+            if len(a) > 4 and any(x.isdigit() for x in a)]
+    return [c for c in hepsi if any(a in calisma_metni(c) for a in urun)]
+
+
+def msa_secenekleri(tolerans):
+    return {
+        "process_variation": "study_variation", "historical_std": 3,
+        "tolerance": {"width": float(tolerans) if tolerans else 10},
+        "anova_table": True, "f_statistic_type": "fixed_effects", "alpha_removal": 0.05,
+        "interaction_pooling": "auto", "show_tooltips": True,
+        "show_recommendations": True, "show_capa_banner": True,
+        "study_var_multiplier": {"type": "std_deviation", "value": 6},
+        "plots": {"components": True, "range_charts": True, "xbar_charts": True,
+                  "scatter": True, "measurements_part": True, "measurements_op": True,
+                  "traffic_light": True},
+        "histogram_bin_boundary": "right_open",
+    }
+
+
+def msa_calismasi_ac(v, aletler, mevcut):
+    """Çalışması olmayan her ölçüm aleti için MSA modülünde çalışma açar.
+    Ölçüm değeri YAZILMAZ; çalışma 'draft' açılır, değerler modülde girilir."""
+    rolAd = dict((rol, ad) for rol, ad in v["ekip"])
+    kisi = rolAd.get("Kalite Mühendisi") or rolAd.get("Kalite Güvence Müdürü")
+    operator = [rolAd.get("Kalite Mühendisi", "Operatör 1"),
+                rolAd.get("Üretim", "Operatör 2"), rolAd.get("Kalite Güvence Müdürü", "Operatör 3")]
+    acilan = []
+    for g in aletler:
+        if eslesen_calisma(g, mevcut):
+            continue
+        ad = "%s — %s (%s)" % (v["kod"], g["alet"], (g.get("dar_kar") or g["kar"][0])[:34])
+        nitel = g["nitel"]
+        kayit = {
+            "owner_email": KULLANICI, "study_name": ad,
+            "description": "APQP %s kapsamında otomatik açıldı — kontrol planı ölçüm yöntemi: %s"
+                           % (v["kod"], g["alet"]),
+            "study_type": "attribute" if nitel else "type2",
+            "num_operators": 3, "num_parts": 20 if nitel else 10, "num_trials": 3 if nitel else 3,
+            "status": "draft",
+            "gauge_name": g["alet"], "gauge_number": None,
+            "location": v["lokasyon_ad"], "study_date": v["termin"],
+            "part_name": "%s / %s" % (v["kod"], v["ad"]),
+            "characteristic": (g.get("dar_kar") or ", ".join(g["kar"]))[:120],
+            "tolerance_spec": g.get("dar_limit") or ("Nitel — kabul/ret"),
+            "performed_by": kisi,
+            "analysis_options": msa_secenekleri(g.get("tol")),
+        }
+        try:
+            yeni = yaz("/msa_studies", kayit)
+            kimlik = (yeni[0] if yeni else {}).get("id")
+            if not kimlik:
+                continue
+            yaz("/msa_operators", [{"study_id": kimlik, "operator_name": operator[i],
+                                    "operator_number": i + 1} for i in range(3)])
+            yaz("/msa_parts", [{"study_id": kimlik, "part_name": "Parça %d" % (i + 1),
+                                "part_number": i + 1} for i in range(kayit["num_parts"])])
+            acilan.append((g["alet"], kimlik, "Type-3 nitelik" if nitel else "Type-2 Gage R&R"))
+        except Exception as e:
+            print("   ! MSA çalışması açılamadı (%s): %s" % (g["alet"], str(e)[:70]))
+    return acilan
 
 
 def msa_plani(v, hedef):
@@ -1510,7 +1590,7 @@ def msa_plani(v, hedef):
             tip = ("Type-1 (Cg/Cgk) + Type-2 Gage R&R\n(3 operatör × 10 parça × 3 tekrar, ANOVA)")
             kriter = "Cg/Cgk ≥ 1,33 ; %GRR ≤ %10 kabul, %10–30 şartlı, ndc ≥ 5"
             tol = "%s  (%s)" % (("%g" % g["tol"]), g.get("dar_kar", "")[:26])
-        c = (esler.get(g["alet"].upper()) or esler.get("__urun__") or [None])[0]
+        c = eslesen_calisma(g, esler)
         deger = [i + 1, g["alet"], ", ".join(g["kar"])[:220], ", ".join(sorted(g["op"])),
                  tol, tip, kriter, sorumlu, v["termin"],
                  met(c.get("study_name")) + " (" + met(c.get("study_date"))[:10] + ")" if c
@@ -1995,6 +2075,12 @@ def main():
     n = uret("FR34 P-FMEA %s.xlsx" % kod, fr34_pfmea, "FR34 P-FMEA")
     if n: print("   ✓ FR34 P-FMEA (Excel çıktısı)       (%d satır, AIAG-VDA 30 sütun)" % n)
     else: print("   ! FR34 P-FMEA                       PFMEA modülünde bu ürünün projesi yok")
+    # MSA calismalari once ACILIR ki plan belgesi onlari gostersin
+    aletler = msa_aletleri(kod)
+    acilan = msa_calismasi_ac(v, aletler, msa_calismalari(v, aletler))
+    for alet, kimlik, tip in acilan:
+        print("   + MSA çalışması açıldı: %-14s %-16s (GageAI #%s)" % (alet, tip, kimlik))
+
     n = uret("MSA Planı %s.xlsx" % kod, msa_plani, "MSA Planı")
     if n: print("   ✓ MSA Planı                         (%d ölçüm aleti)" % n)
     n = uret("FR86 Gage R&R %s.xlsx" % kod, fr86_gage_rr, "FR86 Gage R&R")

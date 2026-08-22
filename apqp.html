@@ -285,20 +285,24 @@ async function kodCoz(giris) {
 const MSA_ADRES = 'https://mycosmosshop.github.io/msa/results.html?id=';
 const MSA_ROZET = { acceptable: '✓ kabul', marginal: '⚠ şartlı', unacceptable: '✗ red' };
 
-function msaEslesir(c, aletler, kod, parca) {
+// Calisma BU URUNE ait olmali. Yalniz alet adina bakmak, ayni isimli aleti
+// (GOZLE, SERITMETRE...) kullanan BASKA urunun calismasini bu urunun kanitiymis
+// gibi gosteriyordu.
+function msaEslesir(c, kod, parca) {
   const b = x => met(x).toLocaleUpperCase('tr');
   const metin = [c.gauge_name, c.gauge_number, c.characteristic, c.part_name, c.study_name]
     .map(b).join(' ');
-  if ([kod, parca].filter(Boolean).some(x => x && metin.includes(b(x)))) return true;
-  return aletler.some(a => a.length > 3 && metin.includes(b(a)));
+  return [kod].concat(met(parca).split(/\s+/))
+    .filter(a => a.length > 4 && /\d/.test(a))
+    .some(a => metin.includes(b(a)));
 }
 
-async function msaCalismalari(kod, parca, aletler) {
+async function msaCalismalari(kod, parca) {
   const r = await sb.from('msa_studies')
     .select('id,study_name,study_type,status,is_acceptable,gauge_name,gauge_number,'
       + 'characteristic,part_name,study_date,location')
     .is('copied_from_id', null).limit(500);
-  return (r.data || []).filter(c => msaEslesir(c, aletler, kod, parca));
+  return (r.data || []).filter(c => msaEslesir(c, kod, parca));
 }
 
 // ── ERP verisinden kanit topla ───────────────────────────────────────────
@@ -346,7 +350,7 @@ async function erpKanit(giris) {
   const makineler = (rota.data || []).map(x => met(x.makine_adi)).filter(Boolean);
   return {
     kod, musteriParca: coz.musteriParca || '', aletler,
-    msa: await msaCalismalari(kod, coz.musteriParca, aletler),
+    msa: await msaCalismalari(kod, coz.musteriParca),
     lokasyon: lokasyonCoz(makineler),
     urunAdi, devreyeAlma, tarihKaynagi: tarihAdayi.length ? (rota.data || []).length ? 'operasyon kartı' : 'kontrol planı' : 'bugün',
     dokumanlar,
