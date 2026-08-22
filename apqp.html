@@ -51,7 +51,7 @@ a.sil-dugme:hover{background:#b91c1c;color:#fff;border-color:#b91c1c}
 <body>
 <div class="ust">
   <h1>APQP Takip</h1>
-  <span class="bilgi">FR91 APQP-Takip Formu &middot; 63 adım / 6 bölüm</span>
+  <span class="bilgi" id="fr91Bilgi">FR91 APQP-Takip Formu</span>
   <span style="flex:1"></span>
   <input id="kod" placeholder="Ürün kodu — birden fazlası için virgülle ayırın" style="min-width:340px">
   <button class="bas" id="uretBtn">APQP Oluştur</button>
@@ -340,7 +340,7 @@ async function apqpUret(giris) {
   const kod = k.kod;
   const son = k.devreyeAlma;                       // urun devreye alma
   const bas = gunEkle(son, -TOPLAM_GUN);           // APQP baslangici
-  const drive = await driveDosyalari(kod, coz.musteriParca);   // yalniz BU urune ait dokumanlar
+  const drive = await driveDosyalari(kod, k.musteriParca);     // yalniz BU urune ait dokumanlar
   // Teknik resim adimlarina LeanSys stok dokumani baglanir
   const resim = k.dokumanlar.find(d => d.yol) || null;
 
@@ -403,6 +403,9 @@ async function hepsiniOku() {
 
 // ── Cizim ────────────────────────────────────────────────────────────────
 let aktif = null, gorunum = 'liste';
+// Baslik FR91 listesinden hesaplanir; liste revize olunca elle guncelleme gerekmesin
+$('#fr91Bilgi').textContent = 'FR91 APQP-Takip Formu · '
+  + FR91.reduce((t, b) => t + b.adimlar.length, 0) + ' adım / ' + FR91.length + ' bölüm';
 
 function yuzde(p) {
   const hepsi = p.bolumler.flatMap(b => b.adimlar);
