@@ -57,6 +57,7 @@ a.dosya{color:#1d4ed8;text-decoration:none}a.dosya:hover{text-decoration:underli
     <div style="display:flex;gap:26px;flex-wrap:wrap">
       <div><b>Parça Numarası:</b> <span id="bParca">—</span></div>
       <div><b>Müşteri:</b> <span id="bMusteri">—</span></div>
+      <div><b>Lokasyon:</b> <span id="bLokasyon">—</span></div>
       <div><b>APQP Tarihi:</b> <span id="bTarih">—</span></div>
       <div><b>Devreye Alma:</b> <span id="bDevreye">—</span></div>
       <div><b>Kanıt:</b> <span id="bKanit">—</span></div>
@@ -72,9 +73,12 @@ a.dosya{color:#1d4ed8;text-decoration:none}a.dosya:hover{text-decoration:underli
   </div>
 
   <div class="sekme" id="sekmeler" hidden>
+    <button data-gorunum="pano">Pano</button>
     <button class="sec" data-gorunum="liste">Liste</button>
     <button data-gorunum="gantt">Gantt</button>
   </div>
+
+  <div class="kart" id="panoKart" hidden></div>
 
   <div class="kart" id="listeKart" hidden></div>
   <div class="kart gantt" id="ganttKart" hidden></div>
@@ -102,6 +106,23 @@ const gunEkle = (t, g) => { const d = new Date(t); d.setDate(d.getDate() + g); r
 //   bolum5 2019-01-21 (+77), bolum6 02-04 (+91), devreye alma 02-13 (+100)
 const FAZ = { '2': 14, '3': 35, '4': 56, '5': 77, '6': 91, '7': 100 };
 const TOPLAM_GUN = 100;
+
+// Lokasyon makine adindaki isaretten cikarilir. Gercek veride gecen
+// isaretler: ANK, CRK, ESK/ESKISEHIR (+ acik yazilan sehir adlari).
+const LOKASYONLAR = [
+  [/\(ANK\)|ANKARA/i,                 'Ankara'],
+  [/\(CRK\)|ÇERKEZKÖY|CERKEZKOY/i,    'Çerkezköy'],
+  [/\(ESK\)|ESKISEHIR|ESKİŞEHİR/i,    'Eskişehir'],
+  [/ADANA/i,                            'Adana'],
+  [/SAKARYA/i,                          'Sakarya'],
+  [/MANISA|MANİSA/i,                    'Manisa'],
+  [/BURSA/i,                            'Bursa'],
+];
+function lokasyonCoz(makineler) {
+  const m = (makineler || []).join(' ');
+  const bulunan = LOKASYONLAR.filter(([k]) => k.test(m)).map(([, ad]) => ad);
+  return bulunan.length ? [...new Set(bulunan)].join(' / ') : '';
+}
 
 // Yerel LeanSys ajani (Kalite Kontrol modulu de ayni ucu kullaniyor)
 const AJAN = 'http://127.0.0.1:17777';
@@ -217,7 +238,7 @@ async function erpKanit(giris) {
   const coz = await kodCoz(giris);
   const kod = coz.kod;
   const [rota, agac, fmea, dok] = await Promise.all([
-    sb.from('operasyon_kartlari').select('stok_kodu,kayit_tarihi,gecerlilik_tarihi').eq('stok_kodu', kod).limit(50),
+    sb.from('operasyon_kartlari').select('stok_kodu,makine_adi,kayit_tarihi,gecerlilik_tarihi').eq('stok_kodu', kod).limit(80),
     sb.from('urun_agaclari').select('urun_kodu,kayit_tarihi').eq('urun_kodu', kod).limit(50),
     sb.from('pfmea_projects').select('id,name,data').limit(500),
     sb.from('stok_dokumanlari').select('doc_adi,link,rev_no,yayin_tarihi,tip,aktif').eq('stok_kodu', kod).limit(50),
@@ -251,8 +272,10 @@ async function erpKanit(giris) {
     ad: met(d.doc_adi), yol: met(d.link), rev: met(d.rev_no), tarih: met(d.yayin_tarihi).slice(0, 10),
   }));
 
+  const makineler = (rota.data || []).map(x => met(x.makine_adi)).filter(Boolean);
   return {
     kod, musteriParca: coz.musteriParca || '',
+    lokasyon: lokasyonCoz(makineler),
     urunAdi, devreyeAlma, tarihKaynagi: tarihAdayi.length ? (rota.data || []).length ? 'operasyon kartı' : 'kontrol planı' : 'bugün',
     dokumanlar,
     musteri: met((planSatir[0] || {}).cari_adi),
@@ -304,6 +327,7 @@ async function apqpUret(giris) {
     stokKodu: kod, musteriParca: k.musteriParca || k.urunAdi,
     urunAdi: k.urunAdi, musteri: k.musteri, tarih: bas,
     devreyeAlma: son, tarihKaynagi: k.tarihKaynagi, dokumanlar: k.dokumanlar,
+    lokasyon: k.lokasyon || '',
     ekip: EKIP, bolumler,
     kaynak: { fmea: k.fmea, kontrolPlani: k.plan, operasyonKarti: k.opkart, urunAgaci: k.agac },
   };
@@ -339,6 +363,7 @@ function ciz() {
   $('#bParca').textContent = aktif.stokKodu + (aktif.urunAdi ? ' — ' + aktif.urunAdi : '')
     + (aktif.musteriParca && aktif.musteriParca !== aktif.urunAdi ? '  (müşteri: ' + aktif.musteriParca + ')' : '');
   $('#bMusteri').textContent = aktif.musteri || '—';
+  $('#bLokasyon').textContent = aktif.lokasyon || '—';
   $('#bTarih').textContent = aktif.tarih;
   $('#bDevreye').textContent = (aktif.devreyeAlma || '—')
     + (aktif.tarihKaynagi ? ' (' + aktif.tarihKaynagi + ')' : '');
@@ -350,15 +375,44 @@ function ciz() {
   const kanitli = hepsi.filter(a => (a.kanitlar || []).length).length;
   $('#bKanit').textContent = kanitli + ' / ' + hepsi.length + ' adımda kanıt';
   $('#bDrive').textContent = driveKlasoru(aktif.stokKodu);
+  $('#panoKart').hidden = gorunum !== 'pano';
   $('#listeKart').hidden = gorunum !== 'liste';
   $('#ganttKart').hidden = gorunum !== 'gantt';
-  if (gorunum === 'liste') cizListe(); else cizGantt();
+  $('#baslikKart').hidden = gorunum === 'pano';
+  if (gorunum === 'pano') cizPano();
+  else if (gorunum === 'liste') cizListe();
+  else cizGantt();
 }
 
 function rozet(d) {
   const s = Number(d) || 0;
   const c = s >= 100 ? 'r100' : s > 0 ? 'r50' : 'r0';
   return '<span class="rozet ' + c + '">%' + s + '</span>';
+}
+
+// Pano: tum APQP kayitlari tek listede
+let panoKayitlari = [];
+function cizPano() {
+  if (!panoKayitlari.length) { $('#panoKart').innerHTML = 'Henüz APQP kaydı yok.'; return; }
+  const satir = panoKayitlari.map(p => {
+    const y = yuzde(p);
+    const hepsi = p.bolumler.flatMap(b => b.adimlar);
+    const kanitli = hepsi.filter(a => (a.kanitlar || []).length).length;
+    return '<tr data-ac-proje="' + p.id + '" style="cursor:pointer">'
+      + '<td><b>' + p.stokKodu + '</b></td>'
+      + '<td>' + (p.urunAdi || '') + '</td>'
+      + '<td>' + (p.musteri || '') + '</td>'
+      + '<td>' + (p.lokasyon || '<span style="color:#b45309">—</span>') + '</td>'
+      + '<td class="no">' + (p.tarih || '') + '</td>'
+      + '<td class="no">' + (p.devreyeAlma || '') + '</td>'
+      + '<td class="durum">' + kanitli + ' / ' + hepsi.length + '</td>'
+      + '<td class="durum">' + rozet(y) + '</td>'
+      + '</tr>';
+  }).join('');
+  $('#panoKart').innerHTML =
+    '<table><thead><tr><th>Ürün Kodu</th><th>Ürün Adı (LeanSys)</th><th>Müşteri</th>'
+    + '<th>Lokasyon</th><th>APQP Başlangıç</th><th>Devreye Alma</th>'
+    + '<th>Kanıt</th><th>Tamamlanma</th></tr></thead><tbody>' + satir + '</tbody></table>';
 }
 
 function cizListe() {
@@ -431,6 +485,15 @@ document.addEventListener('change', async e => {
 });
 
 document.addEventListener('click', e => {
+  const tr = e.target.closest && e.target.closest('tr[data-ac-proje]');
+  if (tr) {
+    $('#projeSec').value = tr.dataset.acProje;
+    aktif = panoKayitlari.find(p => p.id === tr.dataset.acProje) || null;
+    gorunum = 'liste';
+    [...$('#sekmeler').children].forEach(b => b.className = b.dataset.gorunum === gorunum ? 'sec' : '');
+    ciz();
+    return;
+  }
   const a = e.target.closest && e.target.closest('a[data-ac]');
   if (!a) return;
   e.preventDefault();
@@ -510,10 +573,20 @@ async function projeleriYukle(secId) {
     mesaj('Tablo okunamadı: ' + err.message + '<br>apqp.sql dosyasındaki SQL&#39;i Supabase SQL Editor&#39;de bir kez çalıştırın.');
     return;
   }
+  panoKayitlari = hepsi;
   $('#projeSec').innerHTML = '<option value="">— APQP kaydı seçin —</option>'
     + hepsi.map(p => '<option value="' + p.id + '">' + p.stokKodu + ' — %' + yuzde(p) + '</option>').join('');
   if (secId) $('#projeSec').value = secId;
   aktif = hepsi.find(p => p.id === $('#projeSec').value) || null;
+  if (!aktif && hepsi.length) {
+    // Kayıt seçilmediyse pano açılır (hepsi bir arada görünsün)
+    gorunum = 'pano';
+    $('#sekmeler').hidden = false;
+    [...$('#sekmeler').children].forEach(b => b.className = b.dataset.gorunum === 'pano' ? 'sec' : '');
+    $('#panoKart').hidden = false;
+    cizPano();
+    return;
+  }
   ciz();
 }
 

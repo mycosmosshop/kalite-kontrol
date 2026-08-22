@@ -62,8 +62,10 @@ def _sutun_no(h):
     return n
 
 
-def hucre_yaz(kaynak, hedef, sayfa_dosyasi, degerler):
-    """degerler: {'C6': 'metin', 'B12': 3, ...}  -> hedef dosyaya yazar."""
+def hucre_yaz(kaynak, hedef, sayfa_dosyasi, degerler, ek_xml=None):
+    """degerler: {'C6': 'metin', 'B12': 3, ...}  -> hedef dosyaya yazar.
+    ek_xml: {zip_ici_yol: yeni_xml} — cizim/stil gibi baska parcalari da
+    ayni yazma isleminde degistirmek icin."""
     zin = zipfile.ZipFile(kaynak)
     xml = zin.read(sayfa_dosyasi).decode("utf-8")
 
@@ -96,9 +98,60 @@ def hucre_yaz(kaynak, hedef, sayfa_dosyasi, degerler):
 
     zout = zipfile.ZipFile(hedef, "w", zipfile.ZIP_DEFLATED)
     for e in zin.infolist():
-        zout.writestr(e, xml.encode("utf-8") if e.filename == sayfa_dosyasi else zin.read(e.filename))
+        if e.filename == sayfa_dosyasi:
+            zout.writestr(e, xml.encode("utf-8"))
+        elif ek_xml and e.filename in ek_xml:
+            zout.writestr(e, ek_xml[e.filename].encode("utf-8"))
+        else:
+            zout.writestr(e, zin.read(e.filename))
     zout.close()
     zin.close()
+
+
+# Bir cizimden adi verilen sekli/gorseli komple cikarir (capa blogu dahil).
+def cizimden_sil(xml, ad):
+    for etiket in ("twoCellAnchor", "oneCellAnchor", "absoluteAnchor"):
+        for m in re.finditer(r"<xdr:%s.*?</xdr:%s>" % (etiket, etiket), xml, re.S):
+            if 'name="%s"' % ad in m.group(0):
+                return xml[:m.start()] + xml[m.end():], True
+    return xml, False
+
+
+# Verilen stil numarasinin metin kaydirmali kopyasini styles.xml'e ekler ve
+# yeni numarayi dondurur (zip duzeyinde yazarken hucre bicimi kaybolmasin).
+def kaydirmali_stil(styles_xml, stil_no):
+    """Verilen stilin metin kaydirmali bir kopyasini styles.xml'e ekler.
+
+    Yeni <xf> kaynak stilin OZNITELIKLERINDEN kurulur; dize cerrahisi
+    yapilmaz (kaynak stilin alignment'i kendi kendini kapatmadiginda bozuk
+    XML uretiyordu).
+    """
+    xfs = re.search(r'<cellXfs count="(\d+)">(.*?)</cellXfs>', styles_xml, re.S)
+    if not xfs:
+        return styles_xml, stil_no
+    liste = re.findall(r"<xf\b.*?(?:/>|</xf>)", xfs.group(2), re.S)
+    if stil_no >= len(liste):
+        return styles_xml, stil_no
+
+    acilis = re.match(r"<xf\b([^>]*?)/?>", liste[stil_no])
+    oz = dict(re.findall(r'(\w+)="([^"]*)"', acilis.group(1) if acilis else ""))
+    tasi = ["numFmtId", "fontId", "fillId", "borderId", "xfId",
+            "applyNumberFormat", "applyFont", "applyFill", "applyBorder"]
+    parcalar = " ".join('%s="%s"' % (k, oz[k]) for k in tasi if k in oz)
+    yeni_xf = ('<xf %s applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf>'
+               % parcalar)
+
+    yeni_no = len(liste)
+    govde = xfs.group(2) + yeni_xf
+    styles_xml = (styles_xml[:xfs.start()]
+                  + '<cellXfs count="%d">%s</cellXfs>' % (yeni_no + 1, govde)
+                  + styles_xml[xfs.end():])
+    return styles_xml, yeni_no
+
+
+def hucre_stil_no(xml, ref):
+    m = re.search(r'<c r="%s"[^>]*\bs="(\d+)"' % ref, xml)
+    return int(m.group(1)) if m else 0
 
 
 # ── ERP verisi ───────────────────────────────────────────────────────────
@@ -166,29 +219,91 @@ def pl74(v, hedef):
 # Hayır) EKİBİN kararıdır — üretim onları DOLDURMAZ, örnekteki işaretler
 # şablonla birlikte gelir ve ekip gözden geçirir.
 def fr90(v, hedef):
+    """Şablon kopyalanıp doldurulur.
+
+    Cevap işaretleri (Evet/Şartlı/Hayır) EKİBİN kararıdır; üretim yalnızca
+    başlığı, sonucu ve elindeki KANITLARI yazar. İmzalar da dokunulmaz:
+    kişinin kendi imzası olmadan başkasının imzası konmaz.
+    """
     kaynak = os.path.join(SABLON, "FR90 Fizibilite Taahhüdü.xlsm")
-    hammadde = "; ".join((met(a.get("tuketim_kodu")) + " " + met(a.get("tuketim_adi")))[:44]
+    zin = zipfile.ZipFile(kaynak)
+    sayfa = "xl/worksheets/sheet1.xml"
+    sayfa_xml = zin.read(sayfa).decode("utf-8")
+    cizim = zin.read("xl/drawings/drawing1.xml").decode("utf-8")
+    styles = zin.read("xl/styles.xml").decode("utf-8")
+    zin.close()
+
+    # Fazla kaşe: Satınalma kutusunun sağında duran ikinci Sanifoam kaşesi
+    cizim, silindi = cizimden_sil(cizim, "Imza 6")
+
+    # Açıklama (L) sütunu metin kaydırmalı olsun — uzun kanıt metni taşmasın
+    l_stil = hucre_stil_no(sayfa_xml, "L29") or hucre_stil_no(sayfa_xml, "L21")
+    styles, yeni_stil = kaydirmali_stil(styles, l_stil)
+
+    hammadde = "; ".join((met(a.get("tuketim_kodu")) + " " + met(a.get("tuketim_adi")))[:40]
                          for a in v["agac"][:6]) or "—"
-    resim = next((met(x.get("doc_adi")) for x in v["dok"] if met(x.get("link"))), "—")
+    db = v["darbogaz"]
+    kanit = {
+        21: "Kapasite Takip Formu — darboğaz %s, %s adet/vardiya" % (db["makine"][:28], db["kap"]),
+        22: "FR228 Ambalaj Standardı Formu",
+        23: "FR228 Ambalaj Standardı Formu; LeanSys iş emri izlenebilirliği",
+        24: "PPM hedefi KPI Takip modülünde izleniyor",
+        28: "Hat: %s" % (", ".join(sorted({met(r.get("makine_adi")) for r in v["rota"]
+                                           if met(r.get("makine_adi"))}))[:70] or "—"),
+        29: hammadde,
+        30: "Proses Yeterliliği (Cp/Cpk) modülü",
+        31: "Kontrol planındaki ölçüm yöntemleri; MSA (Gage R&R) modülü",
+        32: v["fmea_not"],
+        36: v["resim"],
+        37: "Proses Yeterliliği modülü — Cmk/Ppk çalışması",
+    }
+
     d = {"C6": v["musteri"], "H6": v["devreye"],
-         "C8": v["ad"], "C10": v["kod"], "C12": resim,
-         "L29": hammadde}
-    hucre_yaz(kaynak, hedef, "xl/worksheets/sheet1.xml", d)
+         "C8": v["ad"], "C10": v["kod"], "C12": v["resim"],
+         "K8": v["proje_no"],
+         "A43": "x"}                      # Sonuç: Fizibil
+    d.update({"L%d" % r: t for r, t in kanit.items()})
+
+    hucre_yaz(kaynak, hedef, sayfa, d,
+              ek_xml={"xl/drawings/drawing1.xml": cizim, "xl/styles.xml": styles})
+
+    # Açıklama hücrelerine kaydırmalı stili uygula (hucre_yaz stili korur,
+    # bu yüzden yazdıktan sonra stil numarası değiştirilir)
+    if yeni_stil != l_stil:
+        zin = zipfile.ZipFile(hedef)
+        xml = zin.read(sayfa).decode("utf-8")
+        for r in kanit:
+            ref = "L%d" % r
+            m = re.search(r'<c r="%s"([^>]*)>' % ref, xml)
+            if not m:
+                continue
+            oz = m.group(1)
+            # Stil ozniteligi yoksa eklenir; varsa kaydirmali stille degistirilir
+            oz = (re.sub(r'\bs="\d+"', 's="%d"' % yeni_stil, oz) if 's="' in oz
+                  else ' s="%d"%s' % (yeni_stil, oz))
+            xml = xml[:m.start()] + '<c r="%s"%s>' % (ref, oz) + xml[m.end():]
+        parcalar = {e.filename: zin.read(e.filename) for e in zin.infolist()}
+        bilgi = zin.infolist()
+        zin.close()
+        zout = zipfile.ZipFile(hedef, "w", zipfile.ZIP_DEFLATED)
+        for e in bilgi:
+            zout.writestr(e, xml.encode("utf-8") if e.filename == sayfa else parcalar[e.filename])
+        zout.close()
+    return 1 if silindi else 1
 
 
-# ── Sanifoam antet blogu (kullanicinin kendi formlarindaki duzen) ────────
-# Sol: SaniFoam / SÜNGER SAN.TİC.A.Ş.  Orta: form adi  Sag: cerceveli
-# dokuman kutusu (DOK.NO / Y.TRH / REV.NO / SAYFA).
+# ── Sanifoam antet bloğu (kullanıcının kendi formlarındaki düzen) ────────
+# Sol: SaniFoam / SÜNGER SAN.TİC.A.Ş.  Orta: form adı  Sağ: çerçeveli
+# doküman kutusu (DOK.NO / Y.TRH / REV.NO / SAYFA).
 def antet(ws, baslik, dok_no, y_trh, rev_no="00", sayfa="1 / 1", son_sutun=5):
     from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
-    from openpyxl.utils import get_column_letter
 
     ince = Side(style="thin", color="7F7F7F")
     kalin = Side(style="medium", color="404040")
     kutu = Border(left=ince, right=ince, top=ince, bottom=ince)
 
-    sag_e = son_sutun - 1          # etiket sutunu
-    sag_d = son_sutun              # deger sutunu
+    sag_e = son_sutun - 1
+    sag_d = son_sutun
     orta_son = sag_e - 1
 
     ws.merge_cells(start_row=1, start_column=1, end_row=3, end_column=1)
@@ -216,7 +331,7 @@ def antet(ws, baslik, dok_no, y_trh, rev_no="00", sayfa="1 / 1", son_sutun=5):
         ce.fill = PatternFill("solid", fgColor="F2F2F2")
         ce.border = kutu; cd.border = kutu
 
-    for c in range(1, son_sutun + 1):          # antet alt cizgisi
+    for c in range(1, son_sutun + 1):
         ws.cell(4, c).border = Border(bottom=kalin)
     ws.row_dimensions[1].height = 20
     ws.row_dimensions[2].height = 20
@@ -368,6 +483,11 @@ def kapasite(v, hedef):
                                 vertical="center", wrap_text=(j == 7))
     ws.row_dimensions[satir].height = 26
 
+    if v.get("kapasite_veri_yok"):
+        u = ws.cell(satir + 1, 1, "UYARI: Bu ürünün operasyon kartında kapasite verisi "
+                                  "(standart zaman / kapasite) girilmemiş; kapasite doğrulaması yapılamaz.")
+        u.font = Font(bold=True, size=10, color="9C0006")
+        ws.merge_cells(start_row=satir + 1, start_column=1, end_row=satir + 1, end_column=8)
     ws.cell(satir + 2, 1, "Kaynak: LeanSys operasyon kartı (std_zaman / kapasite / kapasite_sure). "
                           "Vardiya kapasitesi = vardiya süresi ÷ standart zaman."
             ).font = Font(size=8, italic=True, color="808080")
@@ -478,6 +598,26 @@ def zenginlestir(v):
     v["benzer"] = ("Benzer parça(lar): " + ", ".join(kodlar[:6])) if kodlar else \
                   "ERP'de benzer/karşılaştırılabilir parça bulunmadı — yeni proses"
 
+    # FR90 Proje No alani: FMEA projesinin kimligi (proj_ ile baslayan)
+    v["proje_no"] = "proj_" + re.sub(r"[.\-]", "_", v["kod"])
+    try:
+        pf = sorgu("/pfmea_projects?select=name,data")
+    except Exception:
+        pf = []
+    buyukAd = v["ad"].upper()
+    eslesen = None
+    for x in pf:
+        f = ((x.get("data") or {}).get("projectData") or {}).get("fmea") or {}
+        metin = (met(f.get("project")) + " " + met(f.get("productName")) + " " + met(x.get("name"))).upper()
+        if met(f.get("projectId")) == v["proje_no"] or v["kod"].upper() in metin or (buyukAd and buyukAd in metin):
+            eslesen = (met(f.get("projectId")) or v["proje_no"], met(x.get("name")))
+            break
+    if eslesen:
+        v["proje_no"] = eslesen[0]
+        v["fmea_not"] = "P-FMEA mevcut: " + eslesen[1]
+    else:
+        v["fmea_not"] = "P-FMEA bulunamadı — oluşturulmalı (PFMEA modülü)"
+
     # Kapasite: vardiya süresi kapasite_sure'den (LeanSys 31500 sn ≈ 8,75 saat)
     sureler = [round(float(met(r.get("kapasite_sure")) or 0)) for r in v["rota"]]
     v["vardiya_sure"] = max(sureler) if sureler else 480
@@ -486,12 +626,19 @@ def zenginlestir(v):
     v["birim"] = "dk" if v["vardiya_sure"] <= 1440 else "sn"
     v["vardiya_saat"] = v["vardiya_sure"] / (60.0 if v["birim"] == "dk" else 3600.0)
     satirlar = []
+    bos = []                               # kapasitesi girilmemiş operasyonlar
     for r in v["rota"]:
         # LeanSys bu alanlari ondalikli da doldurabiliyor (19090.9 gibi)
         std = float(met(r.get("std_zaman")) or 0)
         kap = round(float(met(r.get("kapasite")) or 0))
         sure = round(float(met(r.get("kapasite_sure")) or 0))
-        if std <= 1 and kap <= 1:          # hazırlık/boş satır
+        if std <= 1 and kap <= 1:          # hazırlık satırı ya da veri girilmemiş
+            bos.append({
+                "op": met(r.get("op_no")), "makine": met(r.get("makine_adi")),
+                "std": "", "personel": met(r.get("personel")), "sure": "",
+                "kap": "", "gunluk": "", "darbogaz": False,
+                "not": "LeanSys operasyon kartında kapasite verisi girilmemiş",
+            })
             continue
         satirlar.append({
             "op": met(r.get("op_no")), "makine": met(r.get("makine_adi")),
@@ -504,7 +651,11 @@ def zenginlestir(v):
         db["darbogaz"] = True
         v["darbogaz"] = db
     else:
-        v["darbogaz"] = {"makine": "—", "kap": 0, "gunluk": 0}
+        # Hicbir operasyonda kapasite yok: form yine uretilir, eksik gorunsun
+        satirlar = bos
+        v["darbogaz"] = {"makine": "belirlenemedi — kapasite verisi yok",
+                         "kap": "", "gunluk": ""}
+    v["kapasite_veri_yok"] = not any(x["darbogaz"] for x in satirlar)
     v["kapasite_satirlari"] = satirlar
     return v
 
