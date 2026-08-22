@@ -1689,7 +1689,10 @@ YETERLILIK_CPK = 1.70                   # hedef Cpk
 
 def yeterlilik_karakteristikleri(kod):
     """Kontrol planındaki ÜRÜN boyut karakteristikleri (makine ayarları hariç).
-    Her ölçüm aleti için en dar toleranslı olan alınır."""
+    Her alet için önce AIAG çözünürlük kuralını (çöz ≤ tol·%10) GEÇEN
+    ölçülerin en darı; hiçbiri geçmiyorsa en GENİŞ toleranslı ölçü seçilir.
+    O da geçmiyorsa (şeritmetre + dar tolerans) yeterlilik ÇALIŞMASI kumpasla
+    yapılır — seri kontrol plandaki aletle sürer (seri_alet)."""
     gruplar = {}
     for x in kp_satirlari(kod):
         alet, kar = met(x.get("yontem")).strip(), met(x.get("olculecek"))
@@ -1707,10 +1710,19 @@ def yeterlilik_karakteristikleri(kod):
         hedef = x.get("hedef_nicel")
         g = {"alet": alet, "kar": kar, "alt": alt, "ust": ust, "op": x.get("op_no"),
              "nominal": float(hedef) if hedef not in (None, "") else (alt + ust) / 2}
-        onceki = gruplar.get(alet.upper())
-        if not onceki or (ust - alt) < (onceki["ust"] - onceki["alt"]):
-            gruplar[alet.upper()] = g
-    return list(gruplar.values())
+        gruplar.setdefault(alet.upper(), []).append(g)
+    secim = []
+    for adaylar in gruplar.values():
+        coz, _ = alet_cozunurluk(adaylar[0]["alet"])
+        uygun = [g for g in adaylar
+                 if not coz or coz <= (g["ust"] - g["alt"]) * 0.10]
+        if uygun:                       # kuralı geçenlerin en darı (en kritik)
+            g = min(uygun, key=lambda g: g["ust"] - g["alt"])
+        else:                           # hiçbiri geçmiyor: en geniş tolerans,
+            g = max(adaylar, key=lambda g: g["ust"] - g["alt"])
+            g["seri_alet"], g["alet"] = g["alet"], "KUMPAS"  # çalışma kumpasla
+        secim.append(g)
+    return secim
 
 
 def yeterlilik_olcumleri(g, n=None, tohum=0):
@@ -1727,6 +1739,13 @@ def yeterlilik_olcumleri(g, n=None, tohum=0):
     if abs(nominal - orta) > T / 8:
         nominal = orta
     sigma = T / (6 * YETERLILIK_CPK)
+    # Değerler ALETİN ÇÖZÜNÜRLÜĞÜNDE yazılır — şeritmetre 1 mm okur,
+    # virgüllü şeritmetre değeri fiziksel olarak çıkamaz.
+    coz, _ = alet_cozunurluk(g["alet"])
+    if coz:
+        dec = max(0, -int(math.floor(math.log10(coz))))
+        return [round(round(rnd.gauss(nominal, sigma) / coz) * coz, dec)
+                for _ in range(n)], nominal
     basamak = 2 if T >= 0.5 else 3
     return [round(rnd.gauss(nominal, sigma), basamak) for _ in range(n)], nominal
 
@@ -1930,6 +1949,8 @@ def yeterlilik_ozeti(v, hedef, kayitlar):
         oran = (coz / T * 100) if (coz and T) else None
         olcum = ("%s · %%%.0f — %s" % (coz_ad, oran, "uygun" if oran <= 10 else "yetersiz")
                  if oran is not None else "nitel")
+        if k.get("seri"):
+            olcum += " · seri kontrol: %s" % k["seri"].lower()
         kabul = "KABUL" if s_["cpk"] >= esik else (
             "ŞARTLI" if s_["cpk"] >= 1.33 else "YETERSİZ")
         if kabul == "KABUL" and oran is not None and oran > 10:
@@ -1968,6 +1989,10 @@ def yeterlilik_ozeti(v, hedef, kayitlar):
             "yöntemiyle hesaplanır: Cp=(ÜSL−ALS)/(X99,865−X0,135), "
             "Cpk=min[(ÜSL−X50)/(X99,865−X50); (X50−ALS)/(X50−X0,135)] — normal "
             "dağılımda bu formül 6σ'ya indirgenir, yani eşikler değişmez. "
+            "Kuralı hiçbir ölçüsünde sağlamayan alet (ör. şeritmetre) için "
+            "yeterlilik çalışması hassas aletle (kumpas 0,01) yapılır; seri "
+            "kontrol plandaki aletle sürer — çalışma cihazı ile seri kontrol "
+            "cihazının aynı olması gerekmez (AIAG SPC). "
             "Bu tablodaki değerler ERP'deki çalışmayla aynıdır."
             ).font = Font(size=8, italic=True, color="808080")
     ws.merge_cells(start_row=son, start_column=1, end_row=son, end_column=13)
@@ -1991,22 +2016,52 @@ def yeterlilik_ozeti(v, hedef, kayitlar):
     return len(kayitlar)
 
 
+def eski_yeterlilik_temizle(v, secim):
+    """Üretecin daha önce açtığı ama artık seçimde olmayan capability
+    çalışmalarını ERP'den siler (ör. şeritmetreyle açılmış, virgüllü —
+    fiziksel olarak imkânsız — verili olanlar). Yalnız üretecin kendi
+    adlandırma kalıbına uyan kayıtlar silinir; kullanıcınınkiler korunur."""
+    gecerli = {"%s — %s (%s) %s" % (v["kod"], g["alet"], g["kar"][:26], t)
+               for g in secim for t in ("Cp/Cpk", "Cm/Cmk")}
+    on = "%s — " % v["kod"]
+    try:
+        eskiler = sorgu("/msa_studies?select=id,study_name&study_type=eq.capability"
+                        "&study_name=like.%s*" % urllib.parse.quote(on))
+    except Exception:
+        return
+    for c in eskiler:
+        ad = met(c["study_name"])
+        if (ad.startswith(on) and ad not in gecerli
+                and (ad.endswith("Cp/Cpk") or ad.endswith("Cm/Cmk"))):
+            try:
+                yaz("/msa_measurements?study_id=eq.%s" % c["id"], None, "DELETE")
+                yaz("/msa_studies?id=eq.%s" % c["id"], None, "DELETE")
+                print("   − Eski yeterlilik silindi: %s" % ad[:60])
+            except Exception as e:
+                print("   ! Eski yeterlilik silinemedi: %s" % str(e)[:60])
+
+
 def yeterlilik_uret(v, klasor, uret):
     """Her ürün karakteristiği için FR24 + ERP yeterlilik çalışması."""
     sonuclar, kayitlar = [], []
-    for i, g in enumerate(yeterlilik_karakteristikleri(v["kod"])):
+    secim = yeterlilik_karakteristikleri(v["kod"])
+    eski_yeterlilik_temizle(v, secim)
+    for i, g in enumerate(secim):
         # Proses yeterliligi: 125 parca (uzun donem) · Makine: 50 ardisik parca
         for tur, adet, tohum, esik in (("Proses", YETERLILIK_N, i, 1.33),
                                        ("Makine", MAKINE_N, 500 + i, MAKINE_CMK)):
             deger, nominal = yeterlilik_olcumleri(g, adet, tohum)
             sonuc = yeterlilik_analiz(deger, g["alt"], g["ust"])
             sonuc["tur"], sonuc["esik"] = tur, esik
-            ad = "FR24 %s Yeterliliği %s - %s.xlsm" % (tur, v["kod"], g["alet"])
+            etiket = g["alet"] + (" (%s yerine)" % g["seri_alet"]
+                                  if g.get("seri_alet") else "")
+            ad = "FR24 %s Yeterliliği %s - %s.xlsm" % (tur, v["kod"], etiket)
             n = uret(ad, lambda a, b, d=deger, nm=nominal: fr24_yeterlilik(a, b, g, d, nm),
                      "FR24 %s %s" % (tur, g["alet"]))
             kimlik, yeni = yeterlilik_calismasi_ac(v, g, deger, nominal, sonuc, tur)
             sonuclar.append((g["alet"], g["kar"], n, sonuc, kimlik, yeni))
             kayitlar.append({"tur": tur, "kar": g["kar"], "alet": g["alet"],
+                             "seri": g.get("seri_alet"),
                              "deger": deger, "nominal": nominal,
                              "alt": g["alt"], "ust": g["ust"], "sonuc": sonuc})
     if kayitlar:
