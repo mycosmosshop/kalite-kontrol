@@ -2754,6 +2754,19 @@ def main():
               % (kimlik, alet, n_olcum, ozet,
                  {"acceptable": "KABUL", "marginal": "ŞARTLI", "unacceptable": "RED"}[kabul]))
 
+    # Balonlu (numaralandırılmış) teknik resim — PPAP 2.2.1 / madde 6.5
+    try:
+        import balonla
+        cizim = balonla.cizim_yolu(v["dok"])
+        if cizim:
+            n, rapor = balonla.uret(kod, cizim, klasor, kp_satirlari)
+            print("   %s Numaralandırılmış Teknik Resim  (%s)"
+                  % ("✓" if n else "!", rapor))
+        else:
+            print("   ! Numaralandırılmış Teknik Resim  ERP'de teknik resim dosyası yok")
+    except Exception as e:
+        print("   ! Numaralandırılmış Teknik Resim  üretilemedi: %s" % str(e)[:60])
+
     for alet, kar, n_ol, sonuc, kimlik, yeni in yeterlilik_uret(v, klasor, uret):
         print("   %s FR24 %-12s %-22s Cp=%.2f Cpk=%.2f%s"
               % ("✓" if n_ol else "!", alet, kar[:22], sonuc["cp"], sonuc["cpk"],
