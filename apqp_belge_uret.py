@@ -1474,7 +1474,8 @@ def msa_calismalari(v, aletler):
     """Bu ürünle ya da aletleriyle eşleşen ERP (GageAI) çalışmaları — düz liste."""
     try:
         hepsi = sorgu("/msa_studies?select=id,study_name,study_type,status,is_acceptable,"
-                      "gauge_name,gauge_number,characteristic,part_name,study_date"
+                      "gauge_name,gauge_number,characteristic,part_name,study_date,"
+                      "num_operators,num_parts,num_trials,gauge_evaluation"
                       "&copied_from_id=is.null&limit=500")
     except Exception:
         return []
@@ -1556,12 +1557,14 @@ def kalibrasyon_cihazlari(yenile=False):
                 cihaz = al(r"CİHAZ ADI")
                 no = al(r"CİHAZ NO")
                 marka = al(r"MARKASI")
+                aralik = al(r"ÖLÇÜM ARALIĞI")
                 kod = "%s-%s" % (_tr_sade(cihaz)[:8].replace(" ", ""), no.zfill(2)) if no else ""
                 tarih = (re.findall(r"\d{1,2}\.\d{1,2}\.\d{4}", t) or [""])[-1]
             if not met(cihaz):
                 continue
             kayit.append({"cihaz": cihaz, "seri": met(seri).strip(" -"), "kod": met(kod).strip(" -"),
-                          "tarih": tarih, "marka": marka, "klasor": klasor, "dosya": f})
+                          "tarih": tarih, "marka": marka, "aralik": met(locals().get("aralik")),
+                          "klasor": klasor, "dosya": f})
     try:
         json.dump(kayit, io.open(KALIBRASYON_ONBELLEK, "w", encoding="utf-8"),
                   ensure_ascii=False, indent=1)
@@ -1858,96 +1861,130 @@ def msa_olcumleri_yaz(v, aletler):
 
 
 def msa_plani(v, hedef):
-    """MSA Planı: hangi alet, hangi karakteristik, hangi MSA tipi, kim, ne zaman,
-    ve ERP MSA modülünde o alete ait çalışma var mı / sonucu ne."""
+    """MSA Planı — kullanıcının kendi formu PL128 düzeninde.
+    Aletler kontrol planından, seri numarası kalibrasyon kaydından/cihaz
+    listesinden, sonuçlar ERP MSA modülündeki (GageAI) çalışmalardan gelir."""
     from openpyxl import Workbook
-    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.styles import Font, Alignment, PatternFill
     from openpyxl.utils import get_column_letter
 
     aletler = msa_aletleri(v["kod"])
     if not aletler:
         return 0
+    esler = msa_calismalari(v, aletler)
+
     wb = Workbook(); ws = wb.active; ws.title = "MSA Planı"
     ws.sheet_view.showGridLines = False
-    ince = Side(style="thin", color="808080")
-    kutu = Border(top=ince, bottom=ince, left=ince, right=ince)
-    for h, g in zip("ABCDEFGHIJK", (6, 20, 30, 10, 22, 24, 30, 14, 13, 30, 11)):
+    for h, g in zip("ABCDEFGHI", (8, 34, 18, 16, 24, 12, 13, 15, 44)):
         ws.column_dimensions[h].width = g
 
-    # Antet tablo ile AYNI genişlikte kurulur (11 sütun); 9 kalınca sağda
-    # boşluk oluyor ve antet formdan kısa görünüyordu.
-    antet(ws, "ÖLÇÜM SİSTEMİ ANALİZİ (MSA) PLANI", "FR 86-P",
-          "02.01.2025", "0", "1 / 1", 11)
-    r = 6
-    for etiket, deger in (("Ürün :", "%s — %s" % (v["kod"], v["ad"])),
-                          ("Müşteri :", v["musteri"]),
-                          ("Lokasyon :", v["lokasyon_ad"]),
-                          ("Kaynak :", "Leansys PL41 Kontrol Planı — ölçüm yöntemi sütunu")):
-        e = ws.cell(r, 1, etiket); e.font = Font(bold=True, size=10)
-        e.alignment = Alignment(horizontal="right")
-        g = ws.cell(r, 2, deger); g.alignment = Alignment(vertical="center")
-        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=11)
-        r += 1
-    r += 1
+    kutu = antet(ws, "ÖLÇÜM SİSTEMLERİ ANALİZİ (MSA) PLANI", "PL128",
+                 "19.07.2024", "0", "1 / 1", 9)
+    ws.cell(5, 1, "Gözden Geçirme Tarihi : " + v["termin"]).font = Font(bold=True, size=10)
+    ws.merge_cells(start_row=5, start_column=1, end_row=5, end_column=4)
+    ws.cell(5, 5, "Ürün : %s — %s   |   %s" % (v["kod"], v["ad"], v["lokasyon_ad"])).font = \
+        Font(size=10)
+    ws.merge_cells(start_row=5, start_column=5, end_row=5, end_column=9)
 
-    esler = msa_calismalari(v, aletler)
-    basliklar = ["No", "Ölçüm Aleti", "Ölçülen Karakteristik(ler)", "Op No",
-                 "En Dar Tolerans", "MSA Tipi (AIAG MSA 4. Baskı)", "Kabul Kriteri",
-                 "Sorumlu", "Planlanan Tarih", "ERP'deki Çalışma", "Sonuç"]
+    basliklar = ["SIRA NO", "ÖLÇÜ ALETİ", "SERİ NUMARASI", "ÖLÇME\nARALIĞI", "MSA TEKNİĞİ",
+                 "MSA PERİYODU", "MSA TARİHİ", "SONRAKİ MSA TARİHİ", "NOTLAR VE SONUÇ"]
     for i, b in enumerate(basliklar):
-        h = ws.cell(r, 1 + i, b)
-        h.font = Font(bold=True, size=10, color="FFFFFF")
-        h.fill = PatternFill("solid", fgColor="1F3864"); h.border = kutu
-        h.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    ws.row_dimensions[r].height = 32
-    bas = r
-    rolAd = dict((rol, ad) for rol, ad in v["ekip"])
-    sorumlu = rolAd.get("Kalite Mühendisi") or rolAd.get("Kalite Güvence Müdürü")
+        c = ws.cell(6, 1 + i, b)
+        c.font = Font(bold=True, size=10)
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        c.fill = PatternFill("solid", fgColor="D9D9D9"); c.border = kutu
+    ws.row_dimensions[6].height = 32
 
+    def yil_ekle(t):
+        try:
+            g = datetime.date.fromisoformat(met(t)[:10])
+            return g.replace(year=g.year + 1).strftime("%d.%m.%Y")
+        except ValueError:
+            return ""
+
+    def gun(t):
+        try:
+            return datetime.date.fromisoformat(met(t)[:10]).strftime("%d.%m.%Y")
+        except ValueError:
+            return met(t)[:10]
+
+    r = 7
     for i, g in enumerate(sorted(aletler, key=lambda x: (x["nitel"], x["alet"]))):
-        if g["nitel"]:
-            tip = ("Type-3 Nitelik Uyum Analizi\n(3 kontrolör × 30 parça × 2 tekrar, Kappa)")
-            kriter = "Kappa ≥ 0,75 ve kontrolör içi/arası uyum ≥ %90"
-            tol = "Nitel — tolerans yok"
-        else:
-            tip = ("Type-1 (Cg/Cgk) + Type-2 Gage R&R\n(3 operatör × 10 parça × 3 tekrar, ANOVA)")
-            kriter = "Cg/Cgk ≥ 1,33 ; %GRR ≤ %10 kabul, %10–30 şartlı, ndc ≥ 5"
-            tol = "%s  (%s)" % (("%g" % g["tol"]), g.get("dar_kar", "")[:26])
         c = eslesen_calisma(g, esler)
-        deger = [i + 1, g["alet"], ", ".join(g["kar"])[:220], ", ".join(sorted(g["op"])),
-                 tol, tip, kriter, sorumlu, v["termin"],
-                 met(c.get("study_name")) + " (" + met(c.get("study_date"))[:10] + ")" if c
-                 else "çalışma yok — MSA modülünde açılacak",
-                 MSA_SONUC.get(met(c.get("is_acceptable")), met(c.get("status"))) if c else "—"]
-        rr = bas + 1 + i
-        for j, x in enumerate(deger):
-            h = ws.cell(rr, 1 + j, x)
-            h.border = kutu; h.font = Font(size=9)
+        kalibre = kalibrasyon_esle(g["alet"]) if v["lokasyon"] == KALIBRASYON_LOKASYON else None
+        seri = met(kalibre and kalibre["seri"]) or met(c and c.get("gauge_number")) \
+            or cihaz_kodu(v, g["alet"])
+        aralik = met(kalibre and kalibre.get("aralik")) or (
+            "Pass / Fail" if g["nitel"] else "%g – %g" % (g["dar_alt"], g["dar_ust"]))
+        teknik = "ATTRIBUTE AGR. ANALYSIS" if g["nitel"] else "GAUGE R&R"
+        tarih = gun(c.get("study_date")) if c else ""
+        sonraki = yil_ekle(c.get("study_date")) if c else ""
+        ws.cell(r, 1, i + 1)
+        ws.cell(r, 2, "%s\n%s" % (g["alet"], (g.get("dar_kar") or ", ".join(g["kar"]))[:70]))
+        ws.cell(r, 3, seri)
+        ws.cell(r, 4, aralik)
+        ws.cell(r, 5, teknik)
+        ws.cell(r, 6, "1 YIL")
+        ws.cell(r, 7, tarih)
+        ws.cell(r, 8, sonraki)
+        ws.cell(r, 9, msa_sonuc_notu(c, g))
+        for j in range(1, 10):
+            h = ws.cell(r, j)
+            h.border = kutu; h.font = Font(size=10)
             h.alignment = Alignment(wrap_text=True, vertical="center",
-                                    horizontal="center" if j in (0, 3, 8, 10) else "left")
-            if i % 2:
-                h.fill = PatternFill("solid", fgColor="F4F7FB")
-        if c:                       # ERP calismasi varsa dogrudan acilsin
-            ws.cell(rr, 10).hyperlink = MSA_ADRES + met(c.get("id"))
-            ws.cell(rr, 10).font = Font(size=9, color="1D4ED8", underline="single")
-            ws.cell(rr, 11).font = Font(size=9, bold=True, color={
-                "KABUL": "166534", "ŞARTLI": "92400E", "RED": "991B1B"}.get(deger[10], "1F2937"))
-        else:
-            ws.cell(rr, 10).font = Font(size=9, italic=True, color="B45309")
-        # Uzun karakteristik listeleri 40pt'de kırpılıyordu: yükseklik içeriğe göre
-        satirSayisi = max((len(str(x)) // gen) + 1 for x, gen in
-                          zip(deger, (6, 20, 30, 10, 22, 24, 30, 14, 13, 30, 11)))
-        ws.row_dimensions[rr].height = max(40, min(100, 13 * satirSayisi))
+                                    horizontal="left" if j in (2, 9) else "center")
+        if c:
+            ws.cell(r, 9).hyperlink = MSA_ADRES + met(c.get("id"))
+            ws.cell(r, 9).font = Font(size=10, color="1D4ED8", underline="single")
+        ws.row_dimensions[r].height = 34
+        r += 1
 
-    rr = bas + len(aletler) + 2
-    ws.cell(rr, 1, "Ölçüm değerleri MSA modülünde (ERP) girilir; bu plan hangi alet için hangi "
-                   "çalışmanın yapılacağını ve kabul kriterini tanımlar.").font = \
-        Font(size=8, italic=True, color="808080")
-    ws.merge_cells(start_row=rr, start_column=1, end_row=rr, end_column=9)
+    # İmza bloğu — kullanıcının formundaki düzen
+    rolAd = dict((rol, ad) for rol, ad in v["ekip"])
+    r += 1
+    for sut, etiket, ad, unvan in (
+            (1, "Hazırlayan", rolAd.get("Kalite Mühendisi", ""), "Kalite Güvence Mühendisi"),
+            (6, "Onaylayan", rolAd.get("Kalite Güvence Müdürü", ""), "Kalite Güvence Müdürü")):
+        h = ws.cell(r, sut, "%s\n%s\n%s" % (etiket, ad, unvan))
+        h.font = Font(size=10); h.border = kutu
+        h.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        ws.merge_cells(start_row=r, start_column=sut, end_row=r, end_column=sut + 3)
+        for cc in range(sut, sut + 4):
+            ws.cell(r, cc).border = kutu
+    ws.row_dimensions[r].height = 52
+
+    ws.print_area = "A1:I%d" % r
     ws.page_setup.orientation = "landscape"
     ws.page_setup.fitToWidth = 1
     wb.save(hedef)
     return len(aletler)
+
+
+def msa_sonuc_notu(c, g):
+    """PL128'deki "NOTLAR VE SONUÇ" ifadesi — ERP çalışmasının gerçek sonucu."""
+    if not c:
+        return "MSA çalışması açılmadı."
+    d = c.get("gauge_evaluation") or {}
+    vir = lambda x, n=2: ("%.*f" % (n, x)).replace(".", ",")
+    kabul = met(c.get("is_acceptable"))
+    if g["nitel"]:
+        kappa = d.get("decisiveKappa")
+        uyum = d.get("allVsStandard")
+        if kappa is None:
+            return "Öznitelik uyum analizi açıldı; ölçüm bekleniyor."
+        return ("Genel Cohen's Kappa=%s & standarda uygunluk %%%d olduğundan %s"
+                % (vir(kappa, 3), round((uyum or 0) * 100),
+                   "uygundur." if kabul == "acceptable" else
+                   "şartlı kabul edilmiştir." if kabul == "marginal" else "uygun değildir."))
+    grr = (d.get("totalGaugeRR") or {})
+    yuz = grr.get("pctTolerance") if grr.get("pctTolerance") is not None else grr.get("pctStudyVar")
+    ndc = d.get("ndc")
+    if yuz is None:
+        return "Gage R&R açıldı; ölçüm bekleniyor."
+    return ("GRR=%s & ndc=%s olduğundan %s"
+            % (vir(yuz), ndc,
+               "uygundur." if kabul == "acceptable" else
+               "şartlı kabul edilmiştir." if kabul == "marginal" else "uygun değildir."))
 
 
 def msa_olcum_oku(kimlik):

@@ -5,6 +5,7 @@
   "kod": "KUM02",
   "tarih": "10.06.2026",
   "marka": "BTS",
+  "aralik": "",
   "klasor": "1000mm'lik MANUEL KUMPAS",
   "dosya": "0128K-0626-02275 (1).pdf"
  },
@@ -14,6 +15,7 @@
   "kod": "KUM02",
   "tarih": "10.06.2026",
   "marka": "BTS",
+  "aralik": "",
   "klasor": "1000mm'lik MANUEL KUMPAS",
   "dosya": "0128K-0626-02275.pdf"
  },
@@ -23,6 +25,7 @@
   "kod": "KUM01",
   "tarih": "10.06.2026",
   "marka": "MİTUTOYO",
+  "aralik": "",
   "klasor": "DİGİTAL KUMPAS- LABORATUVAR (MEVCUT)",
   "dosya": "0128K-0626-02276.pdf"
  },
@@ -32,6 +35,7 @@
   "kod": "",
   "tarih": "10.06.2026",
   "marka": "-",
+  "aralik": "",
   "klasor": "DİGİTAL KUMPAS- LABORATUVAR (MEVCUT)",
   "dosya": "0128K-0626-02278.pdf"
  },
@@ -41,6 +45,7 @@
   "kod": "MİK01",
   "tarih": "10.06.2026",
   "marka": "MİTUTOYO",
+  "aralik": "",
   "klasor": "DİGİTAL MİKROMETRE- LABORATUVAR",
   "dosya": "0128K-0626-02277.pdf"
  },
@@ -50,6 +55,7 @@
   "kod": "ETÜV-1",
   "tarih": "08.06.2026",
   "marka": "NÜVE",
+  "aralik": "",
   "klasor": "ETÜV - LABORATUVAR",
   "dosya": "0128K-0626-01251.pdf"
  },
@@ -59,6 +65,7 @@
   "kod": "",
   "tarih": "08.06.2026",
   "marka": "-",
+  "aralik": "",
   "klasor": "GRAMAJ KESME ALETİ",
   "dosya": "SAN2620104.pdf"
  },
@@ -68,6 +75,7 @@
   "kod": "HT 01",
   "tarih": "08.06.2026",
   "marka": "RADWAG",
+  "aralik": "",
   "klasor": "HASSAS TERAZİ -LABORATUVAR",
   "dosya": "0128K-0626-01254.pdf"
  },
@@ -77,6 +85,7 @@
   "kod": "",
   "tarih": "10.07.2025",
   "marka": "KÖFER",
+  "aralik": "",
   "klasor": "KALINLIK KOMPARATÖRÜ - LABORATUVAR",
   "dosya": "SAN2526381.pdf"
  },
@@ -86,6 +95,7 @@
   "kod": "KR01",
   "tarih": "12.06.2026",
   "marka": "LOYKA",
+  "aralik": "",
   "klasor": "Kronometre",
   "dosya": "0128K-0626-02402.pdf"
  },
@@ -95,6 +105,7 @@
   "kod": "",
   "tarih": "11.06.2026",
   "marka": "CETA FORM",
+  "aralik": "",
   "klasor": "LAZER TERMOMETRE",
   "dosya": "0128K-0626-02395.pdf"
  },
@@ -104,6 +115,7 @@
   "kod": "",
   "tarih": "23.06.2026",
   "marka": "ACCUD",
+  "aralik": "",
   "klasor": "Radius Gauge Set (1–7 mm)",
   "dosya": "0128K-0626-05155 (1).pdf"
  },
@@ -113,6 +125,7 @@
   "kod": "",
   "tarih": "23.06.2026",
   "marka": "ACCUD",
+  "aralik": "",
   "klasor": "Radius Gauge Set (1–7 mm)",
   "dosya": "0128K-0626-05155.pdf"
  },
@@ -122,6 +135,7 @@
   "kod": "",
   "tarih": "23.06.2026",
   "marka": "ACCUD",
+  "aralik": "",
   "klasor": "Radius Gauge Set (7.5–15 mm)",
   "dosya": "0128K-0626-05156.pdf"
  },
@@ -131,6 +145,7 @@
   "kod": "SN02",
   "tarih": "11.06.2026",
   "marka": "TFA",
+  "aralik": "",
   "klasor": "SICAKLIK NEM ÖLÇER",
   "dosya": "0128K-0626-02393.pdf"
  },
@@ -140,6 +155,7 @@
   "kod": "",
   "tarih": "11.06.2026",
   "marka": "LOYKA",
+  "aralik": "",
   "klasor": "SICAKLIK NEM ÖLÇER",
   "dosya": "0128K-0626-02394.pdf"
  },
@@ -149,6 +165,7 @@
   "kod": "6. BÖLGE",
   "tarih": "08.06.2026",
   "marka": "DELTA",
+  "aralik": "",
   "klasor": "Sıcaklık Göstergesi",
   "dosya": "0128K-0626-01252.pdf"
  },
@@ -158,6 +175,7 @@
   "kod": "",
   "tarih": "08.06.2026",
   "marka": "DELTA",
+  "aralik": "",
   "klasor": "Sıcaklık Göstergesi",
   "dosya": "0128K-0626-01253.pdf"
  },
@@ -167,6 +185,7 @@
   "kod": "",
   "tarih": "08.06.2026",
   "marka": "KULELİ",
+  "aralik": "",
   "klasor": "TERAZİ-DEPO",
   "dosya": "0128K-0626-01255.pdf"
  },
@@ -176,6 +195,7 @@
   "kod": "ÇKT01",
   "tarih": "11.06.2026",
   "marka": "SHIMADZU",
+  "aralik": "",
   "klasor": "ÇEKME-KOPMA TEST CİHAZI- LABORATUVAR",
   "dosya": "0128k-0626-02134 (1).pdf"
  },
@@ -185,6 +205,7 @@
   "kod": "ÇKT01",
   "tarih": "11.06.2026",
   "marka": "SHIMADZU",
+  "aralik": "",
   "klasor": "ÇEKME-KOPMA TEST CİHAZI- LABORATUVAR",
   "dosya": "0128k-0626-02134.pdf"
  },
@@ -194,6 +215,7 @@
   "kod": "ÇC02",
   "tarih": "21.11.2024",
   "marka": "ETONA",
+  "aralik": "",
   "klasor": "ÇELİK CETVEL LABORATUVAR",
   "dosya": "SAN24424417.pdf"
  },
@@ -203,6 +225,7 @@
   "kod": "ÇC01",
   "tarih": "21.11.2024",
   "marka": "-",
+  "aralik": "",
   "klasor": "ÇELİK CETVEL LABORATUVAR",
   "dosya": "SAN24424418.pdf"
  },
@@ -212,6 +235,7 @@
   "kod": "SERITMET-01",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 1.pdf"
  },
@@ -221,6 +245,7 @@
   "kod": "SERITMET-10",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 10.pdf"
  },
@@ -230,6 +255,7 @@
   "kod": "SERITMET-11",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 11.pdf"
  },
@@ -239,6 +265,7 @@
   "kod": "SERITMET-12",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 12.pdf"
  },
@@ -248,6 +275,7 @@
   "kod": "SERITMET-13",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 13.pdf"
  },
@@ -257,6 +285,7 @@
   "kod": "SERITMET-14",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 14 (1).pdf"
  },
@@ -266,6 +295,7 @@
   "kod": "SERITMET-14",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 14.pdf"
  },
@@ -275,6 +305,7 @@
   "kod": "SERITMET-15",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 15.pdf"
  },
@@ -284,6 +315,7 @@
   "kod": "SERITMET-16",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 16.pdf"
  },
@@ -293,6 +325,7 @@
   "kod": "SERITMET-17",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 17.pdf"
  },
@@ -302,6 +335,7 @@
   "kod": "SERITMET-18",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 18.pdf"
  },
@@ -311,6 +345,7 @@
   "kod": "SERITMET-19",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 19.pdf"
  },
@@ -320,6 +355,7 @@
   "kod": "SERITMET-02",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 2.pdf"
  },
@@ -329,6 +365,7 @@
   "kod": "SERITMET-20",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 20.pdf"
  },
@@ -338,6 +375,7 @@
   "kod": "SERITMET-21",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 21.pdf"
  },
@@ -347,6 +385,7 @@
   "kod": "SERITMET-22",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 22.pdf"
  },
@@ -356,6 +395,7 @@
   "kod": "SERITMET-23",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 23.pdf"
  },
@@ -365,6 +405,7 @@
   "kod": "SERITMET-24",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 24.pdf"
  },
@@ -374,6 +415,7 @@
   "kod": "SERITMET-25",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 25.pdf"
  },
@@ -383,6 +425,7 @@
   "kod": "SERITMET-26",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 26.pdf"
  },
@@ -392,6 +435,7 @@
   "kod": "SERITMET-27",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 27.pdf"
  },
@@ -401,6 +445,7 @@
   "kod": "SERITMET-28",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 28.pdf"
  },
@@ -410,6 +455,7 @@
   "kod": "SERITMET-29",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 29.pdf"
  },
@@ -419,6 +465,7 @@
   "kod": "SERITMET-03",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 3.pdf"
  },
@@ -428,6 +475,7 @@
   "kod": "SERITMET-30",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 30.pdf"
  },
@@ -437,6 +485,7 @@
   "kod": "SERITMET-04",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 4.pdf"
  },
@@ -446,6 +495,7 @@
   "kod": "SERITMET-05",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 5.pdf"
  },
@@ -455,6 +505,7 @@
   "kod": "SERITMET-06",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 6.pdf"
  },
@@ -464,6 +515,7 @@
   "kod": "SERITMET-07",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 7.pdf"
  },
@@ -473,6 +525,7 @@
   "kod": "SERITMET-08",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 8.pdf"
  },
@@ -482,6 +535,7 @@
   "kod": "SERITMET-09",
   "tarih": "1.12.2025",
   "marka": "UNI-MATIC",
+  "aralik": "0-2000 mm",
   "klasor": "Şerit Metre",
   "dosya": "Şeritmetre 9.pdf"
  }
