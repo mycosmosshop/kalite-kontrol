@@ -1090,6 +1090,14 @@ IMZA = {
 }
 
 
+# VDA_2'de imza blogu olan sayfalar: (sayfa dosyasi, Name satiri)
+VDA2_IMZA = [("xl/worksheets/sheet1.xml", 262), ("xl/worksheets/sheet2.xml", 28),
+             ("xl/worksheets/sheet3.xml", 32), ("xl/worksheets/sheet4.xml", 28),
+             ("xl/worksheets/sheet5.xml", 120), ("xl/worksheets/sheet6.xml", 130),
+             ("xl/worksheets/sheet7.xml", 40), ("xl/worksheets/sheet8.xml", 55),
+             ("xl/worksheets/sheet9.xml", 51), ("xl/worksheets/sheet10.xml", 20)]
+
+
 def imza_blogu(v, satir):
     """Confirmation of organization bloğu. satir: ilk satır (Name) numarası."""
     ad, posta = IMZA.get(v["lokasyon"], IMZA["eskisehir"])
@@ -1148,12 +1156,13 @@ def vda2(v, hedef):
     olcum.update(olcusel_hucreler(v, v.get("balon")))
     a4.update(imza_blogu(v, 28))
 
-    sayfalar = [("xl/worksheets/sheet1.xml", a2),
-                ("xl/worksheets/sheet2.xml", kimlik),
-                ("xl/worksheets/sheet3.xml", kimlik),
-                ("xl/worksheets/sheet4.xml", a4),
-                ("xl/worksheets/sheet6.xml", olcum),
-                ("xl/worksheets/sheet10.xml", pg)]
+    icerik = {"xl/worksheets/sheet1.xml": a2, "xl/worksheets/sheet2.xml": dict(kimlik),
+              "xl/worksheets/sheet3.xml": dict(kimlik), "xl/worksheets/sheet4.xml": a4,
+              "xl/worksheets/sheet6.xml": olcum, "xl/worksheets/sheet10.xml": pg}
+    # Imza blogu sablonun HER sayfasinda var; hepsi lokasyona gore doldurulur
+    for sayfa, satir in VDA2_IMZA:
+        icerik.setdefault(sayfa, {}).update(imza_blogu(v, satir))
+    sayfalar = list(icerik.items())
     kayn, gecici = kaynak, []
     for i, (sayfa, deger) in enumerate(sayfalar):
         cikti = hedef if i == len(sayfalar) - 1 else "%s.ara%d" % (hedef, i)
@@ -1482,9 +1491,10 @@ def yeterlilik_karakteristikleri(kod):
     return list(gruplar.values())
 
 
-def yeterlilik_olcumleri(g, n=YETERLILIK_N, tohum=0):
+def yeterlilik_olcumleri(g, n=None, tohum=0):
     """Nominal etrafında normal dağılım; sigma Cpk hedefinden türetilir."""
     import random
+    n = n or YETERLILIK_N
     rnd = random.Random(5000 + tohum)
     T = g["ust"] - g["alt"]
     orta = (g["alt"] + g["ust"]) / 2
@@ -1497,6 +1507,57 @@ def yeterlilik_olcumleri(g, n=YETERLILIK_N, tohum=0):
     sigma = T / (6 * YETERLILIK_CPK)
     basamak = 2 if T >= 0.5 else 3
     return [round(rnd.gauss(nominal, sigma), basamak) for _ in range(n)], nominal
+
+
+def normallik(deger):
+    """Anderson-Darling + çarpıklık. Dönüş: (normal_mi, AD, kritik, çarpıklık, bağ_oranı)."""
+    try:
+        import numpy as np
+        from scipy import stats
+    except ImportError:
+        return True, None, None, None, None
+    a = np.asarray(deger, dtype=float)
+    r = stats.anderson(a, "norm")
+    kritik = float(r.critical_values[2])            # %5
+    bag = 1 - len(set(deger)) / len(deger)          # tekrar eden değer oranı
+    return float(r.statistic) < kritik, float(r.statistic), kritik, \
+        float(stats.skew(a)), bag
+
+
+def yeterlilik_analiz(deger, alt, ust):
+    """Yeterlilik indisleri — dağılıma göre DOĞRU yöntemle.
+    normal          : klasik Cp/Cpk
+    çarpık          : Box-Cox dönüşümü (limitler de dönüştürülür)
+    ayrık/bağlı veri: yüzdelik yöntemi (ISO 22514-2) — Box-Cox burada bozar
+    """
+    import math as _m
+    normal, ad, kritik, carpik, bag = normallik(deger)
+    temel = cpk_hesapla(deger, alt, ust)
+    temel.update({"ad": ad, "ad_kritik": kritik, "carpiklik": carpik,
+                  "bag_orani": bag, "normal": normal, "yontem": "normal"})
+    if normal or ad is None:
+        return temel
+    import numpy as np
+    from scipy import stats
+    a = np.asarray(deger, dtype=float)
+    # Çarpıksa ve tümü pozitifse Box-Cox anlamlı; değilse dokunma
+    if carpik is not None and abs(carpik) >= 0.5 and a.min() > 0:
+        d, lam = stats.boxcox(a)
+        don = lambda x: (x ** lam - 1) / lam if abs(lam) > 1e-9 else _m.log(x)
+        t = cpk_hesapla(list(d), don(alt), don(ust))
+        temel.update({k: t[k] for k in ("cp", "cpk", "pp", "ppk")})
+        temel.update({"yontem": "Box-Cox (λ=%.3f)" % lam, "lambda": lam})
+        return temel
+    # Ayrık/bağlı veri: dönüşüm düzeltmez — yüzdelik yöntemi
+    p0, p50, p100 = np.percentile(a, [0.135, 50, 99.865])
+    yay = p100 - p0
+    if yay > 0:
+        temel["cp"] = (ust - alt) / yay
+        temel["cpk"] = min(ust - p50, p50 - alt) / max(1e-12, (p100 - p50 if
+                       (ust - p50) < (p50 - alt) else p50 - p0))
+        temel["pp"], temel["ppk"] = temel["cp"], temel["cpk"]
+    temel["yontem"] = "yüzdelik (ISO 22514-2) — ayrık veri, bağ oranı %%%d" % round(bag * 100)
+    return temel
 
 
 def cpk_hesapla(deger, alt, ust):
@@ -1543,19 +1604,22 @@ def fr24_yeterlilik(v, hedef, g, deger, nominal):
     return len(deger)
 
 
-def yeterlilik_calismasi_ac(v, g, deger, nominal, sonuc):
+def yeterlilik_calismasi_ac(v, g, deger, nominal, sonuc, tur="Proses"):
     """Aynı çalışmayı ERP MSA modülüne 'capability' olarak yazar."""
-    ad = "%s — %s (%s) Cp/Cpk" % (v["kod"], g["alet"], g["kar"][:30])
+    ad = "%s — %s (%s) %s" % (v["kod"], g["alet"], g["kar"][:26],
+                              "Cm/Cmk" if tur == "Makine" else "Cp/Cpk")
     mevcut = [c for c in sorgu("/msa_studies?select=id,study_name&study_type=eq.capability")
               if met(c["study_name"]) == ad]
     if mevcut:
         return mevcut[0]["id"], False
     kayit = {
         "owner_email": KULLANICI, "study_name": ad, "study_type": "capability",
-        "description": "APQP %s — kontrol planı karakteristiği %s" % (v["kod"], g["kar"]),
+        "description": "APQP %s — %s yeterliliği · %s · karakteristik: %s · yöntem: %s"
+                       % (v["kod"], tur, "%d parça" % len(deger), g["kar"],
+                          sonuc.get("yontem", "normal")),
         "num_operators": 1, "num_parts": len(deger), "num_trials": 1,
         "status": "calculated",
-        "is_acceptable": "acceptable" if sonuc["cpk"] >= 1.67 else
+        "is_acceptable": "acceptable" if sonuc["cpk"] >= sonuc.get("esik", 1.67) else
                          ("marginal" if sonuc["cpk"] >= 1.33 else "unacceptable"),
         "gauge_name": g["alet"], "gauge_number": cihaz_kodu(v, g["alet"]),
         "location": v["lokasyon_ad"], "study_date": v["termin"],
@@ -1565,7 +1629,10 @@ def yeterlilik_calismasi_ac(v, g, deger, nominal, sonuc):
         "tolerance": g["ust"] - g["alt"],
         "performed_by": dict((r, a) for r, a in v["ekip"]).get("Kalite Mühendisi"),
         "reference_value": nominal,
-        "gauge_evaluation": {k: sonuc[k] for k in ("cp", "cpk", "pp", "ppk", "capability")},
+        "gauge_evaluation": dict(
+            {k: sonuc[k] for k in ("cp", "cpk", "pp", "ppk", "capability")},
+            method=sonuc.get("yontem", "normal"), normal=sonuc.get("normal"),
+            anderson_darling=sonuc.get("ad"), skewness=sonuc.get("carpiklik")),
         "analysis_options": {"lsl": g["alt"], "usl": g["ust"], "target": nominal,
                              "sixpack": False, "capability": True,
                              "distribution": "normal", "withinMethod": "sbar",
@@ -1587,16 +1654,25 @@ def yeterlilik_calismasi_ac(v, g, deger, nominal, sonuc):
     return kimlik, True
 
 
+MAKINE_N = 50            # makine yeterliliginde ardisik parca sayisi
+MAKINE_CMK = 1.67        # kabul esigi (kisa donem daha siki)
+
+
 def yeterlilik_uret(v, klasor, uret):
     """Her ürün karakteristiği için FR24 + ERP yeterlilik çalışması."""
     sonuclar = []
     for i, g in enumerate(yeterlilik_karakteristikleri(v["kod"])):
-        deger, nominal = yeterlilik_olcumleri(g, tohum=i)
-        sonuc = cpk_hesapla(deger, g["alt"], g["ust"])
-        ad = "FR24 Proses ve Makine Yeterliliği %s - %s.xlsm" % (v["kod"], g["alet"])
-        n = uret(ad, lambda a, b: fr24_yeterlilik(a, b, g, deger, nominal), "FR24 " + g["alet"])
-        kimlik, yeni = yeterlilik_calismasi_ac(v, g, deger, nominal, sonuc)
-        sonuclar.append((g["alet"], g["kar"], n, sonuc, kimlik, yeni))
+        # Proses yeterliligi: 125 parca (uzun donem) · Makine: 50 ardisik parca
+        for tur, adet, tohum, esik in (("Proses", YETERLILIK_N, i, 1.33),
+                                       ("Makine", MAKINE_N, 500 + i, MAKINE_CMK)):
+            deger, nominal = yeterlilik_olcumleri(g, adet, tohum)
+            sonuc = yeterlilik_analiz(deger, g["alt"], g["ust"])
+            sonuc["tur"], sonuc["esik"] = tur, esik
+            ad = "FR24 %s Yeterliliği %s - %s.xlsm" % (tur, v["kod"], g["alet"])
+            n = uret(ad, lambda a, b, d=deger, nm=nominal: fr24_yeterlilik(a, b, g, d, nm),
+                     "FR24 %s %s" % (tur, g["alet"]))
+            kimlik, yeni = yeterlilik_calismasi_ac(v, g, deger, nominal, sonuc, tur)
+            sonuclar.append((g["alet"], g["kar"], n, sonuc, kimlik, yeni))
     return sonuclar
 
 
@@ -3078,9 +3154,13 @@ def main():
         print("   ! Numaralandırılmış Teknik Resim  üretilemedi: %s" % str(e)[:60])
 
     for alet, kar, n_ol, sonuc, kimlik, yeni in yeterlilik_uret(v, klasor, uret):
-        print("   %s FR24 %-12s %-22s Cp=%.2f Cpk=%.2f%s"
-              % ("✓" if n_ol else "!", alet, kar[:22], sonuc["cp"], sonuc["cpk"],
-                 "  (GageAI #%s%s)" % (kimlik, ", yeni" if yeni else "") if kimlik else ""))
+        tur = sonuc.get("tur", "Proses")
+        print("   %s FR24 %-7s %-11s %-16s %s=%.2f %s=%.2f · %s%s"
+              % ("✓" if n_ol else "!", tur, alet, kar[:16],
+                 "Cm" if tur == "Makine" else "Cp", sonuc["cp"],
+                 "Cmk" if tur == "Makine" else "Cpk", sonuc["cpk"],
+                 sonuc.get("yontem", "normal"),
+                 "  (GageAI #%s)" % kimlik if kimlik else ""))
 
     n = uret("MSA Planı %s.xlsx" % kod, msa_plani, "MSA Planı")
     if n: print("   ✓ MSA Planı                         (%d ölçüm aleti)" % n)
