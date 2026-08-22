@@ -1795,8 +1795,9 @@ def yeterlilik_analiz(deger, alt, ust):
     yay = p100 - p0
     if yay > 0:
         temel["cp"] = (ust - alt) / yay
-        temel["cpk"] = min(ust - p50, p50 - alt) / max(1e-12, (p100 - p50 if
-                       (ust - p50) < (p50 - alt) else p50 - p0))
+        # ERP motoruyla (cap-calculations.js percentile) birebir: iki oranın küçüğü
+        temel["cpk"] = min((ust - p50) / max(1e-12, p100 - p50),
+                           (p50 - alt) / max(1e-12, p50 - p0))
         temel["pp"], temel["ppk"] = temel["cp"], temel["cpk"]
     temel["yontem"] = "yüzdelik (ISO 22514-2) — ayrık veri, bağ oranı %%%d" % round(bag * 100)
     return temel
@@ -1875,10 +1876,16 @@ def yeterlilik_calismasi_ac(v, g, deger, nominal, sonuc, tur="Proses"):
             {k: sonuc[k] for k in ("cp", "cpk", "pp", "ppk", "capability")},
             method=sonuc.get("yontem", "normal"), normal=sonuc.get("normal"),
             anderson_darling=sonuc.get("ad"), skewness=sonuc.get("carpiklik")),
+        # distribution ERP hesap motoruna yöntemi söyler: ayrık veride
+        # "empirical" → cap-results ampirik yüzdelikle (ISO 22514-2) hesaplar
+        # ve rozette gösterir; Excel özetiyle birebir aynı sonuç çıkar.
         "analysis_options": {"lsl": g["alt"], "usl": g["ust"], "target": nominal,
                              "sixpack": False, "capability": True,
-                             "distribution": "normal", "withinMethod": "sbar",
-                             "subgroup_size": 1},
+                             "distribution": (
+                                 "empirical" if sonuc.get("yontem", "").startswith("yüzdelik")
+                                 else "boxcox" if sonuc.get("yontem", "").startswith("Box-Cox")
+                                 else "normal"),
+                             "withinMethod": "sbar", "subgroup_size": 1},
     }
     yeni = yaz("/msa_studies", kayit)
     kimlik = (yeni[0] if yeni else {}).get("id")
