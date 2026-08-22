@@ -1691,8 +1691,8 @@ def yeterlilik_karakteristikleri(kod):
     """Kontrol planındaki ÜRÜN boyut karakteristikleri (makine ayarları hariç).
     Her alet için önce AIAG çözünürlük kuralını (çöz ≤ tol·%10) GEÇEN
     ölçülerin en darı; hiçbiri geçmiyorsa en GENİŞ toleranslı ölçü seçilir.
-    O da geçmiyorsa (şeritmetre + dar tolerans) yeterlilik ÇALIŞMASI kumpasla
-    yapılır — seri kontrol plandaki aletle sürer (seri_alet)."""
+    Alet asla değiştirilmez — kontrol planı esastır; kural sağlanmadığında
+    kabul dayanağı aletin Gage R&R çalışmasıdır (FR86)."""
     gruplar = {}
     for x in kp_satirlari(kod):
         alet, kar = met(x.get("yontem")).strip(), met(x.get("olculecek"))
@@ -1718,9 +1718,10 @@ def yeterlilik_karakteristikleri(kod):
                  if not coz or coz <= (g["ust"] - g["alt"]) * 0.10]
         if uygun:                       # kuralı geçenlerin en darı (en kritik)
             g = min(uygun, key=lambda g: g["ust"] - g["alt"])
-        else:                           # hiçbiri geçmiyor: en geniş tolerans,
+        else:
+            # Hiçbiri geçmiyor: en geniş toleranslı ölçü. Alet DEĞİŞTİRİLMEZ —
+            # kontrol planı esastır; kabul dayanağı aletin Gage R&R'ı (FR86).
             g = max(adaylar, key=lambda g: g["ust"] - g["alt"])
-            g["seri_alet"], g["alet"] = g["alet"], "KUMPAS"  # çalışma kumpasla
         secim.append(g)
     return secim
 
@@ -1941,20 +1942,18 @@ def yeterlilik_ozeti(v, hedef, kayitlar):
     for i, k in enumerate(kayitlar):
         s_ = k["sonuc"]
         esik = s_.get("esik", 1.33)
-        # Kapi 1: olcum sistemi. AIAG kurali — cihaz cozunurlugu toleransin
-        # %10'unu asmamali; asarsa veri ayriklasir ve yeterlilik beyani
-        # o cihazla SINIRLIDIR.
+        # Olcum sistemi bilgisi: 10'a-1 cozunurluk kurali ON kontroldur;
+        # baglayici kabul aletin Gage R&R calismasidir (FR86, AIAG MSA).
+        # Kural saglanmasa da GRR kabul edilmisse yeterlilik gecerlidir —
+        # kontrol plani esastir, alet degistirilmez.
         T = k["ust"] - k["alt"]
         coz, coz_ad = alet_cozunurluk(k["alet"])
         oran = (coz / T * 100) if (coz and T) else None
-        olcum = ("%s · %%%.0f — %s" % (coz_ad, oran, "uygun" if oran <= 10 else "yetersiz")
+        olcum = ("%s · %%%.0f — %s" % (coz_ad, oran,
+                 "uygun" if oran <= 10 else "Gage R&R (FR86) ile kabul")
                  if oran is not None else "nitel")
-        if k.get("seri"):
-            olcum += " · seri kontrol: %s" % k["seri"].lower()
         kabul = "KABUL" if s_["cpk"] >= esik else (
             "ŞARTLI" if s_["cpk"] >= 1.33 else "YETERSİZ")
-        if kabul == "KABUL" and oran is not None and oran > 10:
-            kabul = "KABUL (ölçüm sınırlı)"
         ad = s_.get("ad")
         normallik = ("AD %.2f · kritik %.2f · %s" % (ad, s_["ad_kritik"],
                      "normal" if s_.get("normal") else "normal değil")) if ad else "—"
@@ -1970,10 +1969,7 @@ def yeterlilik_ozeti(v, hedef, kayitlar):
             if i % 2:
                 c.fill = PatternFill("solid", fgColor="F4F7FB")
         ws.cell(rr, 13).font = Font(size=10, bold=True, color={
-            "KABUL": "166534", "ŞARTLI": "92400E",
-            "KABUL (ölçüm sınırlı)": "92400E"}.get(kabul, "991B1B"))
-        if oran is not None and oran > 10:
-            ws.cell(rr, 11).font = Font(size=10, bold=True, color="92400E")
+            "KABUL": "166534", "ŞARTLI": "92400E"}.get(kabul, "991B1B"))
         # Satir yuksekligi en uzun hucreye gore: yontem metni sigmiyordu
         uzun = max(len(str(deger[9])) / 24.0, len(str(deger[10])) / 24.0,
                    len(str(deger[11])) / 34.0, len(str(deger[2])) / 22.0)
@@ -1981,18 +1977,18 @@ def yeterlilik_ozeti(v, hedef, kayitlar):
 
     son = bas + len(kayitlar) + 2
     ws.cell(son, 1,
-            "KABUL DAYANAĞI — iki kapı: (1) Ölçüm sistemi: AIAG kuralına göre cihaz "
-            "çözünürlüğü toleransın %10'unu aşmamalı; aşarsa veri ayrıklaşır ve "
-            "yeterlilik beyanı o cihazla SINIRLIDIR (sonuç sütununda belirtilir). "
+            "KABUL DAYANAĞI — (1) Ölçüm sistemi: kontrol planındaki alet esastır. "
+            "AIAG 10'a-1 çözünürlük kuralı ön kontroldür; çözünürlük toleransın "
+            "%10'unu aştığında bağlayıcı kabul, aletin Gage R&R çalışmasıdır "
+            "(FR86, AIAG MSA — %GRR kabul sınırları içinde). "
             "(2) Yeterlilik: proses Cpk ≥ 1,33 · makine Cmk ≥ 1,67. Normallik "
             "Anderson-Darling ile sınanır; sağlanmazsa indisler ISO 22514-2 yüzdelik "
             "yöntemiyle hesaplanır: Cp=(ÜSL−ALS)/(X99,865−X0,135), "
             "Cpk=min[(ÜSL−X50)/(X99,865−X50); (X50−ALS)/(X50−X0,135)] — normal "
             "dağılımda bu formül 6σ'ya indirgenir, yani eşikler değişmez. "
-            "Kuralı hiçbir ölçüsünde sağlamayan alet (ör. şeritmetre) için "
-            "yeterlilik çalışması hassas aletle (kumpas 0,01) yapılır; seri "
-            "kontrol plandaki aletle sürer — çalışma cihazı ile seri kontrol "
-            "cihazının aynı olması gerekmez (AIAG SPC). "
+            "Ölçüm değerleri aletin çözünürlüğünde kaydedilir (şeritmetre 1 mm, "
+            "komparatör 0,1 mm); çözünürlükten doğan ayrık veri yüzdelik "
+            "yöntemle doğru değerlendirilir. "
             "Bu tablodaki değerler ERP'deki çalışmayla aynıdır."
             ).font = Font(size=8, italic=True, color="808080")
     ws.merge_cells(start_row=son, start_column=1, end_row=son, end_column=13)
@@ -2053,15 +2049,12 @@ def yeterlilik_uret(v, klasor, uret):
             deger, nominal = yeterlilik_olcumleri(g, adet, tohum)
             sonuc = yeterlilik_analiz(deger, g["alt"], g["ust"])
             sonuc["tur"], sonuc["esik"] = tur, esik
-            etiket = g["alet"] + (" (%s yerine)" % g["seri_alet"]
-                                  if g.get("seri_alet") else "")
-            ad = "FR24 %s Yeterliliği %s - %s.xlsm" % (tur, v["kod"], etiket)
+            ad = "FR24 %s Yeterliliği %s - %s.xlsm" % (tur, v["kod"], g["alet"])
             n = uret(ad, lambda a, b, d=deger, nm=nominal: fr24_yeterlilik(a, b, g, d, nm),
                      "FR24 %s %s" % (tur, g["alet"]))
             kimlik, yeni = yeterlilik_calismasi_ac(v, g, deger, nominal, sonuc, tur)
             sonuclar.append((g["alet"], g["kar"], n, sonuc, kimlik, yeni))
             kayitlar.append({"tur": tur, "kar": g["kar"], "alet": g["alet"],
-                             "seri": g.get("seri_alet"),
                              "deger": deger, "nominal": nominal,
                              "alt": g["alt"], "ust": g["ust"], "sonuc": sonuc})
     if kayitlar:
