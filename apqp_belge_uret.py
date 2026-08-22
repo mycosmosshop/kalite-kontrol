@@ -1874,8 +1874,10 @@ def msa_plani(v, hedef):
     for h, g in zip("ABCDEFGHIJK", (6, 20, 30, 10, 22, 24, 30, 14, 13, 30, 11)):
         ws.column_dimensions[h].width = g
 
+    # Antet tablo ile AYNI genişlikte kurulur (11 sütun); 9 kalınca sağda
+    # boşluk oluyor ve antet formdan kısa görünüyordu.
     antet(ws, "ÖLÇÜM SİSTEMİ ANALİZİ (MSA) PLANI", "FR 86-P",
-          "02.01.2025", "0", "1 / 1", 9)
+          "02.01.2025", "0", "1 / 1", 11)
     r = 6
     for etiket, deger in (("Ürün :", "%s — %s" % (v["kod"], v["ad"])),
                           ("Müşteri :", v["musteri"]),
@@ -1932,7 +1934,10 @@ def msa_plani(v, hedef):
                 "KABUL": "166534", "ŞARTLI": "92400E", "RED": "991B1B"}.get(deger[10], "1F2937"))
         else:
             ws.cell(rr, 10).font = Font(size=9, italic=True, color="B45309")
-        ws.row_dimensions[rr].height = 40
+        # Uzun karakteristik listeleri 40pt'de kırpılıyordu: yükseklik içeriğe göre
+        satirSayisi = max((len(str(x)) // gen) + 1 for x, gen in
+                          zip(deger, (6, 20, 30, 10, 22, 24, 30, 14, 13, 30, 11)))
+        ws.row_dimensions[rr].height = max(40, min(100, 13 * satirSayisi))
 
     rr = bas + len(aletler) + 2
     ws.cell(rr, 1, "Ölçüm değerleri MSA modülünde (ERP) girilir; bu plan hangi alet için hangi "
@@ -1943,6 +1948,39 @@ def msa_plani(v, hedef):
     ws.page_setup.fitToWidth = 1
     wb.save(hedef)
     return len(aletler)
+
+
+def msa_olcum_oku(kimlik):
+    """MSA modülündeki ölçüm değerleri: (operatör, parça, tekrar) -> değer."""
+    try:
+        r = sorgu("/msa_measurements?select=operator,part,trial,measurement"
+                  "&study_id=eq.%s&limit=3000" % kimlik)
+    except Exception:
+        return {}
+    d = {}
+    for x in r:
+        try:
+            d[(met(x["operator"]), met(x["part"]), int(x["trial"]))] = float(x["measurement"])
+        except (TypeError, ValueError):
+            pass
+    return d
+
+
+def msa_operator_oku(kimlik):
+    try:
+        r = sorgu("/msa_operators?select=operator_number,operator_name"
+                  "&study_id=eq.%s&order=operator_number" % kimlik)
+        return [met(x["operator_name"]) for x in r]
+    except Exception:
+        return []
+
+
+def msa_parca_oku(kimlik):
+    try:
+        return sorgu("/msa_parts?select=part_number,part_name,nominal_value"
+                     "&study_id=eq.%s&order=part_number" % kimlik)
+    except Exception:
+        return []
 
 
 def fr86_gage_rr(v, hedef):
@@ -1959,6 +1997,14 @@ def fr86_gage_rr(v, hedef):
     nitel = [g for g in hepsi if g["nitel"]]
     if not hepsi:
         return 0
+    # MSA modulundeki (GageAI) calismalar: olcum degerleri buradan gelir
+    mevcut = msa_calismalari(v, hepsi)
+    for g in hepsi:
+        c = eslesen_calisma(g, mevcut)
+        g["calisma"] = c
+        g["olcumler"] = msa_olcum_oku(c["id"]) if c else {}
+        g["operator"] = msa_operator_oku(c["id"]) if c else []
+        g["parcalar"] = msa_parca_oku(c["id"]) if c else []
     wb = Workbook(); wb.remove(wb.active)
     rolAd = dict((rol, ad) for rol, ad in v["ekip"])
     OPS, PARCA, TEKRAR = 3, 10, 3
@@ -1978,7 +2024,13 @@ def fr86_gage_rr(v, hedef):
                               ("Tolerans :", "%s   (aralık %g)" % (g.get("dar_limit", "—"), g["tol"])
                                if g.get("tol") else "Nitel — kabul/ret"),
                               ("Sorumlu :", rolAd.get("Kalite Mühendisi", "")),
-                              ("Tarih :", v["termin"])):
+                              ("Tarih :", met((g.get("calisma") or {}).get("study_date"))[:10]
+                               or v["termin"]),
+                              ("Cihaz No :", met((g.get("calisma") or {}).get("gauge_number"))),
+                              ("MSA Çalışması :",
+                               "%s  (ERP GageAI #%s)" % (met(g["calisma"].get("study_name")),
+                                                         g["calisma"]["id"])
+                               if g.get("calisma") else "ERP'de çalışma yok — form elle doldurulacak")):
             e = ws.cell(r, 1, etiket); e.font = Font(bold=True, size=10)
             e.alignment = Alignment(horizontal="right")
             ws.cell(r, 2, deger).alignment = Alignment(vertical="center")
@@ -2017,18 +2069,22 @@ def fr86_gage_rr(v, hedef):
         r += 1
         op_bas = r
         op_ort = []                                  # her operatörün ortalama hücresi
+        opAd = g.get("operator") or ["Operatör %s" % chr(65 + i) for i in range(OPS)]
+        deger = g.get("olcumler") or {}
         for o in range(OPS):
             for t in range(TEKRAR):
-                c1 = ws.cell(r, 1, "Operatör %s" % chr(65 + o) if t == 0 else None)
+                c1 = ws.cell(r, 1, opAd[o] if t == 0 and o < len(opAd) else None)
                 c1.font = Font(bold=True, size=9)
-                c1.alignment = Alignment(horizontal="center", vertical="center")
+                c1.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
                 c1.border = kutu_ince
                 c2 = ws.cell(r, 2, t + 1)
                 c2.alignment = Alignment(horizontal="center"); c2.border = kutu_ince
                 for pz in range(PARCA):
-                    c = ws.cell(r, 3 + pz)
+                    x = deger.get((str(o + 1), str(pz + 1), t + 1))
+                    c = ws.cell(r, 3 + pz, x)
                     c.border = kutu_ince; c.number_format = "0.000"
-                    c.fill = PatternFill("solid", fgColor="FFFDE7")   # doldurulacak
+                    # Dolu deger MSA modulunden geldi; bos hucre elle girilecek
+                    c.fill = PatternFill("solid", fgColor="EEF6EE" if x is not None else "FFFDE7")
                 ws.cell(r, 3 + PARCA).border = kutu_ince
                 r += 1
             blok = "%s%d:%s%d" % (SUT(3), r - TEKRAR, SUT(2 + PARCA), r - 1)
@@ -2138,84 +2194,105 @@ def fr86_gage_rr(v, hedef):
         ws.page_setup.orientation = "landscape"
 
     # ── Nitel aletler: Type-3 nitelik uyum analizi (kappa) ────────────────
-    NP = 30
+    # Boyutlar ERP çalışmasından gelir; form ile modül aynı veriyi göstermeli.
     for g in nitel:
+        c = g.get("calisma") or {}
+        NP = int(c.get("num_parts") or 20)
+        NK = int(c.get("num_operators") or 3)          # kontrolör
+        NT = int(c.get("num_trials") or 3)             # tekrar
+        SUTUN = NK * NT
         ad = ("N-" + re.sub(r"[\\/*?:\[\]]", "-", g["alet"]))[:28]
         ws = wb.create_sheet(ad)
-        for h, gen in zip("ABCDEFGHI", (8, 14, 10, 10, 10, 10, 10, 10, 14)):
-            ws.column_dimensions[h].width = gen
+        for i in range(1, SUTUN + 4):
+            ws.column_dimensions[get_column_letter(i)].width = 8 if 2 < i < SUTUN + 3 else 14
         r = sayfa_basligi(ws, g, "NİTELİK UYUM ANALİZİ (ATTRIBUTE MSA)", "FR 86-N")
 
-        basliklar = ["Parça", "Referans\n(OK/NOK)", "A-1", "A-2", "B-1", "B-2", "C-1", "C-2",
-                     "Uyum"]
+        kAd = g.get("operator") or [chr(65 + i) for i in range(NK)]
+        kisa = lambda i: (kAd[i].split()[0] if i < len(kAd) else chr(65 + i))
+        basliklar = ["Parça", "Referans\n(OK/NOK)"]
+        for o in range(NK):
+            basliklar += ["%s-%d" % (kisa(o), t + 1) for t in range(NT)]
+        basliklar.append("Uyum")
         for i, b in enumerate(basliklar):
             baslik_hucre(ws, r, 1 + i, b)
         ws.row_dimensions[r].height = 28
         r += 1
         vbas = r
+        ilkS, sonS = 3, 2 + SUTUN                       # değerlendirme sütunları
+        uyumS = sonS + 1
+        deger = g.get("olcumler") or {}
+        parcalar = g.get("parcalar") or []
+        ok = lambda x: None if x is None else ("OK" if float(x) >= 0.5 else "NOK")
         for i in range(NP):
             ws.cell(r, 1, i + 1).alignment = Alignment(horizontal="center")
-            for c in range(1, 9):
-                h = ws.cell(r, c)
+            ws.cell(r, 1).border = kutu_ince
+            ref = ok((parcalar[i] or {}).get("nominal_value")) if i < len(parcalar) else None
+            satirDeger = [ref] + [ok(deger.get((str(o + 1), str(i + 1), t + 1)))
+                                  for o in range(NK) for t in range(NT)]
+            for j, x in enumerate(satirDeger):
+                h = ws.cell(r, 2 + j, x)
                 h.border = kutu_ince
                 h.alignment = Alignment(horizontal="center")
-                if c >= 2:
-                    h.fill = PatternFill("solid", fgColor="FFFDE7")
-            # Tum degerlendirmeler referansla ayni mi?
-            ws.cell(r, 9, '=IF(COUNTA(C%d:H%d)<6,"",IF(COUNTIF(C%d:H%d,B%d)=6,1,0))'
-                    % (r, r, r, r, r)).border = kutu_ince
-            ws.cell(r, 9).alignment = Alignment(horizontal="center")
+                # Yeşil: ERP çalışmasından geldi · sarı: elle doldurulacak
+                h.fill = PatternFill("solid", fgColor="EEF6EE" if x else "FFFDE7")
+            u = ws.cell(r, uyumS, '=IF(COUNTA(%s%d:%s%d)<%d,"",IF(COUNTIF(%s%d:%s%d,B%d)=%d,1,0))'
+                        % (get_column_letter(ilkS), r, get_column_letter(sonS), r, SUTUN,
+                           get_column_letter(ilkS), r, get_column_letter(sonS), r, r, SUTUN))
+            u.border = kutu_ince
+            u.alignment = Alignment(horizontal="center")
             r += 1
         vson = r - 1
         r += 1
-        ikili = [("A", "C", "D"), ("B", "E", "F"), ("C", "G", "H")]
-        hesap = [("Değerlendirilen parça sayısı", "=COUNT(I%d:I%d)" % (vbas, vson), "0")]
-        for kim, s1, s2 in ikili:
-            hesap.append(("Kontrolör %s — kendi içinde uyum" % kim,
-                          '=IFERROR(SUMPRODUCT(--(%s%d:%s%d=%s%d:%s%d))/COUNTA(%s%d:%s%d),"")'
-                          % (s1, vbas, s1, vson, s2, vbas, s2, vson, s1, vbas, s1, vson), "0.0%"))
-        for kim, s1, s2 in ikili:
-            hesap.append(("Kontrolör %s — referansa uyum" % kim,
-                          '=IFERROR((SUMPRODUCT(--(%s%d:%s%d=B%d:B%d))+SUMPRODUCT(--(%s%d:%s%d=B%d:B%d)))'
-                          '/(2*COUNTA(B%d:B%d)),"")'
-                          % (s1, vbas, s1, vson, vbas, vson, s2, vbas, s2, vson, vbas, vson,
-                             vbas, vson), "0.0%"))
+        S = get_column_letter
+        hesap = [("Değerlendirilen parça sayısı", "=COUNT(%s%d:%s%d)" % (S(uyumS), vbas, S(uyumS), vson), "0")]
+        for o in range(NK):
+            s1, s2 = S(ilkS + o * NT), S(ilkS + o * NT + NT - 1)
+            hesap.append(("Kontrolör %s — kendi içinde uyum" % kisa(o),
+                          '=IFERROR(SUMPRODUCT(--(COUNTIF(OFFSET(%s%d,ROW(%s%d:%s%d)-%d,0,1,%d),'
+                          '%s%d:%s%d)=%d))/COUNTA(%s%d:%s%d),"")'
+                          % (s1, vbas, s1, vbas, s1, vson, vbas, NT, s1, vbas, s1, vson, NT,
+                             s1, vbas, s1, vson), "0.0%"))
+        for o in range(NK):
+            s1, s2 = S(ilkS + o * NT), S(ilkS + o * NT + NT - 1)
+            hesap.append(("Kontrolör %s — referansa uyum" % kisa(o),
+                          '=IFERROR(SUMPRODUCT(--(%s%d:%s%d=B%d:B%d))/COUNTA(%s%d:%s%d),"")'
+                          % (s1, vbas, s2, vson, vbas, vson, s1, vbas, s2, vson), "0.0%"))
         hesap += [
             ("Tüm kontrolörler + referans tam uyum (Po)",
-             '=IFERROR(AVERAGE(I%d:I%d),"")' % (vbas, vson), "0.0%"),
+             '=IFERROR(AVERAGE(%s%d:%s%d),"")' % (S(uyumS), vbas, S(uyumS), vson), "0.0%"),
             ("Beklenen uyum (Pe)", None, "0.0%"),
             ("Kappa = (Po − Pe) / (1 − Pe)", None, "0.000"),
             ("SONUÇ", None, "@"),
         ]
         hbas = r
+        sonucSut = min(uyumS, 7)
         for etiket, formul, bicim in hesap:
             e = ws.cell(r, 1, etiket)
             e.font = Font(bold=True, size=9); e.border = kutu_ince
             e.alignment = Alignment(horizontal="left", vertical="center")
-            ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=6)
-            for cc in range(1, 7):
+            ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=sonucSut - 1)
+            for cc in range(1, sonucSut):
                 ws.cell(r, cc).border = kutu_ince
-            c = ws.cell(r, 7, formul)
-            c.border = kutu_ince; c.number_format = bicim
-            c.font = Font(bold=True, size=9)
-            c.alignment = Alignment(horizontal="center", vertical="center")
+            h = ws.cell(r, sonucSut, formul)
+            h.border = kutu_ince; h.number_format = bicim
+            h.font = Font(bold=True, size=9)
+            h.alignment = Alignment(horizontal="center", vertical="center")
             r += 1
-        G = lambda i: "G%d" % (hbas + i)
-        # Pe: referanstaki OK/NOK oranlarının karesi toplamı
-        ws[G(8)] = ('=IFERROR((COUNTIF(B{0}:B{1},"OK")/COUNTA(B{0}:B{1}))^2'
-                    '+(COUNTIF(B{0}:B{1},"NOK")/COUNTA(B{0}:B{1}))^2,"")').format(vbas, vson)
-        ws[G(9)] = '=IFERROR((%s-%s)/(1-%s),"")' % (G(7), G(8), G(8))
-        ws[G(10)] = ('=IF(%s="","ölçüm bekleniyor",IF(AND(%s>=0.75,%s>=0.9),'
-                     '"KABUL — Kappa ≥ 0,75 ve uyum ≥ %%90",'
-                     'IF(%s>=0.6,"ŞARTLI — kontrolör eğitimi / kriter netleştirme",'
-                     '"RED — nitelik ölçüm sistemi yetersiz")))'
-                     % (G(9), G(9), G(7), G(9)))
-        ws.cell(r + 1, 1, "Referans sütununa bilinen doğru sonuç (OK/NOK), A/B/C sütunlarına her "
-                          "kontrolörün iki bağımsız değerlendirmesi girilir. Parçaların ~yarısı "
-                          "sınır numune olmalı. Kabul: Kappa ≥ 0,75 — AIAG MSA 4. Baskı Bölüm III-C."
+        G = lambda i: "%s%d" % (S(sonucSut), hbas + i)
+        po, pe, kap, snc = G(1 + 2 * NK), G(2 + 2 * NK), G(3 + 2 * NK), G(4 + 2 * NK)
+        ws[pe] = ('=IFERROR((COUNTIF(B{0}:B{1},"OK")/COUNTA(B{0}:B{1}))^2'
+                  '+(COUNTIF(B{0}:B{1},"NOK")/COUNTA(B{0}:B{1}))^2,"")').format(vbas, vson)
+        ws[kap] = '=IFERROR((%s-%s)/(1-%s),"")' % (po, pe, pe)
+        ws[snc] = ('=IF(%s="","ölçüm bekleniyor",IF(AND(%s>=0.75,%s>=0.9),'
+                   '"KABUL — Kappa ≥ 0,75 ve uyum ≥ %%90",'
+                   'IF(%s>=0.6,"ŞARTLI — kontrolör eğitimi / kriter netleştirme",'
+                   '"RED — nitelik ölçüm sistemi yetersiz")))' % (kap, kap, po, kap))
+        ws.cell(r + 1, 1, "Referans sütununda bilinen doğru sonuç (OK/NOK), sonraki sütunlarda her "
+                          "kontrolörün %d bağımsız değerlendirmesi. Yeşil hücreler ERP MSA "
+                          "çalışmasından geldi. Kabul: Kappa ≥ 0,75 — AIAG MSA 4. Baskı III-C." % NT
                 ).font = Font(size=8, italic=True, color="808080")
-        ws.merge_cells(start_row=r + 1, start_column=1, end_row=r + 1, end_column=9)
-        ws.page_setup.orientation = "portrait"
+        ws.merge_cells(start_row=r + 1, start_column=1, end_row=r + 1, end_column=uyumS)
+        ws.page_setup.orientation = "landscape"
 
     wb.save(hedef)
     return len(hepsi)
