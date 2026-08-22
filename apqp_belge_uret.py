@@ -1892,11 +1892,11 @@ def yeterlilik_ozeti(v, hedef, kayitlar):
     wb = Workbook(); ws = wb.active; ws.title = "Özet"
     ws.sheet_view.showGridLines = False
     # Normallik sutunu 12 karakterde tasiyordu; genislikler icerige gore
-    for h, g in zip("ABCDEFGHIJKL", (6, 10, 24, 16, 7, 9, 9, 9, 9, 26, 40, 11)):
+    for h, g in zip("ABCDEFGHIJKLM", (6, 10, 22, 15, 6, 8, 8, 8, 8, 24, 24, 34, 16)):
         ws.column_dimensions[h].width = g
     ince = Side(style="thin", color="808080")
     kutu = Border(top=ince, bottom=ince, left=ince, right=ince)
-    antet(ws, "PROSES VE MAKİNE YETERLİLİĞİ ÖZETİ", "FR 24-Ö", "02.01.2025", "0", "1 / 1", 12)
+    antet(ws, "PROSES VE MAKİNE YETERLİLİĞİ ÖZETİ", "FR 24-Ö", "02.01.2025", "0", "1 / 1", 13)
     r = 6
     for etiket, deger in (("Ürün :", "%s — %s" % (v["kod"], v["ad"])),
                           ("Müşteri :", v["musteri"]), ("Lokasyon :", v["lokasyon_ad"]),
@@ -1904,12 +1904,13 @@ def yeterlilik_ozeti(v, hedef, kayitlar):
         e = ws.cell(r, 1, etiket); e.font = Font(bold=True, size=10)
         e.alignment = Alignment(horizontal="right")
         ws.cell(r, 2, deger)
-        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=12)
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=13)
         r += 1
     r += 1
 
     basliklar = ["No", "Tür", "Karakteristik", "Ölçüm Aleti", "n", "Cp/Cm", "Cpk/Cmk",
-                 "Pp", "Ppk", "Normallik (AD)", "Kullanılan yöntem", "Sonuç"]
+                 "Pp", "Ppk", "Normallik (AD)", "Ölçüm sistemi (çöz./tol.)",
+                 "Kullanılan yöntem", "Sonuç"]
     for i, b in enumerate(basliklar):
         c = ws.cell(r, 1 + i, b)
         c.font = Font(bold=True, size=10, color="FFFFFF")
@@ -1921,36 +1922,56 @@ def yeterlilik_ozeti(v, hedef, kayitlar):
     for i, k in enumerate(kayitlar):
         s_ = k["sonuc"]
         esik = s_.get("esik", 1.33)
+        # Kapi 1: olcum sistemi. AIAG kurali — cihaz cozunurlugu toleransin
+        # %10'unu asmamali; asarsa veri ayriklasir ve yeterlilik beyani
+        # o cihazla SINIRLIDIR.
+        T = k["ust"] - k["alt"]
+        coz, coz_ad = alet_cozunurluk(k["alet"])
+        oran = (coz / T * 100) if (coz and T) else None
+        olcum = ("%s · %%%.0f — %s" % (coz_ad, oran, "uygun" if oran <= 10 else "yetersiz")
+                 if oran is not None else "nitel")
         kabul = "KABUL" if s_["cpk"] >= esik else (
             "ŞARTLI" if s_["cpk"] >= 1.33 else "YETERSİZ")
+        if kabul == "KABUL" and oran is not None and oran > 10:
+            kabul = "KABUL (ölçüm sınırlı)"
         ad = s_.get("ad")
         normallik = ("AD %.2f · kritik %.2f · %s" % (ad, s_["ad_kritik"],
                      "normal" if s_.get("normal") else "normal değil")) if ad else "—"
         deger = [i + 1, k["tur"], k["kar"][:26], k["alet"], len(k["deger"]),
                  round(s_["cp"], 2), round(s_["cpk"], 2), round(s_["pp"], 2),
-                 round(s_["ppk"], 2), normallik, s_.get("yontem", "normal"), kabul]
+                 round(s_["ppk"], 2), normallik, olcum, s_.get("yontem", "normal"), kabul]
         rr = bas + 1 + i
         for j, x in enumerate(deger):
             c = ws.cell(rr, 1 + j, x)
             c.border = kutu; c.font = Font(size=10)
             c.alignment = Alignment(wrap_text=True, vertical="center",
-                                    horizontal="left" if j in (2, 3, 9, 10) else "center")
+                                    horizontal="left" if j in (2, 3, 9, 10, 11) else "center")
             if i % 2:
                 c.fill = PatternFill("solid", fgColor="F4F7FB")
-        ws.cell(rr, 12).font = Font(size=10, bold=True, color={
-            "KABUL": "166534", "ŞARTLI": "92400E"}.get(kabul, "991B1B"))
+        ws.cell(rr, 13).font = Font(size=10, bold=True, color={
+            "KABUL": "166534", "ŞARTLI": "92400E",
+            "KABUL (ölçüm sınırlı)": "92400E"}.get(kabul, "991B1B"))
+        if oran is not None and oran > 10:
+            ws.cell(rr, 11).font = Font(size=10, bold=True, color="92400E")
         # Satir yuksekligi en uzun hucreye gore: yontem metni sigmiyordu
-        uzun = max(len(str(deger[9])) / 26.0, len(str(deger[10])) / 40.0,
-                   len(str(deger[2])) / 24.0)
+        uzun = max(len(str(deger[9])) / 24.0, len(str(deger[10])) / 24.0,
+                   len(str(deger[11])) / 34.0, len(str(deger[2])) / 22.0)
         ws.row_dimensions[rr].height = max(30, min(72, 15 * (int(uzun) + 1)))
 
     son = bas + len(kayitlar) + 2
-    ws.cell(son, 1, "Kabul kriteri: proses yeterliliği Cpk ≥ 1,33 · makine yeterliliği "
-                    "Cmk ≥ 1,67. Normallik Anderson-Darling ile sınanır; sağlanmazsa "
-                    "çarpık veride Box-Cox, ayrık veride yüzdelik yöntemi (ISO 22514-2) "
-                    "kullanılır. Bu tablodaki değerler ERP'deki çalışmayla aynıdır."
+    ws.cell(son, 1,
+            "KABUL DAYANAĞI — iki kapı: (1) Ölçüm sistemi: AIAG kuralına göre cihaz "
+            "çözünürlüğü toleransın %10'unu aşmamalı; aşarsa veri ayrıklaşır ve "
+            "yeterlilik beyanı o cihazla SINIRLIDIR (sonuç sütununda belirtilir). "
+            "(2) Yeterlilik: proses Cpk ≥ 1,33 · makine Cmk ≥ 1,67. Normallik "
+            "Anderson-Darling ile sınanır; sağlanmazsa indisler ISO 22514-2 yüzdelik "
+            "yöntemiyle hesaplanır: Cp=(ÜSL−ALS)/(X99,865−X0,135), "
+            "Cpk=min[(ÜSL−X50)/(X99,865−X50); (X50−ALS)/(X50−X0,135)] — normal "
+            "dağılımda bu formül 6σ'ya indirgenir, yani eşikler değişmez. "
+            "Bu tablodaki değerler ERP'deki çalışmayla aynıdır."
             ).font = Font(size=8, italic=True, color="808080")
-    ws.merge_cells(start_row=son, start_column=1, end_row=son, end_column=12)
+    ws.merge_cells(start_row=son, start_column=1, end_row=son, end_column=13)
+    ws.row_dimensions[son].height = 46
     ws.page_setup.orientation = "landscape"
     ws.page_setup.fitToWidth = 1
 
