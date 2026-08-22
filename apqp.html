@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="tr"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>APQP Takip — Sanifoam ERP</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://mycosmosshop.github.io/erp-portal/erp-theme.js"></script>
+<style>
+:root{--bg:#f4f6fa;--kart:#fff;--kenar:#dde3ec;--metin:#1f2937;--soluk:#6b7280;--vurgu:#1e3c72}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 "Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--metin)}
+.ust{background:var(--vurgu);color:#fff;padding:10px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.ust h1{font-size:17px;margin:0;font-weight:700}
+.ust .bilgi{font-size:12px;opacity:.85}
+button{font:inherit;border:1px solid var(--kenar);background:#fff;color:var(--metin);padding:6px 12px;border-radius:6px;cursor:pointer}
+button.bas{background:#f59e0b;border-color:#f59e0b;color:#fff;font-weight:600}
+button.bas:disabled{opacity:.6;cursor:default}
+button.sec{background:var(--vurgu);border-color:var(--vurgu);color:#fff}
+input,select{font:inherit;padding:6px 10px;border:1px solid var(--kenar);border-radius:6px;background:#fff;color:var(--metin)}
+.govde{padding:16px;max-width:1700px;margin:0 auto}
+.kart{background:var(--kart);border:1px solid var(--kenar);border-radius:10px;padding:14px;margin-bottom:14px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{border:1px solid var(--kenar);padding:6px 8px;text-align:left;vertical-align:top}
+th{background:#eef2f8;font-weight:600;font-size:12px;position:sticky;top:0;z-index:2}
+tr.bolum td{background:#dbe4f3;font-weight:700;font-size:13px}
+td.no{white-space:nowrap;font-variant-numeric:tabular-nums;width:52px}
+td.durum{width:110px;text-align:center}
+.rozet{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:700}
+.r0{background:#fee2e2;color:#991b1b}.r50{background:#fef3c7;color:#92400e}.r100{background:#dcfce7;color:#166534}
+.kanit{font-size:11px;color:#166534;background:#dcfce7;border-radius:4px;padding:1px 5px;margin-left:4px}
+.form-ad{font-size:12px;color:var(--soluk)}
+a.dosya{color:#1d4ed8;text-decoration:none}a.dosya:hover{text-decoration:underline}
+.gantt{overflow-x:auto}
+.gantt table{font-size:11px}
+.gantt td.hf{padding:0;height:20px;min-width:16px}
+.cubuk{height:14px;border-radius:3px;background:#3b82f6}
+.cubuk.tamam{background:#22c55e}
+.durumcubugu{height:8px;background:#e5e7eb;border-radius:4px;overflow:hidden;margin-top:4px}
+.durumcubugu i{display:block;height:100%;background:#22c55e}
+.sekme{display:flex;gap:6px;margin-bottom:12px}
+.uyari{background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:12px}
+</style></head>
+<body>
+<div class="ust">
+  <h1>APQP Takip</h1>
+  <span class="bilgi">FR91 APQP-Takip Formu &middot; 63 adım / 6 bölüm</span>
+  <span style="flex:1"></span>
+  <input id="kod" placeholder="Ürün kodu — birden fazlası için virgülle ayırın" style="min-width:340px">
+  <button class="bas" id="uretBtn">APQP Oluştur</button>
+  <select id="projeSec" style="min-width:220px"></select>
+  <button id="silBtn" title="Seçili APQP kaydını sil">Sil</button>
+</div>
+
+<div class="govde">
+  <div id="mesaj"></div>
+
+  <div class="kart" id="baslikKart" hidden>
+    <div style="display:flex;gap:26px;flex-wrap:wrap">
+      <div><b>Parça Numarası:</b> <span id="bParca">—</span></div>
+      <div><b>Müşteri:</b> <span id="bMusteri">—</span></div>
+      <div><b>APQP Tarihi:</b> <span id="bTarih">—</span></div>
+      <div><b>Tamamlanma:</b> <span id="bYuzde">—</span></div>
+    </div>
+    <div class="durumcubugu"><i id="bCubuk" style="width:0%"></i></div>
+    <div style="margin-top:10px;font-size:12px;color:var(--soluk)" id="bEkip"></div>
+  </div>
+
+  <div class="sekme" id="sekmeler" hidden>
+    <button class="sec" data-gorunum="liste">Liste</button>
+    <button data-gorunum="gantt">Gantt</button>
+  </div>
+
+  <div class="kart" id="listeKart" hidden></div>
+  <div class="kart gantt" id="ganttKart" hidden></div>
+</div>
+
+<script>
+// FR91 APQP Takip Formu adimlari — SABLONDAN cikarildi, elle yazilmadi.
+const FR91 = [{"no":"2","ad":"Planlama ve Tanım","adimlar":[{"no":"2.1","ad":"Çizim ve spesifikasyonların incelenmesi","aiag":"2.7","sorumluluk":"AR&GE","prosedur":"","form":"Müşteri Teknik Resimleri, Şartnameleri"},{"no":"2.2","ad":"Özel/Kritik Özellikler gözden geçirildi, Yetenek gereksinimleri onaylandı","aiag":"2.11","sorumluluk":"AR&GE \nKalite","prosedur":"","form":"Müşteri Teknik Resimleri"},{"no":"2.3","ad":"Ön Süreç akış şeması ve malzeme listesi oluşturuldu","aiag":"1.9; 1.10","sorumluluk":"AR&GE","prosedur":"","form":"PL74 Proses Akış Diyagramı","kanit":"akis"},{"no":"2.4","ad":"Yeni Alet, Ekipman ve Tesis gereksinimleri belirlendi","aiag":"2.10","sorumluluk":"Proje Ekibi","prosedur":"","form":"FR81 Toplantı Tutanağı"},{"no":"2.5","ad":"Yeni Göstergeler, Fikstürler ve Test ekipmanı gereksinimleri belirlendi","aiag":"2.12","sorumluluk":"Proje Ekibi","prosedur":"","form":"FR81 Toplantı Tutanağı"},{"no":"2.6","ad":"İlk kapasite değerlendirmesi yapıldı","aiag":"","sorumluluk":"Planlama","prosedur":"","form":"Kapasite Takip Formu (oluşturulacak)"},{"no":"2.7","ad":"Onaylı kalite denetimleri yapılarak belirlenen Alt Tedarikçiler tanımlandı","aiag":"","sorumluluk":"Satınalma\nKalite","prosedur":"","form":"PL11 Onaylı Tedarikçi Listesi"},{"no":"2.8","ad":"Müşteri çizim ve spesifikasyon incelemesi","aiag":"2.7","sorumluluk":"Proje Ekibi","prosedur":"","form":"FR81 Toplantı Tutanağı"},{"no":"2.9","ad":"Fizibilite çalışması tamamlandı.","aiag":"2.13","sorumluluk":"Proje Ekibi","prosedur":"","form":"FR90 Fizibilite Etüdü Formu"},{"no":"2.10","ad":"Paketleme planı müşteri ile gözden geçirildi (Ambalaj standartları)","aiag":"3.1","sorumluluk":"Satış","prosedur":"","form":"FR228 Ambalaj Standartı Formu"}]},{"no":"3","ad":"Üretim Süreci Tasarımı ve Geliştirme","adimlar":[{"no":"3.1","ad":"Süreç Akış Şemaları oluşturuldu","aiag":"3.3","sorumluluk":"","prosedur":"","form":"PL74 Proses Akış Diyagramı","kanit":"akis"},{"no":"3.2","ad":"Proses Hata Modu ve Etki Analizi (P-FMEA) tamamlandı","aiag":"3.6","sorumluluk":"","prosedur":"","form":"FR34 P-FMEA","kanit":"fmea"},{"no":"3.3","ad":"Ön Kontrol Planı tamamlandı","aiag":"3.7","sorumluluk":"","prosedur":"","form":"Leansys PL41 Kalite Kontrol Planı","kanit":"plan"},{"no":"3.4","ad":"Ölçüm sistemi analiz (MSA) planı tamamlandı","aiag":"3.9","sorumluluk":"Kalite","prosedur":"","form":"FR86 Gage R&R Formu"},{"no":"3.5","ad":"Yeni Alet, Ekipman ve Tesislerin alınması ve kurulumu","aiag":"2.10; 2.12","sorumluluk":"Satınalma","prosedur":"PR05 Satınalma Prosedürü","form":""},{"no":"3.6","ad":"Yeni Göstergeler, Fikstürler ve Test ekipmanlarının alınması ve kurulumu","aiag":"2.12","sorumluluk":"Satınalma","prosedur":"PR05 Satınalma Prosedürü","form":""},{"no":"3.7","ad":"Ekipman kurulumları yapılması","aiag":"","sorumluluk":"Bakım","prosedur":"","form":""},{"no":"3.8","ad":"Operasyon/Çalışma talimatları hazırlandı","aiag":"3.8","sorumluluk":"Üretim","prosedur":"","form":"Leansys Operasyon Kartları","kanit":"opkart"},{"no":"3.9","ad":"Eğitim planı tamamlandı ve uygulandı","aiag":"","sorumluluk":"İK","prosedur":"PR18 Eğitim","form":"Leansys Eğitim Planı\nFR17 Eğitim Toplantısı Tutanağı"},{"no":"3.10","ad":"Alt Tedarikçi APQP planı tamamlandı","aiag":"","sorumluluk":"Satınalma\nKalite","prosedur":"","form":""},{"no":"3.11","ad":"Müşteri ön teslimat planı alındı","aiag":"","sorumluluk":"Satış\nPlanlama","prosedur":"","form":""},{"no":"3.12","ad":"Ön Alt Tedarikçi teslimat planı tamamlandı","aiag":"","sorumluluk":"Satınalma\nPlanlama","prosedur":"PR05 Satınalma Prosedürü","form":""}]},{"no":"4","ad":"Mühendislik Örnekleri","adimlar":[{"no":"4.1","ad":"Mühendislik örnekleri gereksinimleri tanımlandı","aiag":"","sorumluluk":"AR&GE","prosedur":"","form":""},{"no":"4.2","ad":"Numune teslim tarihi","aiag":"","sorumluluk":"AR&GE","prosedur":"PR46 İlk Numune Onay Prosedürü","form":"FR56 Numune Takip Formu"},{"no":"4.3","ad":"Mevcut mühendislik örnekleri - tasarım, boyut ve malzeme doğrulaması","aiag":"","sorumluluk":"Kalite","prosedur":"","form":""}]},{"no":"5","ad":"Önemli Üretim Çalışması Ürün ve Süreç doğrulaması","adimlar":[{"no":"5.1","ad":"Üretim Kontrol planı oluşturuldu","aiag":"4.7","sorumluluk":"Kalite","prosedur":"","form":"Leansys Kontrol Planı","kanit":"plan"},{"no":"5.2","ad":"Personelin eğitimi tamamlandı","aiag":"","sorumluluk":"İK","prosedur":"","form":"Leansys Eğitim Planı"},{"no":"5.3","ad":"Tasarım FMEA (tasarımdan sorumlu olunması durumunda) tamamlandı","aiag":"2.2.4","sorumluluk":"AR&GE","prosedur":"","form":""},{"no":"5.4","ad":"Süreç Akış Şeması tamamlandı","aiag":"2.2.5","sorumluluk":"AR&GE","prosedur":"","form":"PL74 Proses Akış Diyagramı","kanit":"akis"},{"no":"5.5","ad":"AIAG formatını kullanarak FMEA'yı işleme tamamlandı","aiag":"2.2.6","sorumluluk":"Proje Ekibi","prosedur":"","form":"FR34 P-FMEA","kanit":"fmea"},{"no":"5.6","ad":"Kontrol Planı, tüm ana ve kritik özelliklerin tanımlandığı AIAG formatı kullanılarak tamamlanmıştır.","aiag":"2.2.7","sorumluluk":"Kalite","prosedur":"","form":"Leansys PL41 Kalite Kontrol Planı","kanit":"plan"},{"no":"5.7","ad":"Önemli Üretim çalışması tamamlandı","aiag":"4.1","sorumluluk":"Üretim","prosedur":"","form":""},{"no":"5.8","ad":"Ölçüm Sistemi Analizi (MSA)","aiag":"4.2","sorumluluk":"Kalite","prosedur":"","form":"FR86 Gage R&R Formu"},{"no":"5.9","ad":"Tüm ana ve kritik boyutlara ilişkin İlk Süreç Potansiyeli Çalışmaları","aiag":"2.2.11","sorumluluk":"Kalite","prosedur":"","form":"FR88 Süreç Yeterlilik Ölçümü Formu"},{"no":"5.10","ad":"Proses yeterliliği çalışmaları tamamlandı (cp, cpk)","aiag":"4.3","sorumluluk":"Kalite","prosedur":"","form":"FR88 Süreç Yeterlilik Ölçümü Formu"},{"no":"5.11","ad":"Hurda oranı hesaplanır ve gerekirse eylem planı oluşturulur.","aiag":"","sorumluluk":"Üretim","prosedur":"","form":"PPM Takip FR100 KPI"},{"no":"5.12","ad":"Kapasite doğrulandı (Döngü/İnceleme Süreleri doğrulandı)","aiag":"","sorumluluk":"Planlama","prosedur":"","form":"Kapasite Takip Formu \nRun @ Rate"},{"no":"5.13","ad":"Kullanım noktasında parça bütünlüğünü sağlamak için doğrulanan paketleme gereksinimleri","aiag":"4.6","sorumluluk":"Satış","prosedur":"","form":"FR228 Ambalaj Standartı Formu"},{"no":"5.14","ad":"Saklanan ana mastar numune (çoklu boşluklu kalıbın, aletin veya modelin her birinin ana numunesi - gelecekte referans olarak kullanılmak üzere.)","aiag":"AIAG PPAP Kılavuzu 2.2.15","sorumluluk":"AR&GE","prosedur":"TL253 Şahit Numune Talimatı","form":""},{"no":"5.15","ad":"ILERI ÜRÜN KALITE PLANLAMASI FAALIYETLERI ONAY TABLOSU","aiag":"","sorumluluk":"AR&GE","prosedur":"","form":"FR91 APQP Takip Formu \n(Bu form)"}]},{"no":"6","ad":"Müşteriye gönderilecek PPAP Belgeleri","adimlar":[{"no":"6.1","ad":"Müşteri PPAP seviyesinin incelenmesi, Belirtilmemişse Seviye 2 Uygulanır","aiag":"","sorumluluk":"Kalite","prosedur":"","form":""},{"no":"6.2","ad":"Müşteriye Parça Gönderim Emri (Part Submission Warrant : PSW / Cover Sheet)","aiag":"2.2.18; 4.1","sorumluluk":"Kalite","prosedur":"","form":"Cover Sheet (Kapak)"},{"no":"6.3","ad":"Mevcut üretim çiziminde bulunmayan \"Onaylanmış Mühendislik Değişiklik Belgeleri\"ni dahil edin","aiag":"2.2.2","sorumluluk":"AR&GE","prosedur":"","form":"FR148 Mühendislik Değişiklik Formu"},{"no":"6.4","ad":"Varsa Sapma veya Değişiklik Talebi formları Müşteriye gönderilmiş ve onaylanmıştır","aiag":"","sorumluluk":"AR&GE","prosedur":"","form":"FR89 Sapma Talep Formu"},{"no":"6.5","ad":"Tüm Çizim boyutları, notlar ve materyaller balonlanır ve bir numara atanır (numaralar daire içine alınmalıdır)","aiag":"2.2.1","sorumluluk":"Kalite","prosedur":"","form":"Numaralandırılmış Teknik Resim"},{"no":"6.6","ad":"Boyutsal Sonuçlar, Müşteri Ölçüsel Rapor Formu kullanılarak tamamlanır ve tüm uygunsuzluklar açıkça tanımlanır","aiag":"2.2.9","sorumluluk":"Kalite","prosedur":"","form":"Müşteri Ölçüsel Rapor Formu"},{"no":"6.7","ad":"*Tasarım FMEA (tasarımdan sorumlu tedarikçiler için)","aiag":"2.2.4","sorumluluk":"Kalite","prosedur":"","form":""},{"no":"6.8","ad":"*Süreç akış şeması","aiag":"2.2.5","sorumluluk":"AR&GE","prosedur":"","form":"PL74 Proses Akış Diyagramı","kanit":"akis"},{"no":"6.9","ad":"*AIAG formatını kullanarak FMEA'yı işleyin","aiag":"2.2.6","sorumluluk":"Proje Ekibi","prosedur":"","form":"FR34 P-FMEA","kanit":"fmea"},{"no":"6.10","ad":"*Kontrol planı","aiag":"2.2.7","sorumluluk":"Kalite","prosedur":"","form":"Leansys PL41 Kalite Kontrol Planı","kanit":"plan"},{"no":"6.11","ad":"Ölçüm Sistemi Analiz Çalışmaları (MSA) GageR&R (Cihaz Tekrar Edilebilirlik ve Tekrar Üretilebilirlik)","aiag":"2.2.8","sorumluluk":"Kalite","prosedur":"","form":"FR86 Gage R&R Formu"},{"no":"6.12","ad":"Tüm Kontrol Yardımcıları/Fikstürleri için Uygunluk; Kontrol mastarları","aiag":"2.2.16","sorumluluk":"Kalite","prosedur":"","form":"FR176 Kalıp Doğrulama Formu"},{"no":"6.13","ad":"İlk Süreç Potansiyeli Çalışmaları (tek taraflı limit ya da normal olmayan dağılım durumunda kabul kriterleri müşteri temsilcisi ile birlikte belirlenmelidir cpk >1,67 olmalı, 1,33<cpk<1,67 ise yetkili müşteri temsilcisi ile sonuçları gözden geçirin, cpk<1,33 ise proses yeterli değil.","aiag":"2.2.11","sorumluluk":"Kalite","prosedur":"","form":"FR88 Süreç Yeterlilik Ölçümü Formu"},{"no":"6.14","ad":"Malzeme Test Sonuçları tamamlandı. \nMalzeme Analiz Sertifikası tamamlandı.","aiag":"2.2.10.1","sorumluluk":"Kalite","prosedur":"","form":"FR54 Kalite Kontrol Testi Raporu (Leansys)"},{"no":"6.15","ad":"Performans Test Sonuçları tamamlandı.","aiag":"2.2.10.2","sorumluluk":"Kalite","prosedur":"","form":"FR54 Kalite Kontrol Testi Raporu (Leansys)"},{"no":"6.16","ad":"Görünüm Onayı tamamlandı. (Görsel parça ise)","aiag":"2.2.13","sorumluluk":"Kalite","prosedur":"","form":""},{"no":"6.17","ad":"*Müşteri Özel İsteklerine Uygunluk Kayıtları tamamlandı.","aiag":"2.2.17","sorumluluk":"Kalite","prosedur":"","form":"FR54 Kalite Kontrol Testi Raporu (Leansys)\nDış Laboratuvar Testleri"},{"no":"6.19","ad":"Gönderilen PPAP Örnek Parçaları (önemli bir üretim sürecinden olmalıdır)","aiag":"2.2.14","sorumluluk":"Kalite, Üretim","prosedur":"","form":"FR56 Numune Takip Formu"},{"no":"6,20","ad":"Müşterinin talep ettiği diğer bilgiler","aiag":"2.2.17","sorumluluk":"Kalite","prosedur":"","form":""},{"no":"6.21","ad":"PPAP Dokümanları Müşteriye Gönderildi","aiag":"2.2.17","sorumluluk":"Kalite","prosedur":"","form":"FR56 Numune Takip Formu"}]},{"no":"7","ad":"Müşteri onayı, Seri Üretimin başlaması ve Teslimat","adimlar":[{"no":"7.1","ad":"Ürün Devreye Alma","aiag":"","sorumluluk":"AR&GE Üretim","prosedur":"","form":"FR182 Ürün Devreye Alma Formu"},{"no":"7.2","ad":"Müşteri teslimat planı alındı ve onaylandı","aiag":"","sorumluluk":"Kalite","prosedur":"","form":""},{"no":"7.3","ad":"Alt Tedarikçi teslimat planı belirlendi ve onaylandı","aiag":"","sorumluluk":"Planlama","prosedur":"Leansys Termin","form":""}]}];
+
+const URL_ = 'https://nnubrxbpthmkitueixbh.supabase.co';
+const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5udWJyeGJwdGhta2l0dWVpeGJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1NjI2MDIsImV4cCI6MjA5NjEzODYwMn0.CHZUOylf_q8kkOQbFf9VWZ6-doUTlynmAhahM2EuImE';
+const sb = supabase.createClient(URL_, ANON);
+
+const $ = s => document.querySelector(s);
+const met = x => (x == null ? '' : String(x).trim());
+const bugun = () => new Date().toISOString().slice(0, 10);
+const gunEkle = (t, g) => { const d = new Date(t); d.setDate(d.getDate() + g); return d.toISOString().slice(0, 10); };
+
+// Bolum bazli faz penceresi (hafta): planlama once, PPAP en sonda
+const FAZ = { '2': 2, '3': 6, '4': 8, '5': 12, '6': 14, '7': 16 };
+
+function mesaj(html, tur) {
+  $('#mesaj').innerHTML = html ? '<div class="uyari">' + html + '</div>' : '';
+}
+
+// Girilen deger ic stok kodu OLABILIR, musteri parca numarasi da olabilir
+// (LeanSys'te musteri numarasi stok_adi alaninda durur). Belirsizse tahmin
+// yurutulmez; adaylar cagirana bildirilir.
+async function kodCoz(giris) {
+  const alan = 'stok_kodu,stok_adi,cari_adi,tr_revtarih';
+  let r = await sb.from('leansys_kontrol_plani').select(alan).eq('stok_kodu', giris).limit(300);
+  if ((r.data || []).length) return { kod: giris, satir: r.data };
+
+  r = await sb.from('leansys_kontrol_plani').select(alan).ilike('stok_adi', '%' + giris + '%').limit(300);
+  const satir = r.data || [];
+  if (!satir.length) return { kod: giris, satir: [] };
+
+  const kodlar = [...new Set(satir.map(x => met(x.stok_kodu)))];
+  if (kodlar.length > 1) {
+    const adaylar = kodlar.map(k => {
+      const ad = met((satir.find(x => x.stok_kodu === k) || {}).stok_adi);
+      return k + ' (' + ad + ')';
+    });
+    const e = new Error('bu numara birden fazla ürüne ait — stok kodunu yazın: ' + adaylar.join(' , '));
+    e.adaylar = kodlar;
+    throw e;
+  }
+  return { kod: kodlar[0], satir, musteriParca: giris };
+}
+
+// ── ERP verisinden kanit topla ───────────────────────────────────────────
+async function erpKanit(giris) {
+  const coz = await kodCoz(giris);
+  const kod = coz.kod;
+  const [rota, agac, fmea] = await Promise.all([
+    sb.from('operasyon_kartlari').select('stok_kodu').eq('stok_kodu', kod).limit(50),
+    sb.from('urun_agaclari').select('urun_kodu').eq('urun_kodu', kod).limit(50),
+    sb.from('pfmea_projects').select('id,name,data').limit(500),
+  ]);
+  const planSatir = coz.satir;
+  const urunAdi = met((planSatir[0] || {}).stok_adi) || kod;
+  // FMEA eslesmesi: proje kimligi, proje adi VEYA urun adi (musteri parca
+  // numarasi "36.72010-6345 INDEX C" gibi) uzerinden.
+  const kimlik = 'proj_' + kod.replace(/[.\-]/g, '_');
+  const buyuk = x => met(x).toLocaleUpperCase('tr');
+  const aranan = [buyuk(kod), buyuk(urunAdi)].filter(Boolean);
+  const fmeaKayit = (fmea.data || []).find(p => {
+    const f = (p.data && p.data.projectData && p.data.projectData.fmea) || {};
+    if (met(f.projectId) === kimlik) return true;
+    const metin = buyuk(f.project) + ' ' + buyuk(f.productName) + ' ' + buyuk(p.name);
+    return aranan.some(a => metin.includes(a));
+  });
+  return {
+    kod, musteriParca: coz.musteriParca || '',
+    urunAdi,
+    musteri: met((planSatir[0] || {}).cari_adi),
+    plan: planSatir.length > 0,
+    opkart: (rota.data || []).length > 0,
+    agac: (agac.data || []).length > 0,
+    fmea: !!fmeaKayit,
+    fmeaId: fmeaKayit ? fmeaKayit.id : '',
+    akis: !!fmeaKayit,   // akis diyagrami PFMEA modulunde uretiliyor
+  };
+}
+
+// Kanit -> adima baglanti (tiklayinca kaynagina gitsin)
+function kanitBaglanti(k, kod, kanitlar) {
+  if (k === 'fmea' && kanitlar.fmeaId) return 'https://mycosmosshop.github.io/AIAG-VDA-PFMEA/';
+  if (k === 'akis' && kanitlar.fmeaId) return 'https://mycosmosshop.github.io/AIAG-VDA-PFMEA/';
+  if (k === 'plan') return 'https://mycosmosshop.github.io/kalite-kontrol/#plan=' + encodeURIComponent(kod);
+  if (k === 'opkart') return 'https://mycosmosshop.github.io/kalite-kontrol/#op=' + encodeURIComponent(kod);
+  return '';
+}
+
+// ── APQP kaydi uret ──────────────────────────────────────────────────────
+async function apqpUret(giris) {
+  const k = await erpKanit(giris);
+  const kod = k.kod;
+  const bas = bugun();
+  const bolumler = FR91.map(b => ({
+    no: b.no, ad: b.ad,
+    adimlar: b.adimlar.map(a => {
+      const kanitVar = a.kanit && k[a.kanit];
+      return {
+        no: a.no, ad: a.ad, aiag: a.aiag, sorumluluk: a.sorumluluk,
+        prosedur: a.prosedur, form: a.form, kanit: a.kanit || '',
+        bitis: gunEkle(bas, (FAZ[b.no] || 8) * 7),
+        tamamlanma: kanitVar ? bas : '',
+        durum: kanitVar ? 100 : 0,
+        baglanti: kanitVar ? kanitBaglanti(a.kanit, kod, k) : '',
+        dosya: '',
+      };
+    }),
+  }));
+  return {
+    id: 'apqp_' + kod.replace(/[.\-]/g, '_'),
+    stokKodu: kod, musteriParca: k.musteriParca || k.urunAdi,
+    urunAdi: k.urunAdi, musteri: k.musteri, tarih: bas,
+    ekip: EKIP, bolumler,
+    kaynak: { fmea: k.fmea, kontrolPlani: k.plan, operasyonKarti: k.opkart, urunAgaci: k.agac },
+  };
+}
+
+// FR91'deki ekip satirlari (sablonun kendi rolleri)
+const EKIP = [{"rol": "AR&GE Proje Yöneticisi", "ad": "Sinem Kaya"}, {"rol": "Kalite Güvence Müdürü", "ad": "Volkan Pekatik"}, {"rol": "Kalite Mühendisi", "ad": "Emre Biçer"}, {"rol": "Satın Alma", "ad": "Kutlay Altıparmak"}, {"rol": "Lojistik", "ad": "Taner Şeşenoğlu"}, {"rol": "Üretim", "ad": "Mete Yılmaz"}, {"rol": "Satış", "ad": "Ender Zaimoğlu"}];
+
+// ── Kayit / okuma ────────────────────────────────────────────────────────
+async function kaydet(p) {
+  const { error } = await sb.from('apqp_projeler')
+    .upsert({ id: p.id, name: p.stokKodu + ' APQP', data: p }, { onConflict: 'id' });
+  if (error) throw error;
+}
+async function hepsiniOku() {
+  const { data, error } = await sb.from('apqp_projeler').select('id,name,data').order('id');
+  if (error) throw error;
+  return (data || []).map(x => x.data).filter(Boolean);
+}
+
+// ── Cizim ────────────────────────────────────────────────────────────────
+let aktif = null, gorunum = 'liste';
+
+function yuzde(p) {
+  const hepsi = p.bolumler.flatMap(b => b.adimlar);
+  if (!hepsi.length) return 0;
+  return Math.round(hepsi.reduce((t, a) => t + (Number(a.durum) || 0), 0) / hepsi.length);
+}
+
+function ciz() {
+  if (!aktif) { $('#baslikKart').hidden = $('#sekmeler').hidden = $('#listeKart').hidden = $('#ganttKart').hidden = true; return; }
+  $('#baslikKart').hidden = $('#sekmeler').hidden = false;
+  $('#bParca').textContent = aktif.stokKodu + (aktif.urunAdi ? ' — ' + aktif.urunAdi : '')
+    + (aktif.musteriParca && aktif.musteriParca !== aktif.urunAdi ? '  (müşteri: ' + aktif.musteriParca + ')' : '');
+  $('#bMusteri').textContent = aktif.musteri || '—';
+  $('#bTarih').textContent = aktif.tarih;
+  const y = yuzde(aktif);
+  $('#bYuzde').textContent = '%' + y;
+  $('#bCubuk').style.width = y + '%';
+  $('#bEkip').innerHTML = aktif.ekip.map(e => '<b>' + e.rol + ':</b> ' + (e.ad || '—')).join(' &nbsp;·&nbsp; ');
+  $('#listeKart').hidden = gorunum !== 'liste';
+  $('#ganttKart').hidden = gorunum !== 'gantt';
+  if (gorunum === 'liste') cizListe(); else cizGantt();
+}
+
+function rozet(d) {
+  const s = Number(d) || 0;
+  const c = s >= 100 ? 'r100' : s > 0 ? 'r50' : 'r0';
+  return '<span class="rozet ' + c + '">%' + s + '</span>';
+}
+
+function cizListe() {
+  let h = '<table><thead><tr><th>No</th><th>Adım</th><th>AIAG</th><th>Sorumluluk</th>'
+    + '<th>Prosedür</th><th>Form / Doküman</th><th>Bitiş</th><th>Tamamlanma</th><th>Durum</th></tr></thead><tbody>';
+  aktif.bolumler.forEach(b => {
+    h += '<tr class="bolum"><td class="no">' + b.no + '</td><td colspan="8">' + b.ad + '</td></tr>';
+    b.adimlar.forEach(a => {
+      const form = a.baglanti
+        ? '<a class="dosya" href="' + a.baglanti + '" target="_blank">' + (a.form || '—') + '</a>'
+        : '<span class="form-ad">' + (a.form || '—') + '</span>';
+      h += '<tr>'
+        + '<td class="no">' + a.no + '</td>'
+        + '<td>' + a.ad + (a.kanit && a.durum >= 100 ? '<span class="kanit">ERP&#39;den</span>' : '') + '</td>'
+        + '<td>' + (a.aiag || '') + '</td>'
+        + '<td>' + (a.sorumluluk || '') + '</td>'
+        + '<td>' + (a.prosedur || '') + '</td>'
+        + '<td>' + form + '</td>'
+        + '<td><input type="date" value="' + (a.bitis || '') + '" data-alan="bitis" data-no="' + a.no + '" data-b="' + b.no + '" style="width:140px"></td>'
+        + '<td><input type="date" value="' + (a.tamamlanma || '') + '" data-alan="tamamlanma" data-no="' + a.no + '" data-b="' + b.no + '" style="width:140px"></td>'
+        + '<td class="durum"><input type="number" min="0" max="100" step="25" value="' + (a.durum || 0) + '" data-alan="durum" data-no="' + a.no + '" data-b="' + b.no + '" style="width:64px"> ' + rozet(a.durum) + '</td>'
+        + '</tr>';
+    });
+  });
+  h += '</tbody></table>';
+  $('#listeKart').innerHTML = h;
+}
+
+function cizGantt() {
+  const hepsi = aktif.bolumler.flatMap(b => b.adimlar.map(a => ({ b: b.no, ...a })));
+  const tarihler = hepsi.map(a => a.bitis).filter(Boolean).sort();
+  if (!tarihler.length) { $('#ganttKart').innerHTML = 'Tarih yok.'; return; }
+  const bas = new Date(aktif.tarih), son = new Date(tarihler[tarihler.length - 1]);
+  const haftaSayisi = Math.max(1, Math.ceil((son - bas) / (7 * 864e5)) + 1);
+  let h = '<table><thead><tr><th style="min-width:52px">No</th><th style="min-width:280px">Adım</th>';
+  for (let w = 0; w < haftaSayisi; w++) h += '<th style="min-width:16px">' + (w + 1) + '</th>';
+  h += '</tr></thead><tbody>';
+  aktif.bolumler.forEach(b => {
+    h += '<tr class="bolum"><td class="no">' + b.no + '</td><td colspan="' + (haftaSayisi + 1) + '">' + b.ad + '</td></tr>';
+    b.adimlar.forEach(a => {
+      const hafta = Math.max(0, Math.floor((new Date(a.bitis) - bas) / (7 * 864e5)));
+      h += '<tr><td class="no">' + a.no + '</td><td>' + a.ad.slice(0, 70) + '</td>';
+      for (let w = 0; w < haftaSayisi; w++) {
+        h += '<td class="hf">' + (w === hafta ? '<div class="cubuk' + (a.durum >= 100 ? ' tamam' : '') + '"></div>' : '') + '</td>';
+      }
+      h += '</tr>';
+    });
+  });
+  h += '</tbody></table>';
+  $('#ganttKart').innerHTML = h;
+}
+
+// ── Olaylar ──────────────────────────────────────────────────────────────
+document.addEventListener('change', async e => {
+  const t = e.target;
+  if (!t.dataset || !t.dataset.alan || !aktif) return;
+  const b = aktif.bolumler.find(x => x.no === t.dataset.b);
+  const a = b && b.adimlar.find(x => x.no === t.dataset.no);
+  if (!a) return;
+  a[t.dataset.alan] = t.dataset.alan === 'durum' ? Number(t.value) : t.value;
+  if (t.dataset.alan === 'durum' && a.durum >= 100 && !a.tamamlanma) a.tamamlanma = bugun();
+  if (t.dataset.alan === 'durum' && a.durum < 100) a.tamamlanma = '';
+  try { await kaydet(aktif); ciz(); } catch (err) { mesaj('Kaydedilemedi: ' + err.message); }
+});
+
+$('#sekmeler').addEventListener('click', e => {
+  if (!e.target.dataset.gorunum) return;
+  gorunum = e.target.dataset.gorunum;
+  [...$('#sekmeler').children].forEach(b => b.className = b.dataset.gorunum === gorunum ? 'sec' : '');
+  ciz();
+});
+
+$('#uretBtn').addEventListener('click', async () => {
+  const kodlar = [...new Set($('#kod').value.split(/[,;\n]/).map(x => x.trim()).filter(Boolean))];
+  if (!kodlar.length) { mesaj('Önce bir ürün kodu girin.'); return; }
+  $('#uretBtn').disabled = true;
+  const olan = await hepsiniOku();
+  const basarili = [], atlanan = [], hatali = [];
+  for (const kod of kodlar) {
+    try {
+      mesaj(kod + ' için ERP verisi okunuyor…');
+      const p = await apqpUret(kod);
+      // Tekrar kontrolu COZULMUS stok koduna gore: ayni urune musteri
+      // numarasindan da girilse ikinci kayit acilmasin.
+      if (olan.some(x => x.stokKodu === p.stokKodu)) { atlanan.push(kod + ' → ' + p.stokKodu); continue; }
+      await kaydet(p);
+      basarili.push(p);
+    } catch (err) { hatali.push(kod + ': ' + err.message); }
+  }
+  $('#uretBtn').disabled = false;
+  await projeleriYukle(basarili.length ? basarili[0].id : null);
+  mesaj([
+    basarili.length ? basarili.length + ' APQP oluşturuldu: ' + basarili.map(p => p.stokKodu).join(', ') : '',
+    atlanan.length ? 'Atlandı (APQP&#39;si zaten var): ' + atlanan.join(', ') : '',
+    hatali.length ? 'Üretilemeyen: ' + hatali.join(' | ') : '',
+  ].filter(Boolean).join('<br>'));
+});
+
+$('#silBtn').addEventListener('click', async () => {
+  const id = $('#projeSec').value;
+  if (!id || !confirm('Bu APQP kaydı silinsin mi?')) return;
+  await sb.from('apqp_projeler').delete().eq('id', id);
+  await projeleriYukle(null);
+});
+
+$('#projeSec').addEventListener('change', async () => {
+  const hepsi = await hepsiniOku();
+  aktif = hepsi.find(p => p.id === $('#projeSec').value) || null;
+  ciz();
+});
+
+async function projeleriYukle(secId) {
+  let hepsi = [];
+  try { hepsi = await hepsiniOku(); }
+  catch (err) {
+    mesaj('Tablo okunamadı: ' + err.message + '<br>apqp.sql dosyasındaki SQL&#39;i Supabase SQL Editor&#39;de bir kez çalıştırın.');
+    return;
+  }
+  $('#projeSec').innerHTML = '<option value="">— APQP kaydı seçin —</option>'
+    + hepsi.map(p => '<option value="' + p.id + '">' + p.stokKodu + ' — %' + yuzde(p) + '</option>').join('');
+  if (secId) $('#projeSec').value = secId;
+  aktif = hepsi.find(p => p.id === $('#projeSec').value) || null;
+  ciz();
+}
+
+projeleriYukle(null);
+</script>
+</body></html>
