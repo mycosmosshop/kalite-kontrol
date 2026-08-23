@@ -1912,6 +1912,13 @@ VW_PARCA = re.compile(r"\b\d[A-Z0-9]{2}[\s._]\d{3}[\s._]\d{3}\b")
 # Ad üzerinden yalnız TARTIŞMASIZ VW grubu şirketleri (SITECH, VW'nin koltuk
 # iskeleti iştirakidir). "SKODA" tek başına eşleştirilmez: TEMSA SKODA
 # otobüs ortaklığı VW grubu değildir.
+# VW GRUBU PARCA NO ONEKLERI (kullanicinin bildirdigi liste). Bu oneklerden
+# biriyle BASLAYAN kod VW formlarini devreye alir: PPF/PPA kapagi, TL 1010
+# yanmazlik, D/TLD oz denetim, VW olcusel rapor.
+# NEDEN AYRI DESEN: VW_PARCA yalnizca "6FA 881 989" duzenini (bosluk/nokta
+# ayracli, 3+3 hane) yakaliyordu; "6FA881989" (ayracsiz, dosya adlarinda boyle
+# geciyor) ve "5E3-867-288" (tireli) ELENIYORDU.
+VW_ONEK = re.compile(r"(?:^|[\s._\-/(\[])(5E3|6FA|5NA|81A|2GP|2K7)[\s._\-]?\d", re.I)
 VW_MUSTERI = re.compile(r"VOLKSWAGEN|\bVW\b|\bAUDI\b|PORSCHE|SKODA AUTO|SITECH", re.I)
 # Müşteriye özel kapak/ölçü/parça geçmişi yoksa bu şablon kullanılır
 ORTAK_VDA2 = "VDA_2_2020_Anlagen_Attachments_2-6_7 MAN.xlsx"
@@ -1928,7 +1935,8 @@ def vw_grubu(v):
         return True
     metin = met(v.get("ad")) + " " + " ".join(
         met(d.get("doc_adi")) + " " + met(d.get("link")) for d in (v.get("dok") or []))
-    return bool(VW_PARCA.search(metin.upper()))
+    buyuk = metin.upper()
+    return bool(VW_ONEK.search(buyuk) or VW_PARCA.search(buyuk))
 
 
 def musteri_belgeleri(v):
