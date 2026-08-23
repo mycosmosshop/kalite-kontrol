@@ -279,6 +279,47 @@ def hucre_stil_no(xml, ref):
 
 
 # ── ERP verisi ───────────────────────────────────────────────────────────
+# LeanSys tazeleme betikleri — BIZIM ERP aynamizi besler (LeanSys'e yazmaz).
+# Kalite Kontrol modulundeki "Ürün Ağaçları → LeanSys'ten Çek" dugmesi de
+# ayni betigi calistirir; tek kaynak.
+LEANSYS_BETIK = os.path.join(os.path.expanduser("~"), "Desktop", "Leansys Verileri")
+
+
+def urun_agaci_cek(kod):
+    """Ürün ağacı BİZİM ERP'de yoksa LeanSys'ten çeker (salt okuma).
+
+    LEANSYS'E YAZILMAZ: _urunagaci_refresh.ps1 _ro_guard.ps1 ile korumalıdır
+    (Assert-ReadOnlySql yalnız SELECT'e izin verir) ve sonucu bizim ERP
+    aynamıza (urun_agaclari) upsert eder. Özyinelemelidir: kök ürünün ağacı
+    ve ALT ürün ağaçları tüm seviyeleriyle gelir — hammadde çoğu zaman
+    kompozit yarı mamulün altındadır.
+
+    NEDEN: 700.0.450'in ağacı LeanSys'te VARDI ama aynaya hiç çekilmemişti;
+    alt tedarikçi PPAP'i, FR192 risk analizi ve ISO 845 hammadde bilgisi bu
+    yüzden üretilemiyordu.
+    """
+    import subprocess
+    betik = os.path.join(LEANSYS_BETIK, "_urunagaci_refresh.ps1")
+    if not os.path.exists(betik):
+        return 0
+    try:
+        c = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+             "-File", betik, "-Codes", kod],
+            capture_output=True, text=True, timeout=300)
+    except Exception as e:
+        print("   ! ürün ağacı çekilemedi: %s" % str(e)[:60])
+        return 0
+    cikti = (c.stdout or "") + (c.stderr or "")
+    g = re.search(r"RESULT_OK\s+(\d+)", cikti)
+    if g:
+        return int(g.group(1))
+    h = re.search(r"RESULT_ERR\s+(.*)", cikti)
+    print("   ! ürün ağacı çekilemedi: %s"
+          % (h.group(1).strip()[:70] if h else cikti.strip()[:70] or "yanıt yok"))
+    return 0
+
+
 def urun_verisi(kod):
     k = urllib.parse.quote(kod)
     plan = sorgu("/leansys_kontrol_plani?stok_kodu=eq.%s"
@@ -320,7 +361,15 @@ def urun_verisi(kod):
     if rota:
         hid = next((r.get("header_id") for r in rota if r.get("varsayilan") is True), rota[0].get("header_id"))
         rota = [r for r in rota if r.get("header_id") == hid]
-    agac = sorgu("/urun_agaclari?urun_kodu=eq.%s&select=tuketim_kodu,tuketim_adi,miktar,birim,cinsi" % k)
+    agac_sorgu = ("/urun_agaclari?urun_kodu=eq.%s"
+                  "&select=tuketim_kodu,tuketim_adi,miktar,birim,cinsi" % k)
+    agac = sorgu(agac_sorgu)
+    if not agac:
+        # Ayna eksikse LeanSys'ten CEKTIRILIR (salt okuma), sonra yeniden sorulur
+        n = urun_agaci_cek(kod)
+        if n:
+            print("   ✓ ürün ağacı ERP'ye çekildi        (%d satır, alt ağaçlar dahil)" % n)
+            agac = sorgu(agac_sorgu)
     dok = sorgu("/stok_dokumanlari?stok_kodu=eq.%s&select=doc_adi,rev_no,link" % k)
     if not plan and not rota:
         raise SystemExit("ERP'de bu ürün bulunamadı: " + kod)
@@ -5234,7 +5283,15 @@ def main():
     else:
         print("   · FR176 Kalıp Doğrulama Formu       gerekmiyor (rotada kalıplı makine yok)")
 
-    for kod_, ad_, ted, n_, nasil in alt_tedarikci_ppap(v, klasor, uret):
+    alt = alt_tedarikci_ppap(v, klasor, uret)
+    if not alt:
+        # SESSIZ YOKLUK OLMASIN: hicbir satir basilmayinca kullanici "alt
+        # tedarikci PPAP gelmedi mi?" diye soruyor. Sebebi yazilir.
+        print("   ! Alt Tedarikçi PPAP / FR192        üretilemedi: %s"
+              % ("ürün ağacı LeanSys'te boş — satın alınan malzeme yok"
+                 if not v["agac"] else
+                 "ürün ağacında satın alınan malzeme kodu yok"))
+    for kod_, ad_, ted, n_, nasil in alt:
         print("   %s Alt Tedarikçi PPAP %-16s %-26s %s"
               % ("✓" if n_ else "!", kod_, (ted or "tedarikçi bulunamadı")[:26],
                  "%d ölçü · %s" % (n_, nasil) if n_ else nasil))

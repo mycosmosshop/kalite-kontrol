@@ -820,13 +820,16 @@ def tum_olculer(im, capa, plan_degerleri=(), geometri_ele=False):
 
 
 def _cakisanlari_ele(olcu, plan_deger, esik=46):
-    """Ayni noktaya dusen olculerden BIRI birakilir.
+    """Ayni noktaya dusen AYNI olcuden BIRI birakilir.
 
-    Kullanici cizimde "cift daire" balon gordu: iki olcu neredeyse ayni
-    koordinata dusunce balonlari ust uste biniyor ve okunamiyor. Bu genelde
-    ayni yaziyi iki kez yakalamaktan olur (biri tam, biri kirpik: "343" ve
-    yanindaki "3" gibi). Tutulan: kontrol planiyla DOGRULANAN, o da yoksa
-    daha uzun/tam olan deger.
+    Amac: cizimde "cift daire" balon. Bu, ayni yazinin iki kez yakalanmasindan
+    olur — biri tam, biri kirpik ("343" ve yanindaki "3" gibi).
+
+    DIKKAT — DEGER DE KARSILASTIRILIR: once yalniz KONUMA bakiliyordu ve
+    ust uste dizilmis IKI GERCEK olcu (5E3.881.989 cizimindeki 240 ve 300,
+    aralari ~46 px) birbirini eliyordu. Olcu zinciri normalde boyledir; iki
+    FARKLI tam sayi ayni yerde olabilir ve ikisi de balonlanmalidir.
+    Yalnizca su durumda elenir: degerler AYNI ya da biri otekinin PARCASI.
     """
     def planda(d):
         try:
@@ -835,14 +838,20 @@ def _cakisanlari_ele(olcu, plan_deger, esik=46):
             return False
         return any(abs(f - p) < 0.051 for p in plan_deger)
 
+    def ayni_yazi(a, b):
+        a, b = str(a).strip(), str(b).strip()
+        if a == b:
+            return True
+        # Biri otekinin PARCASI mi ("343" <- "3")? Tam sayilar farkliysa degil.
+        kisa, uzun = (a, b) if len(a) <= len(b) else (b, a)
+        return len(kisa) < len(uzun) and kisa in uzun
+
     kalan = []
     for o in olcu:
         deger, x, y = o[0], o[1], o[2]
         for i, v in enumerate(kalan):
-            if abs(v[1] - x) < esik and abs(v[2] - y) < esik:
-                iyi = (planda(deger), len(str(deger)))
-                eski = (planda(v[0]), len(str(v[0])))
-                if iyi > eski:
+            if abs(v[1] - x) < esik and abs(v[2] - y) < esik and ayni_yazi(v[0], deger):
+                if (planda(deger), len(str(deger))) > (planda(v[0]), len(str(v[0]))):
                     kalan[i] = o
                 break
         else:
