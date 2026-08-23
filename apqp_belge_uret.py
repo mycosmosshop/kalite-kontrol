@@ -2455,6 +2455,41 @@ def flammability(v, hedef):
     return len(d)
 
 
+def _makrosuz_okunur(yol):
+    """Makro kapaliyken de OKUNABILIR olsun: hesap kipi ELLEye alinir.
+
+    D/TLD formunun butun metinleri gettext() VBA fonksiyonundan gelir. Excel
+    acilista yeniden hesaplayinca, makro guveni yoksa fonksiyon calismaz ve
+    HER HUCRE #DEGER! olur — belge tamamen okunamaz. Bu bir PPAP ciktisidir;
+    musteri ya da denetci onu okumak icin makro etkinlestirmek zorunda
+    kalmamali.
+
+    Onbelleklenmis degerler dosyada ZATEN var (53 formulun 53'unde). Hesap
+    kipi elle olunca Excel acilista yeniden hesaplamaz, onbellegi silmez ve
+    form makrosuz okunur. FORMULLER ve VBA KORUNUR: makro etkinlestirilip
+    F9'a basilirsa form eskisi gibi calisir.
+
+    NOT: Guven Merkezi'ne "Guvenilir Konum" EKLENMEZ. G:/Drive'im/APQP bir
+    Drive senkron klasoru; oraya senkronla dusen her makrolu dosya uyarisiz
+    calisirdi. Bu ayar kullanicinin kendi karari olmali.
+    """
+    with zipfile.ZipFile(yol) as z:
+        wb = z.read("xl/workbook.xml").decode("utf-8")
+    if 'calcMode="manual"' in wb:
+        return
+    if "<calcPr" in wb:
+        wb = re.sub(
+            r"<calcPr([^>]*)/>",
+            lambda m: '<calcPr%s calcMode="manual" fullCalcOnLoad="0"/>'
+                      % re.sub(r'\s*(calcMode|fullCalcOnLoad)="[^"]*"', "", m.group(1)),
+            wb, count=1)
+    else:
+        wb = wb.replace("</workbook>", '<calcPr calcMode="manual"/></workbook>')
+    gecici = yol + ".hesap"
+    _parca_degistir(yol, gecici, {"xl/workbook.xml": wb})
+    os.replace(gecici, yol)
+
+
 def tld_audit(v, hedef):
     """D/TLD öz denetim dosyası (VW) — parça bazlı sekmeler dahil.
 
@@ -2518,7 +2553,10 @@ def tld_audit(v, hedef):
         },
     }
     try:
-        return coklu_yaz(kaynak, hedef, sayfalar)
+        n = coklu_yaz(kaynak, hedef, sayfalar)
+        if n:
+            _makrosuz_okunur(hedef)      # gettext() olmadan da okunsun
+        return n
     except Exception as e:
         print("   ! D/TLD doldurulamadı, şablon kopyalandı: %s" % str(e)[:60])
         shutil.copy2(kaynak, hedef)                      # makro dosyası: bozma
