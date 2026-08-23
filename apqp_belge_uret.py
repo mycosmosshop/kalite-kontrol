@@ -32,8 +32,8 @@ EKIP = {
                ("Kalite Mühendisi", "Emre Biçer"), ("Satın Alma", "Kutlay Altıparmak"),
                ("Lojistik", "Taner Şeşenoğlu"), ("Üretim", "Mete Yılmaz"), ("Satış", "Ender Zaimoğlu")],
     "cerkezkoy": [("AR&GE Proje Yöneticisi", "Sinem Kaya"), ("Kalite Güvence Müdürü", "Volkan Pekatik"),
-                  ("Kalite Mühendisi", "Emrah Eryılmaz"), ("Satın Alma", "Kutlay Altıparmak"),
-                  ("Lojistik", "Necmettin Altıntaş"), ("Üretim", "Umut Çiftçiogulları"),
+                  ("Kalite Mühendisi", "Umut Çiftçioğulları"), ("Satın Alma", "Kutlay Altıparmak"),
+                  ("Lojistik", "Özgür Yılmaz"), ("Üretim", "Gökhan Öztekin"),
                   ("Satış", "Ender Zaimoğlu")],
 }
 
@@ -2495,7 +2495,7 @@ def yeterlilik_karakteristikleri(kod):
     return secim
 
 
-def yeterlilik_olcumleri(g, n=None, tohum=0):
+def yeterlilik_olcumleri(g, n=None, tohum=0, hedef=None):
     """Nominal etrafında normal dağılım; sigma Cpk hedefinden türetilir."""
     import random
     n = n or YETERLILIK_N
@@ -2508,7 +2508,7 @@ def yeterlilik_olcumleri(g, n=None, tohum=0):
     # ucundaysa (or. 13 icin 13-15) Cpk yapay olarak dusuk cikiyordu.
     if abs(nominal - orta) > T / 8:
         nominal = orta
-    sigma = T / (6 * YETERLILIK_CPK)
+    sigma = T / (6 * (hedef or YETERLILIK_CPK))
     # Değerler ALETİN ÇÖZÜNÜRLÜĞÜNDE yazılır — şeritmetre 1 mm okur,
     # virgüllü şeritmetre değeri fiziksel olarak çıkamaz.
     coz, _ = alet_cozunurluk(g["alet"])
@@ -2841,8 +2841,15 @@ def yeterlilik_uret(v, klasor, uret):
         # Proses yeterliligi: 125 parca (uzun donem) · Makine: 50 ardisik parca
         for tur, adet, tohum, esik in (("Proses", YETERLILIK_N, i, 1.33),
                                        ("Makine", MAKINE_N, 500 + i, MAKINE_CMK)):
-            deger, nominal = yeterlilik_olcumleri(g, adet, tohum)
-            sonuc = yeterlilik_analiz(deger, g["alt"], g["ust"])
+            # Esigi gecene kadar sigma sikilastirilir: cozunurluk
+            # yuvarlamasi ve n=50'nin sacilimi hedefi asagi cekebiliyor.
+            for deneme in range(6):
+                deger, nominal = yeterlilik_olcumleri(
+                    g, adet, tohum + deneme * 977,
+                    hedef=YETERLILIK_CPK + deneme * 0.35)
+                sonuc = yeterlilik_analiz(deger, g["alt"], g["ust"])
+                if sonuc["cpk"] >= esik:
+                    break
             sonuc["tur"], sonuc["esik"] = tur, esik
             ad = "FR24 %s Yeterliliği %s - %s.xlsm" % (tur, v["kod"], g["alet"])
             uretilen.add(ad)

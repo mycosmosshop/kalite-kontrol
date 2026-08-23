@@ -100,6 +100,7 @@ a.sil-dugme:hover{background:#b91c1c;color:#fff;border-color:#b91c1c}
       <button id="driveBtn">📁 Drive klasörünü aç</button>
       <button id="belgeBtn" title="Bu ürünün tüm APQP/PPAP belgelerini yeniden üretir: formlar, kontrol planı, FMEA Excel, MSA ve Cp/Cpk çalışmaları, müşteri PPAP dokümanları">📄 Belgeleri üret</button>
       <button id="tazeleBtn" title="Belge ürettikten sonra basın: Drive'daki yeni dokümanları adımlara bağlar ve FR91'e sonradan eklenen adımları getirir. Kayıt açılırken zaten kendiliğinden çalışır.">🔄 Yenile</button>
+      <button id="zipBtn" title="Bu ürünün APQP takibini ve indirilebilir tüm kanıt dokümanlarını tek ZIP dosyasında dışarı aktarır (İndirilenler klasörüne)">⬇ ZIP indir</button>
       <span style="font-size:12px;color:var(--soluk)" id="bDrive"></span>
     </div>
   </div>
@@ -399,6 +400,18 @@ const MSA_SAYFA = { capability: 'cap-results.html', binomial: 'cap-attributes.ht
 const msaAdres = c => 'https://mycosmosshop.github.io/msa/'
   + (MSA_SAYFA[met(c.study_type)] || 'results.html') + '?id=' + c.id;
 const MSA_ROZET = { acceptable: '✓ kabul', marginal: '⚠ şartlı', unacceptable: '✗ red' };
+// Calisma TURU de yazilir: gorsel karakteristiklerin nitelik (Kappa) analizi
+// mi yoksa sayisal Gage R&R mi oldugu listeden anlasilsin.
+function erpCalismaKaniti(c, on) {
+  return {
+    tur: 'erp',
+    ad: on + met(c.study_name) + ' · ' + (MSA_TUR_AD[met(c.study_type)] || met(c.study_type))
+      + (c.is_acceptable ? ' (' + (MSA_ROZET[c.is_acceptable] || c.is_acceptable) + ')' : ''),
+    adres: msaAdres(c),
+  };
+}
+// Bir kanit ERP CALISMASI mi (MSA/yeterlilik) yoksa modul baglantisi mi?
+const erpCalismasi = x => x.tur === 'erp' && /\/msa\//.test(met(x.adres));
 // Calisma turunun okunur adi — gorsel kontrollerin nitelik analizi oldugu
 // listede gorunsun (kullanici "sayisal MSA mi yapilmis?" diye sormustu).
 const MSA_TUR_AD = {
@@ -521,14 +534,7 @@ async function apqpUret(giris) {
       // ERP calismalari dogru adima: MSA adimina olcum sistemi analizleri,
       // yeterlilik adimina Cp/Cpk ve Cm/Cmk calismalari.
       const metin = met(a.form) + ' ' + met(a.ad);
-      const ekle = (liste, on) => (liste || []).forEach(c => kanitlar.push({
-        tur: 'erp',
-        // Calisma TURU de yazilir: gorsel karakteristiklerin nitelik (Kappa)
-        // analizi mi yoksa sayisal Gage R&R mi oldugu listeden anlasilsin.
-        ad: on + met(c.study_name) + ' · ' + (MSA_TUR_AD[met(c.study_type)] || met(c.study_type))
-          + (c.is_acceptable ? ' (' + (MSA_ROZET[c.is_acceptable] || c.is_acceptable) + ')' : ''),
-        adres: msaAdres(c),
-      }));
+      const ekle = (liste, on) => (liste || []).forEach(c => kanitlar.push(erpCalismaKaniti(c, on)));
       if (/msa|gage ?r&?r|fr ?86|ölçüm sistemi/i.test(metin)) ekle(k.msa, 'MSA: ');
       if (/yeterlilik|fr ?88|cp ?, ?cpk|cpk|süreç potansiyeli|varyasyonun azalt/i.test(metin))
         ekle(k.yeterlilik, 'Yeterlilik: ');
@@ -567,13 +573,36 @@ async function apqpUret(giris) {
       talep: '', onay: '',
     }],
     lokasyon: k.lokasyon || '',
-    ekip: EKIP, bolumler,
+    ekip: ekipListesi(k.lokasyon), bolumler,
     kaynak: { fmea: k.fmea, kontrolPlani: k.plan, operasyonKarti: k.opkart, urunAgaci: k.agac },
   };
 }
 
 // FR91'deki ekip satirlari (sablonun kendi rolleri)
-const EKIP = [{"rol": "AR&GE Proje Yöneticisi", "ad": "Sinem Kaya"}, {"rol": "Kalite Güvence Müdürü", "ad": "Volkan Pekatik"}, {"rol": "Kalite Mühendisi", "ad": "Emre Biçer"}, {"rol": "Satın Alma", "ad": "Kutlay Altıparmak"}, {"rol": "Lojistik", "ad": "Taner Şeşenoğlu"}, {"rol": "Üretim", "ad": "Mete Yılmaz"}, {"rol": "Satış", "ad": "Ender Zaimoğlu"}];
+// APQP ekibi LOKASYONA gore degisir; tek liste tutulunca Cerkezkoy
+// urunlerinde de Ankara ekibi gorunuyordu.
+const EKIP_LOKASYON = {
+  ankara: [{ rol: 'AR&GE Proje Yöneticisi', ad: 'Sinem Kaya' },
+    { rol: 'Kalite Güvence Müdürü', ad: 'Volkan Pekatik' },
+    { rol: 'Kalite Mühendisi', ad: 'Emre Biçer' },
+    { rol: 'Satın Alma', ad: 'Kutlay Altıparmak' },
+    { rol: 'Lojistik', ad: 'Taner Şeşenoğlu' },
+    { rol: 'Üretim', ad: 'Mete Yılmaz' },
+    { rol: 'Satış', ad: 'Ender Zaimoğlu' }],
+  cerkezkoy: [{ rol: 'AR&GE Proje Yöneticisi', ad: 'Sinem Kaya' },
+    { rol: 'Kalite Güvence Müdürü', ad: 'Volkan Pekatik' },
+    { rol: 'Kalite Mühendisi', ad: 'Umut Çiftçioğulları' },
+    { rol: 'Satın Alma', ad: 'Kutlay Altıparmak' },
+    { rol: 'Lojistik', ad: 'Özgür Yılmaz' },
+    { rol: 'Üretim', ad: 'Gökhan Öztekin' },
+    { rol: 'Satış', ad: 'Ender Zaimoğlu' }],
+};
+function ekipListesi(lokasyon) {
+  const l = met(lokasyon).toLocaleLowerCase('tr');
+  if (l.indexOf('çerkez') >= 0 || l.indexOf('cerkez') >= 0) return EKIP_LOKASYON.cerkezkoy;
+  return EKIP_LOKASYON.ankara;
+}
+const EKIP = EKIP_LOKASYON.ankara;
 
 // ── Kayit / okuma ────────────────────────────────────────────────────────
 async function kaydet(p) {
@@ -1144,6 +1173,77 @@ async function kanitTazele() {
   return dusen;
 }
 
+// ── ZIP disa aktarim ────────────────────────────────────────────────────
+// Kanit turleri: 'drive' ve 'leansys' DOSYAdir (zip'e girer); 'erp' bir
+// modul baglantisidir (dosya degil, dizin sayfasinda link olarak kalir).
+function zipDizinSayfasi(k) {
+  const kacir = x => met(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const dosyaAdi = y => met(y).split(/[\\/]/).pop();
+  let satirlar = '';
+  (k.bolumler || []).forEach(b => {
+    satirlar += '<tr class="bol"><td colspan="6">' + kacir(b.no) + ' — ' + kacir(b.ad) + '</td></tr>';
+    (b.adimlar || []).forEach(a => {
+      const kanit = (a.kanitlar || []).map(x => x.tur === 'erp'
+        ? '<a href="' + kacir(x.adres) + '" target="_blank">' + kacir(x.ad) + ' ↗</a>'
+        : '<a href="kanitlar/' + encodeURIComponent(dosyaAdi(x.yol)) + '">' + kacir(x.ad) + '</a>')
+        .join('<br>') || '<i>kanıt dosyası yok</i>';
+      satirlar += '<tr><td>' + kacir(a.no) + '</td><td>' + kacir(a.ad)
+        + (a.beyan ? ' <span class="rz">beyan</span>' : '') + '</td>'
+        + '<td>' + kacir(a.sorumluluk) + '</td><td>' + kacir(a.form) + '</td>'
+        + '<td>' + kanit + '</td>'
+        + '<td class="dr">' + kacir(a.tamamlanma || a.bitis) + ' · %' + (a.durum || 0) + '</td></tr>';
+    });
+  });
+  return '<!doctype html><meta charset="utf-8"><title>APQP ' + kacir(k.stokKodu) + '</title>'
+    + '<style>body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#111}'
+    + 'h1{font-size:20px;margin:0 0 4px}.ust{color:#555;font-size:13px;margin-bottom:16px}'
+    + 'table{border-collapse:collapse;width:100%;font-size:12.5px}'
+    + 'th,td{border:1px solid #d0d0d0;padding:6px 8px;vertical-align:top}'
+    + 'th{background:#1F3864;color:#fff;text-align:left}'
+    + 'tr.bol td{background:#eef2ff;font-weight:700}'
+    + 'a{color:#1d4ed8}.dr{white-space:nowrap;text-align:center}'
+    + '.rz{background:#fef3c7;color:#92400e;border-radius:4px;padding:1px 5px;font-size:10px}'
+    + '</style><h1>APQP / PPAP — ' + kacir(k.stokKodu) + '</h1>'
+    + '<div class="ust">' + kacir(k.urunAdi) + ' · Müşteri: ' + kacir(k.musteri)
+    + ' · Lokasyon: ' + kacir(k.lokasyon) + ' · Devreye alma: ' + kacir(k.devreyeAlma)
+    + '<br>Kanıt dosyaları <b>kanitlar/</b> klasöründedir; tablodaki bağlantılar oraya gider.'
+    + ' ↗ işaretli olanlar ERP modül bağlantısıdır (çevrimiçi).</div>'
+    + '<table><tr><th>No</th><th>Adım</th><th>Sorumluluk</th><th>Form</th>'
+    + '<th>Kanıt</th><th>Tamamlanma</th></tr>' + satirlar + '</table>';
+}
+
+async function zipIndir(k) {
+  const dosyalar = [], gorulen = new Set();
+  (k.bolumler || []).forEach(b => (b.adimlar || []).forEach(a =>
+    (a.kanitlar || []).forEach(x => {
+      if (x.tur === 'erp' || !x.yol || gorulen.has(x.yol)) return;
+      gorulen.add(x.yol);
+      dosyalar.push({ ad: x.ad, yol: x.yol });
+    })));
+  const govde = { kod: k.stokKodu, html: zipDizinSayfasi(k), dosyalar };
+  // UTF-8 -> base64 (Turkce karakterler bozulmasin)
+  const bayt = new TextEncoder().encode(JSON.stringify(govde));
+  let ham = '';
+  for (let i = 0; i < bayt.length; i += 8192) ham += String.fromCharCode.apply(null, bayt.subarray(i, i + 8192));
+  const c = await fetch(AJAN + '/apqpzip', { method: 'POST', body: btoa(ham) });
+  const j = await c.json();
+  if (!j.ok) throw new Error(j.hata || 'zip üretilemedi');
+  return j;
+}
+
+$('#zipBtn').addEventListener('click', async () => {
+  if (!aktif) return;
+  $('#zipBtn').disabled = true;
+  ilerlemeBasla('ZIP hazırlanıyor…');
+  try {
+    const j = await zipIndir(aktif);
+    mesaj('ZIP hazır: ' + j.zip + ' — ' + j.kanit + ' kanıt dosyası'
+      + (j.atlanan ? ' (' + j.atlanan + ' dosyaya erişilemedi)' : ''));
+  } catch (e) {
+    mesaj('ZIP üretilemedi: ' + e.message + ' (yerel ajan çalışıyor mu?)');
+  } finally { ilerlemeBitir(); $('#zipBtn').disabled = false; }
+});
+
 $('#belgeBtn').addEventListener('click', async () => {
   if (!aktif) return;
   $('#belgeBtn').disabled = true;
@@ -1192,8 +1292,27 @@ $('#tazeleBtn').addEventListener('click', async () => {
     eklenen += yeni.length;
     if (!a.durum) { a.durum = 100; a.tamamlanma = a.bitis; }
   }));
+  // ERP calismalari (MSA + yeterlilik) YENIDEN eslestirilir. Eski kayitlarda
+  // baska urunun calismalari yapisik kalabiliyor (700.0.444-2X -> 700.0.444)
+  // ve calisma turu yazmiyordu; Yenile bunlari da duzeltir.
+  let calisma = 0;
+  try {
+    const c = await msaCalismalari(aktif.stokKodu, aktif.musteriParca);
+    aktif.bolumler.forEach(b => b.adimlar.forEach(a => {
+      const once = (a.kanitlar || []).filter(erpCalismasi).length;
+      const metin = met(a.form) + ' ' + met(a.ad);
+      const msaAdimi = /msa|gage ?r&?r|fr ?86|ölçüm sistemi/i.test(metin);
+      const yetAdimi = /yeterlilik|fr ?88|cp ?, ?cpk|cpk|süreç potansiyeli|varyasyonun azalt/i.test(metin);
+      if (!once && !msaAdimi && !yetAdimi) return;
+      a.kanitlar = (a.kanitlar || []).filter(x => !erpCalismasi(x));
+      if (msaAdimi) (c.msa || []).forEach(x => a.kanitlar.push(erpCalismaKaniti(x, 'MSA: ')));
+      if (yetAdimi) (c.yeterlilik || []).forEach(x => a.kanitlar.push(erpCalismaKaniti(x, 'Yeterlilik: ')));
+      calisma += Math.abs((a.kanitlar || []).filter(erpCalismasi).length - once);
+    }));
+  } catch (e) { /* ERP'ye ulasilamazsa mevcut kanitlar korunur */ }
   await kaydet(aktif); ciz();
   const p = [];
+  if (calisma) p.push(calisma + ' ERP çalışması yenilendi');
   if (yeniAdim) p.push(yeniAdim + ' yeni adım');
   if (eklenen) p.push(eklenen + ' doküman bağlandı');
   if (dusen) p.push(dusen + ' kayıp doküman düşürüldü');
