@@ -271,6 +271,39 @@ def _cember_icinde(im, s):
     return isabet >= len(aci) * 0.8
 
 
+def _blok_ele(kutular, mesafe=90, esik=6):
+    """Kalabalik metin BLOKLARINI (not, tablo, referans listesi) atar.
+
+    Not ve tablolarda kutular birbirine yakin ve YOGUNdur; cizim uzerindeki
+    olculer tek tek dagilmistir. Karar kutu bazinda degil BLOK bazinda
+    verilir — kutu bazli yogunluk elemesi komsu olculeri de kesiyordu.
+    Olcum (700.0.444): 309 -> 55 kutu, gercek olcu kaybi yok.
+    """
+    import numpy as np
+    n = len(kutular)
+    if n < 2:
+        return kutular
+    merkez = np.array([[k["x"] + k["g"] / 2.0, k["y"] + k["h"] / 2.0] for k in kutular])
+    grup = [-1] * n
+    g = 0
+    for i in range(n):
+        if grup[i] >= 0:
+            continue
+        yigin, grup[i] = [i], g
+        while yigin:
+            j = yigin.pop()
+            d = np.abs(merkez - merkez[j])
+            for k2 in np.where((d[:, 0] <= mesafe) & (d[:, 1] <= mesafe))[0]:
+                if grup[k2] < 0:
+                    grup[k2] = g
+                    yigin.append(int(k2))
+        g += 1
+    boyut = {}
+    for x in grup:
+        boyut[x] = boyut.get(x, 0) + 1
+    return [kutular[i] for i in range(n) if boyut[grup[i]] < esik]
+
+
 def _metin_satirinda(s, hepsi):
     """Kutu bir YAZI SATIRININ parçası mı? (aynı hizada, yakınında başka
     kutu var mı)
@@ -618,6 +651,10 @@ def tum_olculer(im, capa, plan_degerleri=(), geometri_ele=False):
         def sayi_gibi(s):
             kar = _karakterler(im, s, etiket0, ist0, n0)
             return 0 < len(kar) <= 6 and _sayi_kutusu(kar)
+        # Satir komsulugu TUM yazi kutulari icinde aranir; adaylar arasinda
+        # aramak kelimeleri disarida biraktigi icin not cumlesindeki sayilar
+        # ("PP-film 410 µm thick" -> 410) komsusuz gorunup olcu saniliyordu.
+        tum_yazi = list(kutu)
         kutu = [s for s in kutu if sayi_gibi(s)]
     if geometri_ele:
         # Çapa yokken hangi yazının ölçü olduğu konumdan bilinemez. Ölçüt:
@@ -634,7 +671,8 @@ def tum_olculer(im, capa, plan_degerleri=(), geometri_ele=False):
         kutu = [s for s in kutu
                 if not _cizgili_hucrede(im, s)
                 and not _cember_icinde(im, s)
-                and not _metin_satirinda(s, kutu)]
+                and not _metin_satirinda(s, tum_yazi)]
+        kutu = _blok_ele(kutu)
     plan = {("%g" % float(d)) for d in plan_degerleri}
     siyah, n_bil, etiket, ist = siyah0, n0, etiket0, ist0
     # Şablonlar ÇİZİMİN TAMAMINDAN öğrenilir: ölçü kutuları azken (68) model
@@ -648,7 +686,19 @@ def tum_olculer(im, capa, plan_degerleri=(), geometri_ele=False):
         # cizgisi var, tablo gozu degil, cember degil) o bir olcudur ve
         # SARI balonla isaretlenip degeri rapora elle girilir. Eskiden
         # sessizce dusuruluyordu; 72 olcunun 51'i balonsuz kaliyordu.
-        t = _sablonla_oku(model, etiket, s, kar, im) or _kutu_oku(im, s)
+        # OKUMA SECIMI — olculdu: sablon okuyucu rakam karistirabiliyor
+        # (440->044, 395->593, 35->53). Kontrol plani yer gercegidir:
+        # plana uyan okuma kazanir; yoksa Tesseract tercih edilir.
+        t1 = _sablonla_oku(model, etiket, s, kar, im)
+        t2 = _kutu_oku(im, s)
+
+        def _planda(x):
+            try:
+                return x is not None and ("%g" % float(x)) in plan
+            except ValueError:
+                return False
+
+        t = t1 if _planda(t1) else (t2 if _planda(t2) else (t2 if t2 is not None else t1))
         if t is None and geometri_ele and _metin_mi(im, s):
             continue                       # sözcük parçası — ölçü değil
         kaynak = None
