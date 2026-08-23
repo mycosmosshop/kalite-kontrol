@@ -2237,6 +2237,164 @@ def iso845(v, hedef):
     return len(ISO845_BLOK)
 
 
+def _parca_degistir(kaynak, hedef, harita):
+    """Zip'te belirtilen parcalari degistirip yeni dosyaya yazar (digerleri
+    oldugu gibi kopyalanir: VBA, grafik, gorsel korunur)."""
+    zin = zipfile.ZipFile(kaynak)
+    zout = zipfile.ZipFile(hedef, "w", zipfile.ZIP_DEFLATED)
+    for e in zin.infolist():
+        if e.filename in harita:
+            zout.writestr(e, harita[e.filename].encode("utf-8"))
+        else:
+            zout.writestr(e, zin.read(e.filename))
+    zout.close()
+    zin.close()
+
+
+def _satir_xml(xml, no):
+    """Sayfa XML'indeki <row r="no"> ogesinin tamami."""
+    m = re.search(r'<row r="%d"[^>]*>.*?</row>|<row r="%d"[^>]*/>' % (no, no), xml, re.S)
+    return m.group(0) if m else None
+
+
+def _satir_no_degistir(parca, eski, yeni):
+    """Bir satir XML'inin satir numarasini (row r ve hucre r) degistirir."""
+    parca = re.sub(r'(<row r=")%d(")' % eski, r"\g<1>%d\g<2>" % yeni, parca)
+    parca = re.sub(r'(<c r="[A-Z]+)%d(")' % eski, r"\g<1>%d\g<2>" % yeni, parca)
+    # Formuller kendi blogunun satirlarina bakar: E24 -> =(E22/(E23/60))
+    parca = re.sub(r'(<f>[^<]*</f>)',
+                   lambda g: re.sub(r"([A-Z]{1,2})%d\b" % eski, r"\g<1>%d" % yeni, g.group(0)),
+                   parca)
+    return parca
+
+
+def _blok_cogalt(xml, kaynak_ilk, kaynak_son, hedef_ilk, bosluk_kaynak):
+    """Bir numune blogunu (bosluk satiri + 5 satir) hedef satira KOPYALAR."""
+    yeni = []
+    bos = _satir_xml(xml, bosluk_kaynak)
+    if bos:
+        yeni.append(_satir_no_degistir(bos, bosluk_kaynak, hedef_ilk - 1))
+    for i, r in enumerate(range(kaynak_ilk, kaynak_son + 1)):
+        p = _satir_xml(xml, r)
+        if p:
+            yeni.append(_satir_no_degistir(p, r, hedef_ilk + i))
+    return "".join(yeni)
+
+
+def _satirlari_kaydir(xml, esik, kaydir):
+    """esik ve sonrasindaki TUM satirlari kaydir kadar asagi tasir."""
+    def satir(m):
+        n = int(m.group(2))
+        if n < esik:
+            return m.group(0)
+        return _satir_no_degistir(m.group(0), n, n + kaydir)
+    xml = re.sub(r'(<row r=")(\d+)("[^>]*>.*?</row>|"[^>]*/>)',
+                 lambda m: satir(m), xml, flags=re.S)
+
+    def birlestir(m):
+        s1, r1, s2, r2 = m.group(1), int(m.group(2)), m.group(3), int(m.group(4))
+        if r1 < esik:
+            return m.group(0)
+        return '<mergeCell ref="%s%d:%s%d"/>' % (s1, r1 + kaydir, s2, r2 + kaydir)
+    return re.sub(r'<mergeCell ref="([A-Z]+)(\d+):([A-Z]+)(\d+)"/>', birlestir, xml)
+
+
+def _birlesimleri_cogalt(xml, ilk, son, kaydirmalar):
+    """ilk..son arasindaki birlestirmeleri verilen ofsetlerle KOPYALAR."""
+    mevcut = re.findall(r'<mergeCell ref="([A-Z]+)(\d+):([A-Z]+)(\d+)"/>', xml)
+    ek = []
+    for k in kaydirmalar:
+        for s1, r1, s2, r2 in mevcut:
+            if ilk <= int(r1) <= son:
+                ek.append('<mergeCell ref="%s%d:%s%d"/>' % (s1, int(r1) + k, s2, int(r2) + k))
+    if not ek:
+        return xml
+    return re.sub(r'(<mergeCells count=")(\d+)(")',
+                  lambda m: m.group(1) + str(int(m.group(2)) + len(ek)) + m.group(3),
+                  xml).replace("</mergeCells>", "".join(ek) + "</mergeCells>")
+
+
+# TL 1010 numune bloklari. Sablonda uc blok var; PPAP icin BES numune
+# isteniyor, kalan ikisi uretim sirasinda cogaltilir.
+TL1010_BLOK = (21, 27, 33, 39, 45)
+TL1010_KAYNAK = (21, 25)        # kopyalanacak blok (sag tarafi tam olan)
+TL1010_BOSLUK = 26              # bloklar arasi ayirac satiri
+TL1010_ALT = 38                 # "Tests carried out" ve imza bloğunun ilk satiri
+
+
+def _satir_kaydir_parca(parca, kaydir):
+    """Bir satir XML'ini kaydir kadar asagi tasir: row r, hucre r VE
+    formuldeki TUM satir referanslari. Formul referanslarini kaydirmayi
+    atlayinca kopyalanan bloklarin hepsi 1. blogun hucrelerini hesapliyordu
+    (E40 hucresinde =(E22/(E23/60)) kaliyordu)."""
+    def art(m):
+        return m.group(1) + str(int(m.group(2)) + kaydir) + m.group(3)
+    parca = re.sub(r'(<row r=")(\d+)(")', art, parca)
+    parca = re.sub(r'(<c r="[A-Z]+)(\d+)(")', art, parca)
+    return re.sub(
+        r"<f>([^<]*)</f>",
+        lambda m: "<f>" + re.sub(r"([A-Z]{1,2})(\d+)",
+                                 lambda g: g.group(1) + str(int(g.group(2)) + kaydir),
+                                 m.group(1)) + "</f>",
+        parca)
+
+
+def _sayfa_tutarli(xml):
+    """Satir eklendikten sonra sayfa ust bilgilerini GERCEK icerikten yeniden
+    hesaplar. Excel bunlar tutmazsa dosyayi "onarilmasi gerekiyor" sayar:
+      - <mergeCells count>  gercek <mergeCell> sayisiyla ayni olmali
+      - <dimension ref>     en alt satiri kapsamali
+    """
+    ref = re.findall(r'<mergeCell ref="[^"]+"/>', xml)
+    if ref:
+        xml = re.sub(r'<mergeCells count="\d+"',
+                     '<mergeCells count="%d"' % len(ref), xml, count=1)
+    satirlar = [int(m.group(1)) for m in re.finditer(r'<row r="(\d+)"', xml)]
+    if satirlar:
+        xml = re.sub(r'(<dimension ref="[A-Z]+\d+:[A-Z]+)\d+(")',
+                     lambda m: m.group(1) + str(max(satirlar)) + m.group(2), xml, count=1)
+    return xml
+
+
+def _tl1010_bloklari(xml):
+    """Sablondaki UC numune blogunu BESE cikarir.
+
+    Kaynak birim: bosluk satiri 26 + blok 27-31. Bu blok TAM (sag sutunun
+    J30 yanma hizi formulu var). Sablondaki 3. blok (33-37) EKSIK: J36
+    formulu yok, ciktida yanma hizi bos kaliyordu — o blok da kaynaktan
+    yeniden kopyalanir, boylece bes blogun tamami ayni ve eksiksiz olur.
+    Kullanicinin sablon DOSYASI degismez; islem yalniz ciktida yapilir.
+    """
+    BIRIM_ILK, BIRIM_SON = 26, 31
+    KAYDIR = 12                      # iki yeni blok x 6 satir
+    # Alt blok (notlar + imza) asagi kaydirilir
+    xml = _satirlari_kaydir(xml, TL1010_ALT, KAYDIR)
+    # Eski 3. blok (bosluk 32 + blok 33-37) ve birlestirmeleri silinir
+    for r in range(32, 38):
+        p = _satir_xml(xml, r)
+        if p:
+            xml = xml.replace(p, "", 1)
+    xml = re.sub(r'<mergeCell ref="[A-Z]+3[2-7]:[A-Z]+\d+"/>', "", xml)
+    # Kaynak birim uc kez kopyalanir: 3. blok yerine (+6), 4. (+12), 5. (+18)
+    kaynak = "".join(p for p in (_satir_xml(xml, r)
+                                 for r in range(BIRIM_ILK, BIRIM_SON + 1)) if p)
+    ek = "".join(_satir_kaydir_parca(kaynak, k) for k in (6, 12, 18))
+    yer = xml.rindex("</sheetData>")
+    xml = xml[:yer] + ek + xml[yer:]
+    xml = _birlesimleri_cogalt(xml, BIRIM_ILK, BIRIM_SON, [6, 12, 18])
+    return _sayfa_tutarli(_sheetdata_sirala(xml))   # satirlar artan sirada olmali
+
+
+def _sheetdata_sirala(xml):
+    """sheetData icindeki <row> ogelerini satir numarasina gore sirala."""
+    m = re.search(r"(<sheetData>)(.*)(</sheetData>)", xml, re.S)
+    if not m:
+        return xml
+    parcalar = re.findall(r'<row r="\d+"[^>]*>.*?</row>|<row r="\d+"[^>]*/>', m.group(2), re.S)
+    parcalar.sort(key=lambda p: int(re.search(r'<row r="(\d+)"', p).group(1)))
+    return xml[:m.start(2)] + "".join(parcalar) + xml[m.end(2):]
+
+
 def flammability(v, hedef):
     """FR54 Yanmazlık Test Raporu (VW TL 1010).
 
@@ -2265,10 +2423,14 @@ def flammability(v, hedef):
          "I15": "BR … mm/min  (> %d ⇒ ilave numune)" % TL1010_TETIK,
          "F17": "< %d" % TL1010_SINIR,
          "I17": "SE / BR … mm/min  (> %d ⇒ ilave numune)" % TL1010_TETIK}
-    # 3'er numune: sol sütun (B/E) giren PE, sağ sütun (H/J) PE+PP kompozit.
+    # BES numune: sol sütun (B/E) giren PE köpük, sağ sütun (H/J) PE+PP
+    # kompozit. Şablonda YALNIZ ÜÇ blok var (21-25, 27-31, 33-37); iki blok
+    # daha ÜRETİM SIRASINDA çoğaltılır — kullanıcının şablon dosyasına
+    # dokunulmaz. Yeni bloklar 1. bloktan (21-25) kopyalanır: 3. bloğun SAĞ
+    # tarafı şablonda eksik (J36 yanma hızı formülü yok, ekranda boş çıkıyordu).
     # DİKKAT: E24/J24 gibi hız hücreleri FORMÜLdür, yazılmaz — yalnız alev
     # yolu ve süre girilir, hızı form hesaplar.
-    for i, satir in enumerate((21, 27, 33)):
+    for i, satir in enumerate(TL1010_BLOK):
         d["B%d" % satir] = pe_ad[:44]
         d["H%d" % satir] = "Composite Material (PP Folie + PE Foam)"
         yol, sure = _yanma_deneyi(i, 42)                  # giren PE
@@ -2277,7 +2439,19 @@ def flammability(v, hedef):
         yol, sure = _yanma_deneyi(10 + i, 31)            # kompozit (daha yavaş)
         d["J%d" % (satir + 1)], d["J%d" % (satir + 2)] = yol, sure
         d["J%d" % (satir + 4)] = "1 (OK)"
-    hucre_yaz(kaynak, hedef, "xl/worksheets/sheet1.xml", d)
+    # IKI GECIS: hucre_yaz sayfayi KAYNAKTAN okur, bu yuzden satir cogaltmasi
+    # once ayri bir gecici dosyaya yazilir; degerler o genisletilmis sayfaya
+    # islenir. Tek gecisle denendiginde olmayan satirlara yazilan degerler
+    # IMZA satirina dusuyordu.
+    sayfa = ilk_sayfa_yolu(kaynak) or "xl/worksheets/sheet1.xml"
+    ham = zipfile.ZipFile(kaynak).read(sayfa).decode("utf-8")
+    gecici = hedef + ".genis"
+    try:
+        _parca_degistir(kaynak, gecici, {sayfa: _tl1010_bloklari(ham)})
+        hucre_yaz(gecici, hedef, sayfa, d)
+    finally:
+        if os.path.exists(gecici):
+            os.remove(gecici)
     return len(d)
 
 
