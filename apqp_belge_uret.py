@@ -2143,11 +2143,20 @@ DIN_AD = {"f": "ince (f)", "m": "orta (m)", "c": "kaba (c)", "v": "çok kaba (v)
 
 
 def din_tolerans(deger, sinif):
-    """Ölçüye karşılık gelen ± genel tolerans."""
+    """Ölçüye karşılık gelen ± genel tolerans.
+
+    Standartta bazı sınıf/aralık gözleri TANIMSIZDIR (çok kaba "v" sınıfı
+    3 mm altında, ince "f" sınıfı 2000 mm üstünde yok). O durumda daha SIKI
+    bir sınıfa düşülür — toleranssız bırakmak satırı boş bırakıyor ve
+    okunmuş bir ölçü "okunamadı" gibi görünüyordu.
+    """
     i = DIN_SINIF.index(sinif)
     for bas, son, *t in DIN2768:
         if bas < abs(deger) <= son:
-            return t[i]
+            for j in range(i, -1, -1):          # v -> c -> m -> f
+                if t[j] is not None:
+                    return t[j]
+            return None
     return None
 
 
@@ -2330,7 +2339,12 @@ def balon_satirlari(v, balon):
             d = float(deger)
             t = din_tolerans(d, sinif)
             if t is None:
-                satir.append((b["no"], None, "tolerans tablosu dışı"))
+                # Deger OKUNDU ama genel tolerans tablosunun araligi disinda
+                # (ör. 4000 mm ustu). Satir bos birakilmaz; olcu yazilir,
+                # tolerans elle girilecek diye isaretlenir.
+                satir.append((b["no"], {"ad": "Ölçü", "nominal": d, "alt": d, "ust": d,
+                                        "op": "", "yontem": varsayilan},
+                              "genel tolerans tablosu dışı — tolerans girilecek"))
             else:
                 satir.append((b["no"], {"ad": "Ölçü", "nominal": d, "alt": d - t,
                                         "ust": d + t, "op": "", "yontem": varsayilan},

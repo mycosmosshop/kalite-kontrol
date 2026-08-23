@@ -732,6 +732,13 @@ def tum_olculer(im, capa, plan_degerleri=(), geometri_ele=False):
         t = t1 if _planda(t1) else (t2 if _planda(t2) else (t2 if t2 is not None else t1))
         if t is None and geometri_ele and _metin_mi(im, s):
             continue                       # sözcük parçası — ölçü değil
+        # Sifir ve negatif olcu olmaz; "0" okumasi cizimdeki bir isaret
+        # ya da yanlis okumadir, balonlanmaz.
+        try:
+            if t is not None and float(t) <= 0:
+                t = None
+        except ValueError:
+            t = None
         kaynak = None
         if t is not None:
             kaynak = "plan" if ("%g" % float(t)) in plan else "okundu"
