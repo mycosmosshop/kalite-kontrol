@@ -32,8 +32,15 @@ AYAR_YOLU = os.path.join(os.path.expanduser("~"), ".apqp_ai.json")
 # Olculdu (700.0.444, 6622x4677): 1800 px -> 15 istek / 30 olcu (35 dahil),
 # 2400 px -> 12 istek / 26 olcu (35 kayip). Kucuk parcada model daha iyi
 # okuyor; 15 istek ucretsiz kotanin (dakikada 20) altinda kaliyor.
-KARE = 1800
-ORTUSME = 240
+# Olculdu: parca buyudukce kucuk EGIK yazilar (geometrik tolerans, 0.1)
+# oransal kuculuyor ve model onlari atliyor.
+#   1655x1403 -> 15 olcu, 0.1'ler VAR
+#   1800x1800 -> 13 olcu, 0.1'ler YOK
+#   2400x2400 -> 26 olcu toplam, 35 kayip
+# 1400 secildi: kucuk yazilar geliyor. Istek sayisi artiyor ama 429'da
+# sunucunun soyledigi kadar beklenip devam ediliyor.
+KARE = 1400
+ORTUSME = 200
 # Ucretsiz katmanda dakikada sinirli istek var; parcalar arasi bekleme ve
 # 429'da ustel geri cekilme ile yeniden deneme yapilir.
 BEKLE = 3.0
