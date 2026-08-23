@@ -985,10 +985,25 @@ async function projeSil(id, kayit) {
   // SILINMEZ, Geri Donusum Kutusu'na tasinir (geri alinabilir).
   if (!confirm(kod + ' APQP kaydı silinsin mi?' + '\n\n'
       + 'Drive klasörü de kaldırılacak:\n' + klasor + '\n\n'
-      + 'Geri Dönüşüm Kutusu\u2019na taşınır, geri alınabilir.')) return;
+      + 'Bu ürün için ERP\u2019de açılmış MSA ve yeterlilik çalışmaları da silinir.\n\n'
+      + 'Klasör Geri Dönüşüm Kutusu\u2019na taşınır, geri alınabilir.')) return;
   const r = await sb.from('apqp_projeler').delete().eq('id', id);
   if (r.error) { mesaj('Kayıt silinemedi: ' + r.error.message); return; }
   let ek = '';
+  // ERP calismalari da gider: yalniz URETECIN ad kalibindakiler
+  // ("<kod> — alet (karakteristik) ...") — kullanicinin kendi calismalari
+  // korunur. Eskiden bunlar kaliyor ve MSA modulunu dolduruyordu.
+  try {
+    const c = await sb.from('msa_studies').select('id,study_name')
+      .like('study_name', kod + ' — %').limit(500);
+    const silinecek = (c.data || []).filter(x => met(x.study_name).indexOf(kod + ' — ') === 0);
+    if (silinecek.length) {
+      const kimlikler = silinecek.map(x => x.id);
+      await sb.from('msa_measurements').delete().in('study_id', kimlikler);
+      await sb.from('msa_studies').delete().in('id', kimlikler);
+      ek += ' ' + silinecek.length + ' ERP çalışması silindi.';
+    }
+  } catch (e) { ek += ' ERP çalışmaları silinemedi: ' + e.message + '.'; }
   if (klasor) {
     try {
       const y = await dosyaYonet('sil', klasor);
