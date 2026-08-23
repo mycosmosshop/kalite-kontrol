@@ -1279,13 +1279,16 @@ PPAP_KLASOR = r"C:\\Users\\User\\Desktop\\ppap docs"
 # VDA 2020 "Cover sheet PPA report" — şablonu Lear örneğiyle geldiği için
 # dosya adı LEAR, düzeni ise VDA standardıdır; müşteri alanları doldurulur.
 PPA_KAPAK = "PPA COVER SHEET LEAR.xlsx"
+# PL130 Olcu Kontrol Raporu — kullanicinin kendi kontrollu formu; sablonu
+# yok, tamamen uretilir (kullanici PDF verdi, Excel'i burada kuruluyor).
+PL130_ADI = "PL130 Ölçü Kontrol Raporu.xlsx"
 MUSTERI_BELGE = {
     "MERCEDES": ["Cover Sheet Mercedes.doc", "Ölçü Kontrol Raporu Mercedes.xls"],
     "MAN":      ["VDA_2_2020_Anlagen_Attachments_2-6_7 MAN.xlsx"],
     "LEAR":     [PPA_KAPAK],
 }
 # VW grubuna giden parçalarda VDA_2'ye EK olarak istenen formlar
-VW_BELGE = ["PPF Coversheet.docx", PPA_KAPAK, "Dimension Report VW.xlsx",
+VW_BELGE = ["PPF Coversheet.docx", PPA_KAPAK, PL130_ADI,
             "Flammability Test Report VW.xlsx", "Sanifoam_D_TLD_audit_VW.xlsm"]
 # VW grubu parça numarası: 3 karakterlik proje öneki + 3 + 3 hane (5NA 881 989).
 # Tier-1 (Faurecia, Magna, Lear...) adı tek başına VW demek değil — o firmalar
@@ -1483,103 +1486,223 @@ def flammability(v, hedef):
     return len(d)
 
 
-def vw_olcu_raporu(v, hedef, balon=None):
-    """Dimension Report (VW düzeni): her ölçü için 5 numune, ölçüm aleti ve
-    sonuç. Değerler aletin çözünürlüğünde; kaynak balonlu çizim, yoksa
-    kontrol planı (kullanıcının kuralı)."""
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+# PL130 Ölçü Kontrol Raporu — kullanıcının kendi kontrollü formu.
+# Malzeme özellikleri (kalınlık, yoğunluk, gramaj, ağırlık, yanmazlık) ile
+# boyutsal ölçüler AYNI raporda listelenir; tahribatlı testler MSA'ya değil
+# bu rapora aittir.
+# Türkçe ekler nedeniyle GÖVDE ile eşleştirilir: "PE Kalinligi" satırı
+# "KALINLIK" kalıbına uymuyordu ve kalınlık satırları rapora hiç girmiyordu.
+PL130_MALZEME = re.compile(
+    r"KALINLI|YOĞUNLU|YOGUNLU|GRAMAJ|AĞIRLI|AGIRLI|YANMA|YANMAZ|"
+    r"DENSITY|WEIGHT|THICKNESS|FLAMMAB", re.I)
+# Kontrol yöntemi -> forma yazılan İngilizce karşılık (PL130 iki dillidir)
+PL130_YONTEM = [
+    (re.compile(r"KOMPARAT", re.I), "Thickness Gauge"),
+    (re.compile(r"MİKROMETRE|MIKROMETRE|MICROMET", re.I), "Micrometer"),
+    (re.compile(r"TERAZ|AĞIRLIK|AGIRLIK|GRAMAJ", re.I), "Precision Scales"),
+    (re.compile(r"ISO\s*845|YOĞUNLUK|YOGUNLUK", re.I), "Precision Scales"),
+    (re.compile(r"YANMA|TL\s*206|TL\s*1010|FLAMMAB", re.I), "Flammability Testing Machine"),
+    (re.compile(r"KUMPAS|CALIPER", re.I), "Caliper Gauge"),
+    (re.compile(r"ŞERİT|SERİT|SERIT|CETVEL|METRE", re.I), "Tape Measure"),
+    (re.compile(r"RADYUS|RADIUS|MASTAR", re.I), "Radius Gauge"),
+    (re.compile(r"GÖZLE|GOZLE|GÖRSEL|GORSEL", re.I), "Visual"),
+]
 
+
+def pl130_yontem(yontem):
+    y = met(yontem)
+    for kalip, ad in PL130_YONTEM:
+        if kalip.search(y):
+            return ad
+    return y[:22] or "—"
+
+
+def pl130_satirlari(v, balon=None):
+    """PL130 satırları: önce malzeme özellikleri, sonra boyutsal ölçüler."""
     if balon:
-        ham, sinif, _, _ = balon_satirlari(v, balon)
-        satir = [(no, k, n) for no, k, n in ham]
+        ham, _, _, _ = balon_satirlari(v, balon)
+        boyut = [(no, k, n) for no, k, n in ham]
     else:
-        satir = [(no, k, "kontrol planı") for no, k in olcusel_satirlar(v["kod"])]
+        boyut = [(no, k, "kontrol planı") for no, k in olcusel_satirlar(v["kod"])]
+    # Malzeme özellikleri olcusel_satirlar'dan gelmez (makine ayarı elemesi ve
+    # tahribatlı test elemesi onları dışarıda tutar); doğrudan plandan alınır.
+    malzeme = []
+    for x in kp_satirlari(v["kod"]):
+        ad = met(x.get("olculecek"))
+        if not PL130_MALZEME.search(ad) and not PL130_MALZEME.search(met(x.get("yontem"))):
+            continue
+        alt, ust = x.get("alt_limit"), x.get("ust_limit")
+        try:
+            alt, ust = float(alt), float(ust)
+        except (TypeError, ValueError):
+            continue
+        if ust <= alt:
+            continue
+        hedef = x.get("hedef_nicel")
+        malzeme.append({"ad": ad, "alt": alt, "ust": ust, "op": x.get("op_no"),
+                        "nominal": float(hedef) if hedef not in (None, "") else (alt + ust) / 2,
+                        "yontem": met(x.get("yontem"))})
+    # Aynı özellik birden çok operasyonda geçebilir; tekilleştirilir
+    gorulen, tekil = set(), []
+    for k in malzeme:
+        a = alet_sade(k["ad"])
+        if a not in gorulen:
+            gorulen.add(a)
+            tekil.append(k)
+    return [("", k, "kontrol planı") for k in tekil] + boyut
+
+
+def pl130_olcu_raporu(v, hedef, balon=None):
+    """PL130 ÖLÇÜ KONTROL RAPORU / DIMENSION CONTROL REPORT.
+    Kullanıcının kendi form düzeni: iki dilli başlıklar, 5 ölçüm sütunu,
+    malzeme özellikleri + boyutsal ölçüler tek tabloda."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, Border, Side
+
+    satir = pl130_satirlari(v, balon)
     if not satir:
         return 0
-    ad, _ = IMZA.get(v["lokasyon"], IMZA["eskisehir"])
     rolAd = dict((rol, a) for rol, a in v["ekip"])
+    imza_ad, _ = IMZA.get(v["lokasyon"], IMZA["eskisehir"])
 
-    wb = Workbook(); ws = wb.active; ws.title = "Dimension Report"
+    wb = Workbook(); ws = wb.active; ws.title = "PL130"
     ws.sheet_view.showGridLines = False
-    for h, g in zip("ABCDEFGHIJK", (6, 26, 16, 10, 10, 10, 10, 10, 18, 10, 26)):
+    for h, g in zip("ABCDEFGHIJKL", (30, 9, 7, 11, 9, 9, 9, 9, 9, 22, 30, 3)):
         ws.column_dimensions[h].width = g
-    ince = Side(style="thin", color="808080")
+    ince = Side(style="thin", color="000000")
+    kalin = Side(style="medium", color="000000")
     kutu = Border(top=ince, bottom=ince, left=ince, right=ince)
-    antet(ws, "DIMENSION REPORT — ÖLÇÜM SONUÇLARI", "FR 24-VW", "02.01.2025", "0", "1 / 1", 11)
-    r = 6
-    tarih = datetime.date.fromisoformat(v["termin"]).strftime("%d.%m.%Y")
-    for etiket, deger in (("Part No / Parça No :", "%s / %s" % (v["kod"], musteri_parca_no(v))),
-                          ("Drawing No :", cizim_no(v)),
-                          ("Customer :", v["musteri"]),
-                          ("Test Date :", tarih)):
-        e = ws.cell(r, 1, etiket); e.font = Font(bold=True, size=10)
-        e.alignment = Alignment(horizontal="right")
-        ws.cell(r, 2, deger)
-        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=11)
-        r += 1
-    ws.cell(r + 1, 1, "Teknik resimde tanımlı tüm boyutsal parametreler kontrol "
-                      "edilerek 5 numune üzerinden ölçülmüştür.").font = \
-        Font(size=9, italic=True, color="808080")
-    ws.merge_cells(start_row=r + 1, start_column=1, end_row=r + 1, end_column=11)
-    r += 3
+    W = 11
 
-    basliklar = ["No", "Dimension / Ölçü", "Nominal ± Tol", "1", "2", "3", "4", "5",
-                 "Measuring Tool", "Result", "Not"]
-    for i, b in enumerate(basliklar):
-        c = ws.cell(r, 1 + i, b)
-        c.font = Font(bold=True, size=10, color="FFFFFF")
-        c.fill = PatternFill("solid", fgColor="1F3864"); c.border = kutu
-        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    ws.row_dimensions[r].height = 28
-    bas = r + 1
-    yazilan = 0
+    def hucre(r, c, deger, bold=False, boyut=9, yatay="center", genislik=1,
+              renk=None, kaydir=True):
+        for cc in range(c, c + genislik):
+            h = ws.cell(r, cc, deger if cc == c else None)
+            h.border = kutu
+            h.font = Font(bold=bold, size=boyut, color=renk or "000000")
+            h.alignment = Alignment(horizontal=yatay, vertical="center", wrap_text=kaydir)
+        if genislik > 1:
+            ws.merge_cells(start_row=r, start_column=c, end_row=r, end_column=c + genislik - 1)
+        return ws.cell(r, c)
+
+    # ── Antet: sol logo bloğu · orta başlık · sağ doküman bilgisi ────────
+    hucre(1, 1, "Sanifoam\nENDÜSTRİ ve TÜKETİM\nÜRÜNLERİ SAN.TİC.A.Ş.", True, 11, genislik=1)
+    ws.merge_cells(start_row=1, start_column=1, end_row=4, end_column=1)
+    hucre(1, 2, "KALİTE YÖNETİM SİSTEMİ DOKÜMANTASYONU\nQUALITY MANAGEMENT SYSTEM DOCUMENTATION",
+          False, 8, genislik=8)
+    hucre(2, 2, "ÖLÇÜ KONTROL RAPORU\nDIMENSION CONTROL REPORT", True, 12, genislik=8)
+    ws.merge_cells(start_row=2, start_column=2, end_row=4, end_column=9)
+    for i, (etiket, deger) in enumerate((("DOK.NO", "PL130"), ("Y. TRH.", "02/01/2024"),
+                                         ("REV. NO", "00"), ("SAYFA", "1/1"))):
+        hucre(1 + i, 10, etiket, True, 9, "left")
+        hucre(1 + i, 11, deger, False, 9, "left")
+    ws.row_dimensions[1].height = 26
+    ws.row_dimensions[2].height = 18
+
+    hucre(5, 1, "ÖLÇÜM SONUÇLARI: (Teknik resimde tanımlı tüm boyutsal ve malzeme özellik "
+                "parametreleri kontrol edilerek, sonuçları girilir. Sonuçların girilmesi için "
+                "FR97 ve FR 98 formları da kullanılabilir).", False, 8, "left", W)
+    ws.row_dimensions[5].height = 24
+
+    tarih = datetime.date.fromisoformat(v["termin"]).strftime("%d.%m.%Y")
+    rev_tarih = met(v.get("resim_tarih"))
+    if rev_tarih:
+        try:
+            rev_tarih = datetime.date.fromisoformat(rev_tarih).strftime("%d.%m.%Y")
+        except ValueError:
+            pass
+    hucre(6, 1, "Teknik Resim No\n(Drawing No)  :", True, 8, "left")
+    hucre(6, 2, cizim_no(v), True, 10, genislik=2)
+    hucre(6, 4, "Son Rev. Tarihi:\n(Last Rev.Date:)", True, 8, "left", 2)
+    hucre(6, 6, rev_tarih or "-", True, 9, genislik=2)
+    hucre(6, 8, "Test Date :", True, 8, "left", 2)
+    hucre(6, 10, tarih, True, 9, genislik=2)
+    ws.row_dimensions[6].height = 24
+
+    basliklar = [("Kontrol Edilen Özellik\n(Feature to Check)", 1, 1),
+                 ("İstenen Değer\n(Target)", 2, 2),
+                 ("Tolerans\n(Tolerance)", 4, 1),
+                 ("Ölçülen Değerler\n(Values)", 5, 5),
+                 ("Kontrol Yöntemi\n(Control Method)", 10, 1),
+                 ("Sonuç\n(Result)", 11, 1)]
+    for ad_, c, gen in basliklar:
+        hucre(7, c, ad_, True, 9, genislik=gen)
+    ws.row_dimensions[7].height = 32
+
+    r = 8
     for i, (no, k, notu) in enumerate(satir):
-        rr = bas + i
-        if not k:                       # okunamayan ölçü: satır açık bırakılır
-            deger = [no, "— (çizimden okunamadı)", "", "", "", "", "", "",
-                     "", "", notu]
+        if not k:                        # çizimden okunamayan ölçü: açık bırakılır
+            hucre(r, 1, "Ölçü %s — çizimden okunamadı" % no, False, 9, "left")
+            for c in range(2, W + 1):
+                hucre(r, c, "")
+            hucre(r, 11, "—", True, 9, renk="991B1B")
+            r += 1
+            continue
+        tol = (k["ust"] - k["alt"]) / 2
+        olculer = olcusel_deger(k, 5, i)
+        sayisal = [x for x in olculer if not isinstance(x, str)]
+        coz, coz_ad = alet_cozunurluk(k.get("yontem"))
+        icinde = not sayisal or all(k["alt"] <= x <= k["ust"] for x in sayisal)
+        # Aletin okuma ızgarasında tolerans bandına düşen değer yoksa bu ret
+        # değil ölçülemezliktir (12,5 ±0,3 · şeritmetre 1 mm → 12 ve 13)
+        izgara = (not coz) or math.floor(k["ust"] / coz) * coz >= k["alt"] - 1e-9
+        if icinde:
+            sonuc, renk = "Ok", "166534"
+        elif not izgara:
+            sonuc, renk = ("Ölçülemez: %s adımı tolerans bandına (±%g) düşmüyor"
+                           % (coz_ad, tol), "92400E")
         else:
-            tol = (k["ust"] - k["alt"]) / 2
-            olculer = olcusel_deger(k, 5, i)
-            sayisal = [x for x in olculer if not isinstance(x, str)]
-            coz, coz_ad = alet_cozunurluk(k.get("yontem"))
-            icinde = not sayisal or all(k["alt"] <= x <= k["ust"] for x in sayisal)
-            # Okuma tolerans dışıysa sebebi ayırt edilir: aletin okuma
-            # ızgarasında bandın İÇİNE düşen hiçbir değer yoksa bu bir ret
-            # değil, ölçülemezliktir (ör. 12,5 ±0,3 · şeritmetre 1 mm →
-            # ızgara 12 ve 13, ikisi de dışarıda). "NOk" yazmak yanıltır.
-            izgara = (not coz) or math.floor(k["ust"] / coz) * coz >= k["alt"] - 1e-9
-            if icinde:
-                sonuc = "Ok"
-            elif not izgara:
-                sonuc = "—"
-                notu = "ölçülemez: %s ızgarası tolerans bandına (±%g) düşmüyor" % (coz_ad, tol)
-            else:
-                sonuc = "NOk"
-            deger = [no, k["ad"][:26], "%g ± %g" % (k["nominal"], tol)] + list(olculer) + \
-                    [met(k.get("yontem"))[:18], sonuc, notu]
-            yazilan += 1
-        for j, x in enumerate(deger):
-            c = ws.cell(rr, 1 + j, x)
-            c.border = kutu; c.font = Font(size=10)
-            c.alignment = Alignment(horizontal="left" if j in (1, 8, 10) else "center",
-                                    vertical="center", wrap_text=j in (1, 10))
-        ws.cell(rr, 10).font = Font(size=10, bold=True,
-                                    color="166534" if deger[9] == "Ok" else "991B1B")
-        ws.row_dimensions[rr].height = 22
-    son = bas + len(satir) + 2
-    for etiket, kisi, unvan in (("Tested by", rolAd.get("Kalite Mühendisi", ad), "Quality Engineer"),
-                                ("Approved by", rolAd.get("Kalite Güvence Müdürü", ad),
-                                 "Quality Assurance Manager")):
-        ws.cell(son, 1, etiket).font = Font(bold=True, size=10)
-        ws.cell(son, 2, "%s — %s" % (kisi, unvan)).font = Font(size=10)
-        ws.merge_cells(start_row=son, start_column=2, end_row=son, end_column=6)
-        son += 1
-    ws.page_setup.orientation = "landscape"
+            sonuc, renk = "Nok", "991B1B"
+        etiket = "%s\n(%s)" % (k["ad"], ("Dim %s" % no) if no else "material")
+        hucre(r, 1, etiket, False, 8, "center")
+        hucre(r, 2, k["nominal"], False, 10)
+        hucre(r, 3, pl130_birim(k), False, 8)
+        hucre(r, 4, "±%g" % tol, False, 9)
+        for j, x in enumerate(olculer):
+            hucre(r, 5 + j, x, False, 9, renk=None if icinde else "991B1B")
+        hucre(r, 10, pl130_yontem(k.get("yontem")), False, 8)
+        hucre(r, 11, sonuc, False, 8 if len(str(sonuc)) > 6 else 9, renk=renk)
+        ws.row_dimensions[r].height = 26
+        r += 1
+
+    # ── İmza bloğu ──────────────────────────────────────────────────────
+    r += 1
+    for etiket, kisi, unvan in (
+            ("Tested by", rolAd.get("Kalite Mühendisi", imza_ad), "Quality Engineer"),
+            ("Approved by", rolAd.get("Kalite Güvence Müdürü", imza_ad),
+             "Quality Assurance Manager")):
+        hucre(r, 1, etiket, True, 9, "left")
+        hucre(r, 2, "%s\n%s" % (kisi, unvan), False, 9, genislik=4)
+        r += 1
+
+    for c in range(1, W + 1):
+        for rr in (1, r - 1):
+            h = ws.cell(rr, c)
+            h.border = Border(top=kalin if rr == 1 else h.border.top,
+                              bottom=kalin if rr == r - 1 else h.border.bottom,
+                              left=h.border.left, right=h.border.right)
+    ws.page_setup.orientation = "portrait"
     ws.page_setup.fitToWidth = 1
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
     wb.save(hedef)
-    return yazilan or len(satir)
+    return len(satir)
+
+
+def pl130_birim(k):
+    """PL130'daki birim sütunu: karakteristiğe göre mm / g / kg/m³ / g/m²."""
+    ad = met(k.get("ad")).upper()
+    y = met(k.get("yontem")).upper()
+    if "YOĞUNLUK" in ad or "YOGUNLUK" in ad or "ISO 845" in y:
+        return "kg/m³"
+    if "GRAMAJ" in ad or "G/M" in ad:
+        return "g/m²"
+    if "AĞIRLIK" in ad or "AGIRLIK" in ad or "TERAZ" in y:
+        return "g"
+    if "YANMA" in ad or "YANMA" in y:
+        return "mm/dk"
+    if "MİKROMETRE" in y or "MIKROMETRE" in y:
+        return "µm"
+    return "mm"
 
 
 def parts_history(v, hedef):
@@ -1809,6 +1932,11 @@ def alet_sade(ad):
 def alet_cozunurluk(yontem):
     """(çözünürlük, açıklama). Nitel yöntemde çözünürlük yok."""
     y = met(yontem)
+    # Yanmazlık testi TL kodlu ama SAYISAL sonuç verir (mm/dk). NITEL_YONTEM
+    # "^TL\d+" ile eşleştiği için "uygun/uygun değil" yazılıyordu; PL130'da
+    # yanma hızı sayı olarak raporlanır.
+    if re.search(r"YANMA|YANMAZ|FLAMMAB|TL\s*206|TL\s*1010", y, re.I):
+        return 1.0, "yanma hızı 1 mm/dk"
     if NITEL_YONTEM.search(y):
         return None, "görsel/nitel — uygun / uygun değil"
     for kalip, c, ad in COZUNURLUK:
@@ -1971,8 +2099,8 @@ def ppap_belgeleri(v, klasor, uret):
         "PPF Coversheet.docx": (ppf_coversheet, "VW grubu — PPA kapak dolduruldu"),
         PPA_KAPAK: (ppa_kapak, "VDA PPA kapak dolduruldu"),
         "Flammability Test Report VW.xlsx": (flammability, "TL 1010 başlık dolduruldu"),
-        "Dimension Report VW.xlsx": (
-            lambda a, b: vw_olcu_raporu(a, b, a.get("balon")), "VW düzeni, 5 numune"),
+        PL130_ADI: (lambda a, b: pl130_olcu_raporu(a, b, a.get("balon")),
+                    "PL130 düzeni · malzeme + boyut, 5 numune"),
     }
     for dosya in musteri_belgeleri(v):
         kok, uzanti = os.path.splitext(dosya)
@@ -1980,7 +2108,7 @@ def ppap_belgeleri(v, klasor, uret):
         uretici = DOLDURULAN.get(dosya)
         # Dimension Report'un şablonu yok — tamamen üretilir
         kaynak = os.path.join(PPAP_KLASOR, dosya)
-        if not os.path.exists(kaynak) and dosya != "Dimension Report VW.xlsx":
+        if not os.path.exists(kaynak) and dosya != PL130_ADI:
             print("   ! %-34s şablon bulunamadı" % dosya[:34])
             continue
         hedef = os.path.join(klasor, hedef_ad)
@@ -2023,6 +2151,10 @@ def yeterlilik_karakteristikleri(kod):
         if not alet or alt is None or ust is None:
             continue
         if MAKINE_AYARI.search(alet) or MAKINE_AYARI.search(kar):
+            continue
+        # Tahribatlı laboratuvar testi (yanma hızı, yoğunluk) yeterlilik
+        # konusu değil: numune testte yok oluyor, seri üretim ölçüsü değil
+        if LAB_TESTI.search(alet) or LAB_TESTI.search(kar):
             continue
         try:
             alt, ust = float(alt), float(ust)
@@ -2751,6 +2883,12 @@ def fr34_pfmea(v, hedef):
 # Nitel (gözle/görsel) aletler AIAG MSA 4th Ed. Type-3 nitelik uyum analizine,
 # ölçüm aletleri Type-1 (Cg/Cgk) + Type-2 Gage R&R'a yönlendirilir.
 NITEL_ALET = ("GÖZLE", "GÖRSEL", "GOZLE", "GORSEL", "TL")
+# Tahribatli / periyodik malzeme laboratuvar testleri: numune testte yok
+# oluyor, ayni parca ikinci kez olculemiyor -> Gage R&R de yeterlilik de
+# anlamsiz. (Kullanicinin tespiti: "yanma hizi sayisal bile olsa yeterlilik
+# yapmak sacma".) Yanmazlik ve yogunluk kendi test raporlariyla belgelenir.
+LAB_TESTI = re.compile(r"YANMA|YANMAZ|FLAMMAB|TL\s*206|TL\s*1010|"
+                       r"YOĞUNLUK|YOGUNLUK|ISO\s*845|DENSITY", re.I)
 
 
 def msa_aletleri(kod):
@@ -2778,10 +2916,18 @@ def msa_aletleri(kod):
                     g["dar_nominal"] = float(hedef_n) if hedef_n not in (None, "")                         else (float(alt) + float(ust)) / 2
             except (TypeError, ValueError):
                 pass
+    sonuc = []
     for g in gruplar.values():
-        g["nitel"] = g["tol"] is None or g["alet"].upper().startswith(NITEL_ALET)
         g["kar"] = list(dict.fromkeys(g["kar"]))
-    return list(gruplar.values())
+        # Tahribatlı laboratuvar testleri MSA konusu değildir: parça testte
+        # yok olduğu için tekrarlanabilirlik ölçülemez (aynı parça iki kez
+        # ölçülemez) ve periyodik yapılır. Yanma hızı, yoğunluk, gramaj gibi
+        # malzeme testleri kontrol planında akredite yönteme göre yürür.
+        if LAB_TESTI.search(g["alet"]) or any(LAB_TESTI.search(k) for k in g["kar"]):
+            continue
+        g["nitel"] = g["tol"] is None or g["alet"].upper().startswith(NITEL_ALET)
+        sonuc.append(g)
+    return sonuc
 
 
 # MSA modülünün (GageAI) verisi AYNI Supabase'de durur: msa_studies.

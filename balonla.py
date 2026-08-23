@@ -247,6 +247,77 @@ def _olcu_disi(s, W, H, capa):
     return any(abs(x - cx) < 420 and -80 < (y - cy) < 150 for cx, cy in capa)
 
 
+def _cember_icinde(im, s):
+    """Sayı ZATEN bir çemberin içinde mi? (çizimin kendi referans balonu)
+
+    Teknik resimlerde detay/kesit referansları daire içinde numaralanır.
+    Bunlara yeniden balon konmamalı — kullanıcının tespiti.
+    """
+    import numpy as np
+    H, W = im.shape
+    cx, cy = s["x"] + s["g"] / 2.0, s["y"] + s["h"] / 2.0
+    R = max(s["g"], s["h"]) * 0.75
+    if R < 6:
+        return False
+    aci = np.linspace(0, 2 * np.pi, 36, endpoint=False)
+    isabet = 0
+    for a in aci:
+        for kat in (0.95, 1.15, 1.35):
+            x = int(round(cx + np.cos(a) * R * kat))
+            y = int(round(cy + np.sin(a) * R * kat))
+            if 0 <= x < W and 0 <= y < H and im[y, x] < 128:
+                isabet += 1
+                break
+    return isabet >= len(aci) * 0.8
+
+
+def _olcu_cizgisi_var(im, s):
+    """Kutunun yanında ÖLÇÜ ÇİZGİSİ var mı?
+
+    Gerçek ölçü, kendisinden belirgin biçimde uzun bir ölçü çizgisine
+    yaslanır. Antet yazısı, not cümlesi ve standart referansı ("VW 10500")
+    böyle bir çizgiye yaslanmaz. Bu POZİTİF kanıt, eskiden kullandığım
+    yoğunluk elemesinin yerini alır — o eleme ölçü yoğun bölgelerde gerçek
+    ölçüleri de kesiyordu (kullanıcı: "birçok sayıya balon verilmemiş").
+    """
+    import numpy as np
+    H, W = im.shape
+    dikey = s.get("yon") == "d"
+    # Okuma yönündeki uzunluk ve ona dik kalınlık
+    uzun = s["h"] if dikey else s["g"]
+    kalin = s["g"] if dikey else s["h"]
+    if uzun < 4 or kalin < 4:
+        return False
+    gerek = max(int(uzun * 2.0), 40)
+    a0 = int(max(0, (s["y"] if dikey else s["x"]) - uzun * 1.5))
+    a1 = int(min(H if dikey else W, (s["y"] + s["h"] if dikey else s["x"] + s["g"])
+                 + uzun * 1.5))
+    if a1 - a0 < gerek:
+        return False
+
+    def tarama(b0, b1):
+        b0, b1 = int(max(0, b0)), int(min(W if dikey else H, b1))
+        if b1 <= b0:
+            return False
+        bant = (im[a0:a1, b0:b1] if dikey else im[b0:b1, a0:a1]) < 128
+        # Her hat (dikey yazıda sütun) boyunca en uzun koyu diziyi bul
+        for i in range(bant.shape[1] if dikey else bant.shape[0]):
+            hat = bant[:, i] if dikey else bant[i]
+            en, sayac = 0, 0
+            for p in hat:
+                sayac = sayac + 1 if p else 0
+                if sayac > en:
+                    en = sayac
+            if en >= gerek:
+                return True
+        return False
+
+    ust = (s["x"] if dikey else s["y"])
+    alt = (s["x"] + s["g"] if dikey else s["y"] + s["h"])
+    return (tarama(ust - kalin * 2.5, ust - kalin * 0.15)
+            or tarama(alt + kalin * 0.15, alt + kalin * 2.5))
+
+
 def _metin_satirinda(s, hepsi):
     """Kutu bir YAZI SATIRININ parçası mı? (aynı hizada, yakınında başka
     kutu var mı)
@@ -271,7 +342,9 @@ def _metin_satirinda(s, hepsi):
             continue                        # başka satır
         b0, b1 = (o["y"], o["y"] + o["h"]) if dikey else (o["x"], o["x"] + o["g"])
         bosluk = b0 - a1 if b0 >= a1 else a0 - b1
-        if -kalin * 0.2 < bosluk < kalin * 2.0:
+        # Esik DAR tutulur: cumle icindeki kelime araligi (~0,4·h) yakalanir,
+        # ayni hizadaki iki AYRI olcu ("17   21", ~1,3·h) korunur.
+        if -kalin * 0.2 < bosluk < kalin * 1.0:
             return True
     return False
 
@@ -454,7 +527,7 @@ def rakam_modeli(im, kutular, etiket, ist, n):
     # Tohum icin kutu basina Tesseract cagriliyor. 'Pos.' capasi olmayan
     # cizimlerde 470+ kutu var ve hepsini okumak dakikalar suruyordu; sablon
     # ogrenmek icin o kadari gereksiz. Yeterli ornek toplanınca durulur.
-    KOTA, YETER = 160, 3
+    KOTA, YETER = 220, 3
     # Tohum adaylari OLCUYE BENZEYEN kutular: 2-5 karakter. Kutu sirasi
     # sayfa duzenine gore geldiginden ilk N kutu bastik/not alani olabiliyor
     # ve hic rakam ornegi toplanmiyordu (0 balon). Kisa kutular one alinir.
@@ -484,14 +557,66 @@ def rakam_modeli(im, kutular, etiket, ist, n):
     return {d: np.mean(v, axis=0) for d, v in tohum.items() if len(v) >= 2}
 
 
-def _sablonla_oku(model, etiket, s, kar):
-    """Karakterleri öğrenilmiş rakam şablonlarıyla okur."""
+def _metin_mi(im, s):
+    """Kutu HARF içeriyor mu? (ölçü değil, not/başlık parçası)
+
+    Geometri elemesinden geçip sayı olarak okunamayan kutuların tamamı
+    ölçülerek görüldü: hepsi sözcük parçasıydı ("resist", "acc.", "Date").
+    Bunları sarı balonla işaretlemek yanlış — ölçü değiller. Rakam
+    beyaz listesi OLMADAN okunur; harf çıkarsa kutu elenir.
+    """
+    import pytesseract
+    from PIL import Image
+    pytesseract.pytesseract.tesseract_cmd = TESSERACT
+    p = 8
+    kirp = im[max(0, s["y"] - p):s["y"] + s["h"] + p,
+              max(0, s["x"] - p):s["x"] + s["g"] + p]
+    if kirp.size == 0:
+        return False
+    b = Image.fromarray(kirp)
+    if s["yon"] == "d":
+        b = b.rotate(-90, expand=True)
+    b = b.resize((b.width * 5, b.height * 5), Image.LANCZOS)
+    try:
+        t = pytesseract.image_to_string(b, config="--psm 7").strip()
+    except Exception:
+        return False
+    return len(re.findall(r"[A-Za-zÄÖÜäöüßÇĞİÖŞÜçğıöşü]", t)) >= 2
+
+
+def _sayi_kutusu(kar):
+    """Kutu SAYI mı yoksa KELİME mi?
+
+    Teknik resimde rakamlar tek boy yazılır. Küçük harfli bir sözcükte
+    ('fertig', 'roh') gövde yüksekliği ile büyük harf yüksekliği farklıdır
+    (17'ye 22 gibi). Ondalık ayracı bunun dışındadır: rakamın yarısından
+    kısa olan bileşen virgül/noktadır.
+    """
+    if not kar:
+        return False
+    yuk = sorted(c[3] for c in kar)
+    orta = yuk[len(yuk) // 2]
+    rakam = [h for h in yuk if h >= orta * 0.5]      # ayraç hariç
+    if not rakam:
+        return False
+    return max(rakam) <= min(rakam) * 1.25
+
+
+def _sablonla_oku(model, etiket, s, kar, im=None):
+    """Karakterleri öğrenilmiş rakam şablonlarıyla okur.
+    Rakamın yarısından kısa bileşen ONDALIK AYRACIDIR; rakam gibi
+    eşleştirilirse hiçbir şablona uymuyor ve tüm okuma düşüyordu."""
     import cv2
     import numpy as np
-    if not model or not kar:
+    if not model or not kar or not _sayi_kutusu(kar):
         return None
+    yuk = sorted(c[3] for c in kar)
+    orta = yuk[len(yuk) // 2]
     hane, guven = [], []
     for c in kar:
+        if c[3] < orta * 0.5:
+            hane.append(".")                 # virgül / nokta
+            continue
         a = _normal(etiket, c)
         if s["yon"] == "d":
             a = cv2.rotate(a, cv2.ROTATE_90_CLOCKWISE)
@@ -502,44 +627,67 @@ def _sablonla_oku(model, etiket, s, kar):
                 iyi, en = p, d
         hane.append(en or "?")
         guven.append(iyi)
-    t = "".join(hane)
-    return t if ("?" not in t and guven and min(guven) > 0.55) else None
+    t = "".join(hane).strip(".")
+    if "?" in t or not guven or min(guven) <= 0.55:
+        return None
+    return t if re.fullmatch(r"\d{1,4}(\.\d{1,2})?", t) else None
 
 
-def tum_olculer(im, capa, plan_degerleri=(), yalniz_sayi=False):
+def tum_olculer(im, capa, plan_degerleri=(), geometri_ele=False):
     """Çizimdeki tüm ölçü kutuları: [(deger|None, x, y, g, h, kaynak)].
     kaynak: 'plan' (kontrol planıyla doğrulandı) · 'okundu' · None (okunamadı)
 
-    yalniz_sayi=True: 'Pos.' çapası olmayan çizimlerde kullanılır. Çapa
-    yokken hangi yazının ölçü olduğunu konumdan ayırt edemiyoruz; bu
-    çizimde 473 yazı kutusu var ve çoğu not/başlık. O yüzden yalnız SAYI
-    olarak okunabilen kutular balonlanır, kutu başına Tesseract çağrılmaz
-    (aksi hâlde hem dakikalarca sürüyor hem yüzlerce anlamsız balon çıkıyor).
+    geometri_ele=True: 'Pos.' çapası olmayan çizimlerde kullanılır. Çapa
+    yokken hangi yazının ölçü olduğu konumdan bilinemez (bu çizimde 466 yazı
+    kutusu var, çoğu not/tablo/başlık). Ayrım GEOMETRİDEN yapılır: ölçü
+    çizgisine yaslanan, çizgili tablo gözünde olmayan, çizimin kendi
+    referans çemberinde olmayan ve bir yazı satırının parçası olmayan
+    kutular ölçüdür.
     """
     import cv2
     import numpy as np
     H, W = im.shape
     kutu = _yakinlari_birlestir(
         [s for s in _yazi_kutulari(im) if not _olcu_disi(s, W, H, capa)])
-    if yalniz_sayi:
-        # Çapa yokken tablo/not bölgeleri konumdan bilinemez; iki elemeyle
-        # ayrılır: yazı satırının parçası olanlar (komşulu) ve tablo
-        # ızgarasında sıkışık duranlar atılır, tek başına duran ölçüler kalır.
-        kutu = [s for s in kutu if not _metin_satirinda(s, kutu)]
-        kutu = [s for s in kutu if not _yogun_kumede(s, kutu)]
-        kutu = [s for s in kutu if not _cizgili_hucrede(im, s)]
+    siyah0 = (im < 128).astype(np.uint8)
+    n0, etiket0, ist0, _ = cv2.connectedComponentsWithStats(siyah0, 8)
+    tohum_kutu = list(kutu)              # rakam şablonları TÜM çizimden öğrenilir
+    if geometri_ele:
+        # Ölçü metni KISADIR ("48", "15,05") ve rakamları TEK BOYdur.
+        # 6 karakterden uzun ya da karışık yükseklikli kutu bir KELİMEdir
+        # ("Kennzeichnung", "fertig") — ölçü değil, okunamadığı için sarı
+        # balon olarak kalıyordu.
+        def sayi_gibi(s):
+            kar = _karakterler(im, s, etiket0, ist0, n0)
+            return 0 < len(kar) <= 6 and _sayi_kutusu(kar)
+        kutu = [s for s in kutu if sayi_gibi(s)]
+    if geometri_ele:
+        # Çapa yokken hangi yazının ölçü olduğu konumdan bilinemez. Ölçüt:
+        # (1) yanında ölçü çizgisi VAR, (2) üstü-altı birden çizgili bir
+        # tablo gözünde DEĞİL, (3) çizimin kendi referans çemberinin içinde
+        # DEĞİL. Yoğunluk elemesi kaldırıldı: ölçü yoğun bölgelerde gerçek
+        # ölçüleri de kesiyordu.
+        kutu = [s for s in kutu
+                if _olcu_cizgisi_var(im, s)
+                and not _cizgili_hucrede(im, s)
+                and not _cember_icinde(im, s)
+                and not _metin_satirinda(s, kutu)]
     plan = {("%g" % float(d)) for d in plan_degerleri}
-    siyah = (im < 128).astype(np.uint8)
-    n_bil, etiket, ist, _ = cv2.connectedComponentsWithStats(siyah, 8)
-    model = rakam_modeli(im, kutu, etiket, ist, n_bil)
+    siyah, n_bil, etiket, ist = siyah0, n0, etiket0, ist0
+    # Şablonlar ÇİZİMİN TAMAMINDAN öğrenilir: ölçü kutuları azken (68) model
+    # yalnız 0-6'yı öğrenebiliyor, 7/8/9 içeren ölçüler okunamıyordu.
+    # Tablolarda ve notlarda bol rakam var; onlar tohum olarak kullanılır.
+    model = rakam_modeli(im, tohum_kutu, etiket, ist, n_bil)
     sonuc = []
     for s in kutu:
         kar = _karakterler(im, s, etiket, ist, n_bil)
-        t = _sablonla_oku(model, etiket, s, kar)
-        if t is None and not yalniz_sayi:
-            t = _kutu_oku(im, s)
-        if t is None and yalniz_sayi:
-            continue                       # ölçü olduğu doğrulanamadı, balonlanmaz
+        # Okunamayan kutu ATILMAZ: geometri elemesinden gectiyse (olcu
+        # cizgisi var, tablo gozu degil, cember degil) o bir olcudur ve
+        # SARI balonla isaretlenip degeri rapora elle girilir. Eskiden
+        # sessizce dusuruluyordu; 72 olcunun 51'i balonsuz kaliyordu.
+        t = _sablonla_oku(model, etiket, s, kar, im) or _kutu_oku(im, s)
+        if t is None and geometri_ele and _metin_mi(im, s):
+            continue                       # sözcük parçası — ölçü değil
         kaynak = None
         if t is not None:
             kaynak = "plan" if ("%g" % float(t)) in plan else "okundu"
@@ -707,7 +855,7 @@ def uret(kod, tiff_yolu, klasor, kp_satirlari, sablon_kutusu=None, tam=True):
         # planla eslesmiyordu (hepsi genel toleransa dusuyordu).
         plan_deger = [d[0] for k in pos.values() for d in k] or _plan_degerleri(
             kp_satirlari, kod)
-        olcu = tum_olculer(im, capa, plan_deger, yalniz_sayi=not capa)
+        olcu = tum_olculer(im, capa, plan_deger, geometri_ele=not capa)
         # Her ölçü en yakın pozisyona bağlanır, o grupta okuma sırasıyla numaralanır
         gruplar = {}
         for deger, x, y, g, h, kaynak, yon in olcu:

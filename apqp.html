@@ -281,13 +281,31 @@ const DOSYA_ANAHTAR = [
 // Kanit sayilmasi icin dosya adinda BU urunun stok kodu veya musteri parca
 // numarasi gecmeli. Nokta/tire/bosluk farklari yok sayilir.
 const sadeKod = x => met(x).toLocaleLowerCase('tr').replace(/[\s._\-\/]/g, '');
-function buUruneAit(dosyaAdi, kod, musteriParca) {
-  const ad = sadeKod(dosyaAdi);
-  // Musteri parca no urun adinin icinde gecebilir ("36.72010-6345 INDEX C");
-  // dosya adinda genelde yalniz numara durur, o yuzden parcalara da bakilir.
-  const anahtar = [kod].concat(met(musteriParca).split(/\s+/)).concat([musteriParca])
+
+// Metindeki kod JETONLARI: bosluga gore bolunur, dosya uzantisi atilir,
+// ayraclar silinerek sadelestirilir. Bitisik 2-3 jeton da birlestirilir
+// ("5NA 881 989" -> "5na881989").
+// NEDEN JETON: duz "icerir" karsilastirmasi 700.0.444'u 700.0.444-2X'in
+// ICINDE de buluyordu; silinen -2X projesinin MSA calismalari 700.0.444'e
+// kanit gibi yapisiyordu.
+function kodJetonlari(metin) {
+  const parcalar = met(metin).split(/[\s|/(),;]+/)
+    .map(t => t.replace(/\.(xlsx|xlsm|xls|docx|doc|pdf|png|tiff?|jpe?g)$/i, ''))
+    .map(sadeKod).filter(Boolean);
+  const kume = new Set(parcalar);
+  for (let i = 0; i < parcalar.length; i++) {
+    kume.add(parcalar[i] + (parcalar[i + 1] || ''));
+    kume.add(parcalar[i] + (parcalar[i + 1] || '') + (parcalar[i + 2] || ''));
+  }
+  return kume;
+}
+function kodAnahtarlari(kod, musteriParca) {
+  return [kod, musteriParca].concat(met(musteriParca).split(/\s+/))
     .map(sadeKod).filter(k => k.length > 4 && /\d/.test(k));
-  return anahtar.some(k => ad.includes(k));
+}
+function buUruneAit(dosyaAdi, kod, musteriParca) {
+  const jeton = kodJetonlari(dosyaAdi);
+  return kodAnahtarlari(kod, musteriParca).some(k => jeton.has(k));
 }
 
 // Belge adi ile form metnini karsilastirmak icin sadelestirme: urun kodu,
@@ -374,17 +392,23 @@ const MSA_SAYFA = { capability: 'cap-results.html', binomial: 'cap-attributes.ht
 const msaAdres = c => 'https://mycosmosshop.github.io/msa/'
   + (MSA_SAYFA[met(c.study_type)] || 'results.html') + '?id=' + c.id;
 const MSA_ROZET = { acceptable: '✓ kabul', marginal: '⚠ şartlı', unacceptable: '✗ red' };
+// Calisma turunun okunur adi — gorsel kontrollerin nitelik analizi oldugu
+// listede gorunsun (kullanici "sayisal MSA mi yapilmis?" diye sormustu).
+const MSA_TUR_AD = {
+  attribute: 'nitelik uyum analizi (Kappa)', type1: 'Tip 1 (Cg/Cgk)',
+  type2: 'Gage R&R (Tip 2)', type3: 'Tip 3', linearity: 'doğrusallık',
+  capability: 'proses/makine yeterliliği', multi: 'çoklu değişken',
+  comparison: 'karşılaştırma', testretest: 'test-tekrar', nested: 'iç içe',
+};
 
 // Calisma BU URUNE ait olmali. Yalniz alet adina bakmak, ayni isimli aleti
 // (GOZLE, SERITMETRE...) kullanan BASKA urunun calismasini bu urunun kanitiymis
 // gibi gosteriyordu.
 function msaEslesir(c, kod, parca) {
-  const b = x => met(x).toLocaleUpperCase('tr');
-  const metin = [c.gauge_name, c.gauge_number, c.characteristic, c.part_name, c.study_name]
-    .map(b).join(' ');
-  return [kod].concat(met(parca).split(/\s+/))
-    .filter(a => a.length > 4 && /\d/.test(a))
-    .some(a => metin.includes(b(a)));
+  // Jeton esitligi: "700.0.444-2X — TL283" artik 700.0.444'e YAPISMAZ.
+  const jeton = kodJetonlari(
+    [c.gauge_name, c.gauge_number, c.characteristic, c.part_name, c.study_name].join(' '));
+  return kodAnahtarlari(kod, parca).some(a => jeton.has(a));
 }
 
 // Yeterlilik calismasi turleri: bunlar MSA degil, proses/makine yeterliligi
@@ -492,7 +516,9 @@ async function apqpUret(giris) {
       const metin = met(a.form) + ' ' + met(a.ad);
       const ekle = (liste, on) => (liste || []).forEach(c => kanitlar.push({
         tur: 'erp',
-        ad: on + met(c.study_name)
+        // Calisma TURU de yazilir: gorsel karakteristiklerin nitelik (Kappa)
+        // analizi mi yoksa sayisal Gage R&R mi oldugu listeden anlasilsin.
+        ad: on + met(c.study_name) + ' · ' + (MSA_TUR_AD[met(c.study_type)] || met(c.study_type))
           + (c.is_acceptable ? ' (' + (MSA_ROZET[c.is_acceptable] || c.is_acceptable) + ')' : ''),
         adres: msaAdres(c),
       }));
