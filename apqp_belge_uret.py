@@ -625,6 +625,28 @@ def fr182(v, hedef):
 # bağlanan APQP maddelerinden gelir.
 FR81_SUTUN = ["NO", "APQP MADDE", "KONU", "SORUMLU", "TERMİN", "AÇIKLAMA", "DURUM"]
 
+# APQP fazlarinin GUN ofsetleri — modulun Gantt'iyla ayni kaynak (apqp.html
+# FAZ sabiti), FR91 ornegindeki gercek takvimden olculdu: baslangic
+# 2018-11-05, bolum2 +14, bolum3 +35, bolum5 +77, bolum6 +91, devreye alma
+# +100. Bolum 8 (geri besleme) devreye almadan SONRA yurur: +14 gun.
+# zenginlestir() ile tutarli: devreye_baslangic = devreye - 100 gun.
+FR81_FAZ = {"2": 14, "3": 35, "4": 56, "5": 77, "6": 91, "7": 100, "8": 114}
+FR81_FAZ_AD = {
+    "2": "Planlama ve Tanım",
+    "3": "Üretim Süreci Tasarımı ve Geliştirme",
+    "4": "Mühendislik Örnekleri",
+    "5": "Önemli Üretim Çalışması — Ürün ve Süreç Doğrulaması",
+    "6": "Müşteriye Gönderilecek PPAP Belgeleri",
+    "7": "Müşteri Onayı, Seri Üretim ve Teslimat",
+    "8": "Geri Besleme, Değerlendirme ve Düzeltici Faaliyet",
+}
+
+
+def fr81_faz_tarihi(v, bolum):
+    """Bir APQP bölümünün toplantı/termin tarihi."""
+    d = datetime.date.fromisoformat(v["devreye_baslangic"])
+    return (d + datetime.timedelta(days=FR81_FAZ.get(bolum, 100))).isoformat()
+
 
 def cizim_var(v):
     """ERP stok dokümanlarında açılabilir bir teknik resim dosyası var mı?"""
@@ -676,8 +698,54 @@ def fr81_gundem(v):
          "AR&GE Proje Yöneticisi", "Kırmızı/sarı/yeşil durum ve kapı onayı"),
         ("3.4", "Ölçüm sistemi analizi (MSA) planı gözden geçirildi",
          "Kalite Mühendisi", "Kontrol planındaki aletler için MSA Planı ve FR86 formları hazırlandı"),
+        ("3.2", "P-FMEA gözden geçirildi; yüksek AP maddelerine önlem atandı",
+         "Kalite Mühendisi", v["fmea_not"]),
+        ("3.3", "Ön kontrol planı gözden geçirildi",
+         "Kalite Güvence Müdürü", "Özel karakteristikler, ölçüm yöntemi ve örnekleme sıklığı teyit edildi"),
+        ("3.8", "Operasyon/çalışma talimatları hazırlandı",
+         "Üretim", "Operasyon kartları: %s" % makineler[:130]),
+        ("3.10", "Alt tedarikçi APQP/PPAP planı",
+         "Satın Alma", "Satın alınan malzemeler: %s" % hammadde[:110]),
         ("3.13", "Ürün/proses kalite sistemi gözden geçirmesi",
          "Kalite Güvence Müdürü", "Kontrol planı, PFMEA ve operasyon talimatları uyumu kontrol edildi"),
+        ("3.14", "Yerleşim planı (floor plan) — malzeme akışı ve kontrol noktaları",
+         "Üretim", "Hat yerleşimi ve ara stok alanları belirlendi"),
+        # ── 4. Mühendislik Örnekleri ──
+        ("4.1", "Mühendislik örneği gereksinimleri ve numune adedi belirlendi",
+         "AR&GE Proje Yöneticisi", "Numuneler FR56 Numune Takip Formu ile izlenir"),
+        ("4.3", "Mühendislik örneklerinin tasarım, boyut ve malzeme doğrulaması",
+         "Kalite Mühendisi", "Ölçüsel rapor ve malzeme sertifikası ile doğrulanır"),
+        # ── 5. Önemli Üretim Çalışması ──
+        ("5.7", "Önemli üretim çalışması (significant production run) planlandı",
+         "Üretim", "Hat: %s" % makineler[:130]),
+        ("5.8", "MSA sonuçları gözden geçirildi",
+         "Kalite Mühendisi", "Kontrol planındaki %d ölçüm aleti için MSA yapıldı" % len(msa_aletleri(v["kod"]))),
+        ("5.10", "Proses yeterliliği (Cp/Cpk) sonuçları değerlendirildi",
+         "Kalite Güvence Müdürü",
+         "Kabul: Cpk>1,67; 1,33<Cpk<1,67 müşteri ile gözden geçirilir; Cpk<1,33 yetersiz"),
+        ("5.12", "Kapasite doğrulaması (Run @ Rate) görüşüldü",
+         "Üretim", "Darboğaz: %s" % v["darbogaz"]["makine"][:110]),
+        ("5.17", "Faz çıkış onayı — yönetim kapı gözden geçirmesi",
+         "AR&GE Proje Yöneticisi", "Kırmızı/sarı/yeşil durum FR91 üzerinden sunuldu"),
+        # ── 6. PPAP Belgeleri ──
+        ("6.1", "Müşteri PPAP seviyesi belirlendi",
+         "Kalite Güvence Müdürü", "%s — belirtilmemişse Seviye 2 uygulanır" % v["musteri"][:70]),
+        ("6.5", "Numaralandırılmış teknik resim ve ölçüsel rapor gözden geçirildi",
+         "Kalite Mühendisi", "Balonlu resim: %s" % v["resim"][:100]),
+        ("6.21", "PPAP dosyasının müşteriye gönderimi onaylandı",
+         "Kalite Güvence Müdürü", "Gönderim FR56 Numune Takip Formu ile kayıt altına alınır"),
+        # ── 7. Devreye Alma ──
+        ("7.1", "Ürün devreye alma kararı",
+         "Üretim", "FR182 Ürün Devreye Alma Formu imzalanır — devreye alma: %s" % v["devreye"]),
+        ("7.2", "Müşteri teslimat planı alındı ve onaylandı",
+         "Lojistik", "Termin ve ambalaj standardı teyit edildi"),
+        # ── 8. Geri Besleme ──
+        ("8.1", "Varyasyonun azaltılması — yeterlilik izlemeye alındı",
+         "Kalite Mühendisi", "Seri üretimde Cp/Cpk izlenir, iyileştirme planı açılır"),
+        ("8.2", "Müşteri memnuniyeti izleme (şikâyet, PPM, skorkart)",
+         "Kalite Güvence Müdürü", "PPM Takip FR100 KPI üzerinden izlenir"),
+        ("8.4", "Öğrenilmiş dersler kaydedildi ve benzer ürünlere aktarıldı",
+         "Kalite Güvence Müdürü", "FR181 Öğrenilmiş Dersler — %s" % v["benzer"][:90]),
     ]
 
 
@@ -733,12 +801,18 @@ def fr81(v, hedef):
 
     bugun = datetime.date.today().isoformat()
     toplanti_no = sum(1 for x in eski if x[0] == "--") + 1
-    alan(6, "TOPLANTI TARİHİ :", v["devreye_baslangic"] if not eski else bugun)
+    # Toplanti TEK degil: her APQP fazinin kendi toplantisi var. Basliktaki
+    # tarih ilk yeni fazin tarihidir, her blok kendi tarihini ayirac satirinda
+    # tasir.
+    fazlar = sorted({m.split(".")[0] for m, _, _, _ in yeni}, key=lambda x: int(x))
+    alan(6, "TOPLANTI TARİHİ :",
+         fr81_faz_tarihi(v, fazlar[0]) if fazlar else (v["devreye_baslangic"] if not eski else bugun))
     ws.cell(6, 4, "TOPLANTI SAATİ :").font = Font(bold=True, size=10)
     ws.cell(6, 4).alignment = Alignment(horizontal="right")
     ws.cell(6, 5, "14:00").alignment = Alignment(horizontal="center")
-    alan(7, "KONU :", "%s (%s) — APQP proje takip toplantıları (%d. toplantı)"
-         % (v["ad"], v["kod"], toplanti_no), 7)
+    alan(7, "KONU :", "%s (%s) — APQP faz toplantıları (%d. toplantıdan itibaren%s)"
+         % (v["ad"], v["kod"], toplanti_no,
+            "; bu turda %d faz" % len(fazlar) if fazlar else ""), 7)
     k = alan(8, "KATILIMCILAR :", ", ".join("%s (%s)" % (ad, rol) for rol, ad in v["ekip"]), 7)
     k.alignment = Alignment(wrap_text=True, vertical="top")
     ws.row_dimensions[8].height = 34
@@ -778,17 +852,29 @@ def fr81(v, hedef):
         else:
             satir_yaz(r, x, z); z = not z
         r += 1
-    if yeni:
-        if eski:
-            satir_yaz(r, "──  %d. Toplantı — %s  ──" % (toplanti_no, bugun), False, ayirac=True)
-            r += 1
-        for i, (madde, konu, sorumlu, aciklama) in enumerate(yeni):
-            satir_yaz(r, (enson + 1 + i, madde, konu, sorumlu, v["termin"], aciklama, "Açık"), z)
+    # HER FAZ AYRI TOPLANTI: gundem APQP'nin kendi asamasina gore cesitlenir,
+    # her blok kendi tarihini ve terminini tasir, oncekiler korunarak eklenir.
+    # Fazi gecmis maddeler "Kapandi", henuz gelmemis olanlar "Açık" isaretlenir
+    # — boylece tutanak projenin nerede oldugunu gosterir.
+    sira = enson
+    for fz in fazlar:
+        blok = [x for x in yeni if x[0].split(".")[0] == fz]
+        tarih = fr81_faz_tarihi(v, fz)
+        durum = "Kapandı" if tarih <= bugun else "Açık"
+        satir_yaz(r, "──  %d. Toplantı — Faz %s: %s — %s  ──"
+                  % (toplanti_no, fz, FR81_FAZ_AD.get(fz, ""), tarih), False, ayirac=True)
+        r += 1
+        toplanti_no += 1
+        for madde, konu, sorumlu, aciklama in blok:
+            sira += 1
+            satir_yaz(r, (sira, madde, konu, sorumlu, tarih, aciklama, durum), z)
             z = not z
             r += 1
 
     ws.cell(r + 1, 1, "Maddeler APQP takip formundaki (FR91) madde numaralarına bağlıdır. "
-                      "Her toplantıda yeni maddeler bu formun altına eklenir; önceki maddeler korunur."
+                      "Her APQP fazının kendi toplantısı vardır; gündem faza göre değişir. "
+                      "Yeni maddeler bu formun altına eklenir, önceki toplantılar korunur. "
+                      "Faz tarihleri APQP başlangıcına göre hesaplanır (modüldeki Gantt ile aynı takvim)."
             ).font = Font(size=8, italic=True, color="808080")
     ws.merge_cells(start_row=r + 1, start_column=1, end_row=r + 1, end_column=7)
     ws.print_area = "A1:G%d" % (r + 1)
