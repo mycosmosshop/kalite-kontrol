@@ -1700,7 +1700,7 @@ def pl130_birim(k):
         return "g"
     if "YANMA" in ad or "YANMA" in y:
         return "mm/dk"
-    if "MİKROMETRE" in y or "MIKROMETRE" in y:
+    if "MİKROMETRE" in y or "MIKROMETRE" in y or "MICROMET" in y:
         return "µm"
     return "mm"
 

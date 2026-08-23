@@ -577,11 +577,16 @@ def _metin_mi(im, s):
     if s["yon"] == "d":
         b = b.rotate(-90, expand=True)
     b = b.resize((b.width * 5, b.height * 5), Image.LANCZOS)
-    try:
-        t = pytesseract.image_to_string(b, config="--psm 7").strip()
-    except Exception:
-        return False
-    return len(re.findall(r"[A-Za-zÄÖÜäöüßÇĞİÖŞÜçğıöşü]", t)) >= 2
+    # Kesik kelime parcalari ("We", "rd") tek gecişte okunamayabiliyor;
+    # iki psm denenir. Harf bulunan kutu olcu degildir.
+    for psm in ("7", "8"):
+        try:
+            t = pytesseract.image_to_string(b, config="--psm " + psm).strip()
+        except Exception:
+            continue
+        if len(re.findall(r"[A-Za-zÄÖÜäöüßÇĞİÖŞÜçğıöşü]", t)) >= 2:
+            return True
+    return False
 
 
 def _sayi_kutusu(kar):
@@ -667,6 +672,12 @@ def tum_olculer(im, capa, plan_degerleri=(), geometri_ele=False):
         # tablo gözünde DEĞİL, (3) çizimin kendi referans çemberinin içinde
         # DEĞİL. Yoğunluk elemesi kaldırıldı: ölçü yoğun bölgelerde gerçek
         # ölçüleri de kesiyordu.
+        # Standart teknik resim cercevesinde SAG SUTUN antet bolgesidir
+        # (baslik blogu, revizyon tablosu, referans listesi) ve en alt serit
+        # form dipnotudur; ikisinde de olcu bulunmaz. DIN/ISO'da baslik blogu
+        # ~180 mm genisligindedir, A1 sayfada sayfa eninin ~%21'i.
+        kutu = [s for s in kutu
+                if s["y"] + s["h"] < H * 0.90 and s["x"] < W * 0.79]
         kutu = [s for s in kutu
                 if _olcu_cizgisi_var(im, s)
                 and not _cizgili_hucrede(im, s)
