@@ -889,106 +889,80 @@ def fr81(v, hedef):
 # hesaplanır. Darboğaz = en düşük vardiya kapasitesi olan operasyon.
 # Run @ Rate kabul esigi: gerceklesen uygun urun / planlanan kapasite
 RUN_RATE_ESIK = 0.85
+# Sanifoam calisma duzeni: 3 vardiya x 5 gun = 15 vardiya/hafta, 50 calisma
+# haftasi. Hat verimi ve hurda teklif degerleridir.
+RR_VARDIYA_HAFTA, RR_HAFTA_YIL = 15, 50
+RR_HAT_VERIM, RR_HURDA = 0.99, 0.005
+# Deneme OEE: gercek deneme kaydi girilene kadar kapasite hesabindan turetilir.
+# Formda duras sebebi olarak ACIKCA yazilir, olculmus gibi sunulmaz.
+RR_KULLANIM, RR_PERFORMANS, RR_KALITE = 0.94, 0.97, 0.995
 
 
 def run_at_rate(v, hedef):
-    """Run @ Rate — kapasite doğrulama denemesi (FR91 madde 5.12).
+    """Run @ Rate — MUSTERININ KENDI FORMU (Run-at-Rate.xlsm) doldurulur.
 
-    Müşterinin talep ettiği hızda, DARBOĞAZ operasyonun bir vardiya boyunca
-    gerçekten üretebildiğini gösterir. Planlanan hız kapasite formundaki
-    hesaptan gelir; gerçekleşen hız denemede ölçülür (OEE = kullanılabilirlik
-    × performans × kalite).
+    Sablon zip duzeyinde yamalanir: dosyada VBA projesi, 4 grafik ve 4 gorsel
+    var; openpyxl ile acilip kaydedilse hepsi silinirdi.
+
+    Sutun duzeni sablonun kendi duzenidir: her PROSES ADIMI bir sutun
+    (E=STEP 1 ... J=STEP 6). Operasyon karti rotasi bu sutunlara yazilir.
+    Golgeli hucreler (14, 20-23, 28-32, 36, 37) SABLONUN FORMULLERIDIR,
+    dokunulmaz — Excel kendisi hesaplar.
     """
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-
-    satirlar = v.get("kapasite_satirlari") or []
+    kaynak = os.path.join(PPAP_KLASOR, "Run-at-Rate.xlsm")
+    if not os.path.exists(kaynak):
+        print("   ! Run @ Rate şablonu bulunamadı: %s" % kaynak)
+        return 0
+    satirlar = [o for o in (v.get("kapasite_satirlari") or []) if o.get("kap")]
     if not satirlar:
         return 0
-    darbogaz = min(satirlar, key=lambda o: o["kap"] or 10 ** 9)
-    rolAd = dict((rol, a) for rol, a in v["ekip"])
-    imza_ad, _ = IMZA.get(v["lokasyon"], IMZA["eskisehir"])
+    sayfa = sayfa_yolu(kaynak, "Run at Rate Template")
+    if not sayfa:
+        return 0
 
-    wb = Workbook(); ws = wb.active; ws.title = "Run @ Rate"
-    ws.sheet_view.showGridLines = False
-    for h, g in zip("ABCDEFG", (34, 18, 16, 16, 14, 14, 30)):
-        ws.column_dimensions[h].width = g
-    kutu = antet(ws, "RUN @ RATE — KAPASİTE DOĞRULAMA", "FR 24-R",
-                 datetime.date.today().strftime("%d.%m.%Y"), son_sutun=7)
+    saat = float(v["vardiya_saat"]) or 1.0
+    d = {
+        # I - Baslik. Birlesik alanlarin SOL UST hucresi yazilir.
+        "D4": v["ad"], "D5": v["kod"],
+        "H4": "Sanifoam Endüstri ve Tüketim Ürünleri San. Tic. A.Ş.",
+        "H5": "%s (DUNS %s)" % (v["lokasyon_ad"], duns(v)),
+        "H6": v["termin"],
+        # Yillik talep MUSTERININ verisidir, ERP'de yok. Sablonun ornek degeri
+        # (800000) BIRAKILMAZ; bos kalir ve formuller IF(...="") ile bos doner.
+        "E6": None,
+        # Tedarikci temsilcisi imza satiri
+        "D44": dict(v["ekip"]).get("Kalite Güvence Müdürü", ""),
+    }
 
-    r = 6
-    for etiket, deger in (("Parça Kodu / Adı :", "%s — %s" % (v["kod"], v["ad"])),
-                          ("Müşteri :", v["musteri"]),
-                          ("Lokasyon :", v["lokasyon_ad"]),
-                          ("Deneme Tarihi :", v["termin"]),
-                          ("Darboğaz Operasyon :",
-                           "Op.%s %s" % (darbogaz["op"], darbogaz["makine"]))):
-        c = ws.cell(r, 1, etiket)
-        c.font = Font(bold=True, size=10); c.alignment = Alignment(horizontal="right")
-        ws.cell(r, 2, deger)
-        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=7)
-        r += 1
-    r += 1
-
-    # Deneme: bir vardiya. Planlanan = kapasite hesabi, gerceklesen = OEE ile
-    plan_adet = int(darbogaz["kap"] or 0)
-    KULLANIM, PERFORMANS, KALITE = 0.94, 0.97, 0.995      # denemede ölçülen
-    gercek = int(round(plan_adet * KULLANIM * PERFORMANS * KALITE))
-    oee = KULLANIM * PERFORMANS * KALITE
-    olcum = [
-        ("Planlanan vardiya kapasitesi (adet)", plan_adet, "kapasite hesabı — darboğaz operasyon"),
-        ("Kullanılabilirlik (availability)", "%%%.1f" % (KULLANIM * 100),
-         "duruş: ayar, mola, arıza"),
-        ("Performans (performance)", "%%%.1f" % (PERFORMANS * 100),
-         "çevrim süresi sapması"),
-        ("Kalite (quality)", "%%%.1f" % (KALITE * 100), "hurda / yeniden işlem"),
-        ("OEE", "%%%.1f" % (oee * 100), "kullanılabilirlik × performans × kalite"),
-        ("Gerçekleşen vardiya üretimi (adet)", gercek, "denemede sayılan uygun ürün"),
-        ("Gerçekleşme oranı", "%%%.1f" % (gercek / plan_adet * 100 if plan_adet else 0),
-         "gerçekleşen / planlanan"),
-    ]
-    basliklar = ["Ölçüt", "Değer", "", "", "", "", "Açıklama"]
-    for i, b in enumerate(basliklar):
-        c = ws.cell(r, 1 + i, b)
-        c.font = Font(bold=True, size=10, color="FFFFFF")
-        c.fill = PatternFill("solid", fgColor="1F3864"); c.border = kutu
-        c.alignment = Alignment(horizontal="center", vertical="center")
-    r += 1
-    for ad_, deger, aciklama in olcum:
-        ws.cell(r, 1, ad_).font = Font(size=10, bold=ad_.startswith(("OEE", "Gerçekleşme")))
-        ws.cell(r, 2, deger).alignment = Alignment(horizontal="center")
-        ws.cell(r, 7, aciklama).font = Font(size=9, color="808080")
-        for c in range(1, 8):
-            ws.cell(r, c).border = kutu
-        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=6)
-        r += 1
-
-    kabul = gercek >= plan_adet * RUN_RATE_ESIK
-    r += 1
-    s = ws.cell(r, 1, "SONUÇ: %s" % ("KABUL — talep edilen hızda üretim doğrulandı"
-                                     if kabul else
-                                     "ŞARTLI — gerçekleşme %%%d'ın altında, eylem planı gerekir"
-                                     % round(RUN_RATE_ESIK * 100)))
-    s.font = Font(bold=True, size=11, color="166534" if kabul else "92400E")
-    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=7)
-    r += 1
-    ws.cell(r, 1, "Kabul ölçütü: bir vardiya boyunca kesintisiz üretimde gerçekleşen "
-                  "uygun ürün adedi, planlanan kapasitenin en az %%%d'ı olmalıdır "
-                  "(AIAG APQP 4.1 — Önemli Üretim Çalışması)."
-                  % round(RUN_RATE_ESIK * 100)).font = \
-        Font(size=8, italic=True, color="808080")
-    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=7)
-    r += 2
-    for etiket, kisi in (("Yürüten :", rolAd.get("Üretim", imza_ad)),
-                         ("Doğrulayan :", rolAd.get("Kalite Mühendisi", imza_ad)),
-                         ("Onaylayan :", rolAd.get("Kalite Güvence Müdürü", imza_ad))):
-        ws.cell(r, 1, etiket).font = Font(bold=True, size=10)
-        ws.cell(r, 2, kisi).font = Font(size=10)
-        r += 1
-    ws.page_setup.orientation = "landscape"
-    wb.save(hedef)
-    return len(olcum)
-
+    SUT = ["E", "F", "G", "H", "I", "J"]
+    GIRDI = [9, 11, 12, 13, 16, 17, 18, 19, 25, 26, 27, 33, 34]
+    for i, sut in enumerate(SUT):
+        if i >= len(satirlar):
+            for r in GIRDI:                      # kullanilmayan adim sutunu
+                d["%s%d" % (sut, r)] = None      # sablonun ornek verisi kalmasin
+            continue
+        o = satirlar[i]
+        uretilen = int(round(o["kap"] * RR_KULLANIM * RR_PERFORMANS))
+        d.update({
+            "%s9" % sut: "Op.%s %s" % (o["op"], o["makine"]),
+            # II - Kapasite (teklif edilen)
+            "%s11" % sut: round(saat, 2),
+            "%s12" % sut: RR_VARDIYA_HAFTA,
+            "%s13" % sut: RR_HAFTA_YIL,
+            "%s16" % sut: 1,                     # hattin bu parcaya ayrilan orani
+            "%s17" % sut: round(o["kap"] / saat, 2),
+            "%s18" % sut: RR_HURDA,
+            "%s19" % sut: RR_HAT_VERIM,
+            # III - Deneme sonuclari
+            "%s25" % sut: round(saat, 2),
+            "%s26" % sut: uretilen,
+            "%s27" % sut: int(round(uretilen * (1 - RR_KALITE))),
+            "%s33" % sut: round(saat * (1 - RR_KULLANIM), 2),
+            "%s34" % sut: "Planlı duruş (ayar/mola/tip değişimi) — gerçek deneme "
+                          "kaydı girilene kadar kapasite hesabından türetildi",
+        })
+    hucre_yaz(kaynak, hedef, sayfa, d)
+    return len(satirlar)
 
 def kapasite(v, hedef):
     from openpyxl import Workbook
@@ -4553,7 +4527,7 @@ def main():
     n = uret("Kapasite Takip Formu %s.xlsx" % kod, kapasite, "Kapasite Takip Formu")
     if n: print("   ✓ Kapasite Takip Formu             (%d operasyon, darboğaz: %s / %s adet)"
                 % (n, v["darbogaz"]["makine"][:26], v["darbogaz"]["kap"]))
-    n = uret("Run @ Rate %s.xlsx" % kod, run_at_rate, "Run @ Rate")
+    n = uret("Run @ Rate %s.xlsm" % kod, run_at_rate, "Run @ Rate")
     if n: print("   ✓ Run @ Rate                        (kapasite doğrulama · FR91 5.12)")
 
 
