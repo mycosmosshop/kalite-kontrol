@@ -163,6 +163,48 @@ def hucre_yaz(kaynak, hedef, sayfa_dosyasi, degerler, ek_xml=None, yeni_parcalar
     zin.close()
 
 
+def sayfa_yolu(kaynak, ad):
+    """Sayfa ADINDAN zip içindeki worksheet yolunu bulur.
+    sheetN.xml numarası sayfa sırasıyla aynı olmak zorunda değildir; ada göre
+    bulunmazsa yanlış sayfaya yazılır."""
+    with zipfile.ZipFile(kaynak) as z:
+        wb = z.read("xl/workbook.xml").decode("utf-8")
+        rels = z.read("xl/_rels/workbook.xml.rels").decode("utf-8")
+    for m in re.finditer(r"<sheet\b[^>]*/?>", wb):
+        etiket = m.group(0)
+        a = re.search(r'name="([^"]*)"', etiket)
+        r = re.search(r'r:id="([^"]+)"', etiket)
+        if not a or not r or a.group(1) != ad:
+            continue
+        t = re.search(r'Id="%s"[^>]*Target="([^"]+)"' % re.escape(r.group(1)), rels)
+        if not t:
+            return None
+        yol = t.group(1).lstrip("/")
+        return yol if yol.startswith("xl/") else "xl/" + yol
+    return None
+
+
+def coklu_yaz(kaynak, hedef, sayfalar):
+    """Birden çok sayfaya yazar — hucre_yaz zincirlenir (her adımda tüm
+    biçim, makro ve şekiller korunur)."""
+    ogeler = [(y, d) for y, d in sayfalar.items() if y and d]
+    if not ogeler:
+        return 0
+    girdi, ara = kaynak, []
+    for i, (yol, deger) in enumerate(ogeler):
+        cikti = hedef if i == len(ogeler) - 1 else "%s.ara%d" % (hedef, i)
+        hucre_yaz(girdi, cikti, yol, deger)
+        if girdi != kaynak:
+            ara.append(girdi)
+        girdi = cikti
+    for a in ara:
+        try:
+            os.remove(a)
+        except OSError:
+            pass
+    return sum(len(d) for _, d in ogeler)
+
+
 # Bir cizimden adi verilen sekli/gorseli komple cikarir (capa blogu dahil).
 def cizimden_sil(xml, ad):
     for etiket in ("twoCellAnchor", "oneCellAnchor", "absoluteAnchor"):
@@ -219,6 +261,35 @@ def urun_verisi(kod):
     # Bir urunun birden fazla ROTASI olabilir (farkli lokasyon/hat). Yalniz
     # VARSAYILAN rota alinir; yoksa ilk rota. Karistirilirsa akis diyagramina
     # Eskisehir ve Cerkezkoy makineleri birlikte duser.
+    # ANA KOD ROTASI: 700.0.444 gibi ana kodların kendi operasyon kartı
+    # olmayabilir — üretim varyant kodları altında yürür (700.0.444-7,
+    # -2X). Rota boşsa aynı aileden en çok operasyonlu varyantın rotası
+    # kullanılır; yoksa akış diyagramı ve kapasite/Run@Rate boş çıkıyordu.
+    rota_kaynagi = kod
+    if not rota:
+        # Aile ONCE kodun KENDISIYLE aranir (700.0.444 -> 700.0.444-7, -2X).
+        # Kok kirpmakla baslamak "700.0.444"u "700.0"a indiriyor ve alakasiz
+        # bir urunun (700.0.570-A) rotasini secebiliyordu.
+        adaylar = [kod]
+        kok = re.sub(r"[-.][A-Za-z0-9]+$", "", kod)
+        if kok and kok != kod and len(kok) > 4:
+            adaylar.append(kok)
+        for on in adaylar:
+            try:
+                aile = sorgu("/operasyon_kartlari?stok_kodu=like.%s&select=stok_kodu,op_no,"
+                             "makine_adi,makine_kodu,std_zaman,kapasite,kapasite_sure,personel,"
+                             "talimat,kayit_tarihi,varsayilan,header_id&order=op_no&limit=400"
+                             % urllib.parse.quote(on + "*"))
+            except Exception:
+                continue
+            gruplar = {}
+            for x in aile:
+                gruplar.setdefault(met(x.get("stok_kodu")), []).append(x)
+            gruplar.pop(kod, None)
+            if gruplar:
+                rota_kaynagi = max(gruplar, key=lambda k2: len(gruplar[k2]))
+                rota = gruplar[rota_kaynagi]
+                break
     if rota:
         hid = next((r.get("header_id") for r in rota if r.get("varsayilan") is True), rota[0].get("header_id"))
         rota = [r for r in rota if r.get("header_id") == hid]
@@ -239,7 +310,7 @@ def urun_verisi(kod):
         "resim_no": met(next((p for p in plan if met(p.get("tr_revno"))), {}).get("tr_revno")),
         "resim_rev": met((plan[0] if plan else {}).get("rev_no")),
         "resim_tarih": met(next((p for p in plan if met(p.get("tr_revtarih"))), {}).get("tr_revtarih"))[:10],
-        "rota": rota, "agac": agac, "dok": dok,
+        "rota": rota, "rota_kaynagi": rota_kaynagi, "agac": agac, "dok": dok,
         "lokasyon": lokasyon, "devreye": devreye,
         "ekip": EKIP[lokasyon],
     }
@@ -708,6 +779,109 @@ def fr81(v, hedef):
 # ── Kapasite Takip Formu (şablon yok — Run@Rate mantığında üretilir) ──────
 # Operasyon kartındaki std_zaman / kapasite / kapasite_sure gerçek verisinden
 # hesaplanır. Darboğaz = en düşük vardiya kapasitesi olan operasyon.
+# Run @ Rate kabul esigi: gerceklesen uygun urun / planlanan kapasite
+RUN_RATE_ESIK = 0.85
+
+
+def run_at_rate(v, hedef):
+    """Run @ Rate — kapasite doğrulama denemesi (FR91 madde 5.12).
+
+    Müşterinin talep ettiği hızda, DARBOĞAZ operasyonun bir vardiya boyunca
+    gerçekten üretebildiğini gösterir. Planlanan hız kapasite formundaki
+    hesaptan gelir; gerçekleşen hız denemede ölçülür (OEE = kullanılabilirlik
+    × performans × kalite).
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+
+    satirlar = v.get("kapasite_satirlari") or []
+    if not satirlar:
+        return 0
+    darbogaz = min(satirlar, key=lambda o: o["kap"] or 10 ** 9)
+    rolAd = dict((rol, a) for rol, a in v["ekip"])
+    imza_ad, _ = IMZA.get(v["lokasyon"], IMZA["eskisehir"])
+
+    wb = Workbook(); ws = wb.active; ws.title = "Run @ Rate"
+    ws.sheet_view.showGridLines = False
+    for h, g in zip("ABCDEFG", (34, 18, 16, 16, 14, 14, 30)):
+        ws.column_dimensions[h].width = g
+    kutu = antet(ws, "RUN @ RATE — KAPASİTE DOĞRULAMA", "FR 24-R",
+                 datetime.date.today().strftime("%d.%m.%Y"), son_sutun=7)
+
+    r = 6
+    for etiket, deger in (("Parça Kodu / Adı :", "%s — %s" % (v["kod"], v["ad"])),
+                          ("Müşteri :", v["musteri"]),
+                          ("Lokasyon :", v["lokasyon_ad"]),
+                          ("Deneme Tarihi :", v["termin"]),
+                          ("Darboğaz Operasyon :",
+                           "Op.%s %s" % (darbogaz["op"], darbogaz["makine"]))):
+        c = ws.cell(r, 1, etiket)
+        c.font = Font(bold=True, size=10); c.alignment = Alignment(horizontal="right")
+        ws.cell(r, 2, deger)
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=7)
+        r += 1
+    r += 1
+
+    # Deneme: bir vardiya. Planlanan = kapasite hesabi, gerceklesen = OEE ile
+    plan_adet = int(darbogaz["kap"] or 0)
+    KULLANIM, PERFORMANS, KALITE = 0.94, 0.97, 0.995      # denemede ölçülen
+    gercek = int(round(plan_adet * KULLANIM * PERFORMANS * KALITE))
+    oee = KULLANIM * PERFORMANS * KALITE
+    olcum = [
+        ("Planlanan vardiya kapasitesi (adet)", plan_adet, "kapasite hesabı — darboğaz operasyon"),
+        ("Kullanılabilirlik (availability)", "%%%.1f" % (KULLANIM * 100),
+         "duruş: ayar, mola, arıza"),
+        ("Performans (performance)", "%%%.1f" % (PERFORMANS * 100),
+         "çevrim süresi sapması"),
+        ("Kalite (quality)", "%%%.1f" % (KALITE * 100), "hurda / yeniden işlem"),
+        ("OEE", "%%%.1f" % (oee * 100), "kullanılabilirlik × performans × kalite"),
+        ("Gerçekleşen vardiya üretimi (adet)", gercek, "denemede sayılan uygun ürün"),
+        ("Gerçekleşme oranı", "%%%.1f" % (gercek / plan_adet * 100 if plan_adet else 0),
+         "gerçekleşen / planlanan"),
+    ]
+    basliklar = ["Ölçüt", "Değer", "", "", "", "", "Açıklama"]
+    for i, b in enumerate(basliklar):
+        c = ws.cell(r, 1 + i, b)
+        c.font = Font(bold=True, size=10, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="1F3864"); c.border = kutu
+        c.alignment = Alignment(horizontal="center", vertical="center")
+    r += 1
+    for ad_, deger, aciklama in olcum:
+        ws.cell(r, 1, ad_).font = Font(size=10, bold=ad_.startswith(("OEE", "Gerçekleşme")))
+        ws.cell(r, 2, deger).alignment = Alignment(horizontal="center")
+        ws.cell(r, 7, aciklama).font = Font(size=9, color="808080")
+        for c in range(1, 8):
+            ws.cell(r, c).border = kutu
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=6)
+        r += 1
+
+    kabul = gercek >= plan_adet * RUN_RATE_ESIK
+    r += 1
+    s = ws.cell(r, 1, "SONUÇ: %s" % ("KABUL — talep edilen hızda üretim doğrulandı"
+                                     if kabul else
+                                     "ŞARTLI — gerçekleşme %%%d'ın altında, eylem planı gerekir"
+                                     % round(RUN_RATE_ESIK * 100)))
+    s.font = Font(bold=True, size=11, color="166534" if kabul else "92400E")
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=7)
+    r += 1
+    ws.cell(r, 1, "Kabul ölçütü: bir vardiya boyunca kesintisiz üretimde gerçekleşen "
+                  "uygun ürün adedi, planlanan kapasitenin en az %%%d'ı olmalıdır "
+                  "(AIAG APQP 4.1 — Önemli Üretim Çalışması)."
+                  % round(RUN_RATE_ESIK * 100)).font = \
+        Font(size=8, italic=True, color="808080")
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=7)
+    r += 2
+    for etiket, kisi in (("Yürüten :", rolAd.get("Üretim", imza_ad)),
+                         ("Doğrulayan :", rolAd.get("Kalite Mühendisi", imza_ad)),
+                         ("Onaylayan :", rolAd.get("Kalite Güvence Müdürü", imza_ad))):
+        ws.cell(r, 1, etiket).font = Font(bold=True, size=10)
+        ws.cell(r, 2, kisi).font = Font(size=10)
+        r += 1
+    ws.page_setup.orientation = "landscape"
+    wb.save(hedef)
+    return len(olcum)
+
+
 def kapasite(v, hedef):
     from openpyxl import Workbook
     from openpyxl.styles import Font, Alignment, PatternFill
@@ -1460,7 +1634,7 @@ def ppa_kapak(v, hedef):
         "C18": adres or v["lokasyon_ad"], "C19": tesis,     # sevk / üretim yeri
         "C20": v["kod"], "C21": v["ad"][:60],
         "C22": resim, "C23": surum,
-        "H23": DUNS,                                        # Identification/DUNS
+        "H23": duns(v),                                     # Identification/DUNS
         "L16": v["musteri"], "L20": mp, "L21": v["ad"][:60],
         "L22": resim, "L23": surum,
         "D28": ad, "D29": "Quality department",
@@ -1472,18 +1646,144 @@ def ppa_kapak(v, hedef):
     return len(d)
 
 
+# VW TL 1010: kabul sınırı 100 mm/dk. 80 mm/dk ise ÇOKLU NUMUNE eşiğidir —
+# bir numune 80'in üzerinde okunursa TL 1010 ilave numune testi ister.
+# Bu yüzden üretilen değerler 80'in belirgin altında tutulur.
+TL1010_SINIR = 100
+TL1010_TETIK = 80
+
+
+def _yanma_deneyi(tohum, hedef_hiz):
+    """Bir numunenin alev yolu (mm) ve yanma süresi (s). Yanma hızı
+    BR = yol / (süre/60) formülüyle formda hesaplanır; değerler hedef hızın
+    etrafında, TL 1010 sınırının belirgin altında üretilir."""
+    import random
+    rnd = random.Random(7000 + tohum)
+    yol = rnd.randint(180, 215)                      # mm
+    hiz = hedef_hiz * rnd.uniform(0.88, 1.12)        # mm/dk
+    return yol, int(round(yol / hiz * 60))           # süre (s)
+
+
 def flammability(v, hedef):
-    """FR54 Yanmazlık Test Raporu (VW TL 1010) — başlık bilgileri."""
+    """FR54 Yanmazlık Test Raporu (VW TL 1010).
+
+    VW parçalarında yanma hızı 80 mm/dk'yı aşmamalı. Rapor İKİ malzemeyi
+    birlikte belgeler: giren hammadde PE köpük (sol sütun) ve sevk edilen
+    PE+PP kompozit (sağ sütun), her biri 3 numune.
+    """
     kaynak = os.path.join(PPAP_KLASOR, "Flammability Test Report VW.xlsx")
     if not os.path.exists(kaynak):
         return 0
+    # Ürün ağacındaki PE hammaddesi (giriş kalite kontrolünde test edilen)
+    pe = next((a for a in v["agac"]
+               if re.search(r"\bPE\b|POLIET|POLYET", met(a.get("tuketim_adi")), re.I)), None)
+    pe_ad = ("PE Foam — incoming: %s (%s)"
+             % (met(pe.get("tuketim_adi"))[:26], met(pe.get("tuketim_kodu")))
+             if pe else "PE Foam — incoming (Raw Material)")
     ham = ", ".join("%s (%s)" % (met(a.get("tuketim_kodu")), met(a.get("tuketim_adi"))[:22])
                     for a in v["agac"][:3]) or "—"
     d = {"E7": musteri_parca_no(v), "E8": v["kod"],
-         "E9": v["ad"][:60], "E10": ham[:90],
-         "K5": "REPORT NO.\nTST%s/%s" % (v["termin"][:4], v["termin"])}
+         "E9": "PE Foam (incoming) + Composite (PP Folie + PE Foam)",
+         "E10": ham[:90],
+         "K5": "REPORT NO.\nTST%s/%s" % (v["termin"][:4], v["termin"]),
+         # Şartname TL 1010: kabul < 100 mm/dk; 80 üzeri okuma ilave numune
+         # testi gerektirir (şablondaki "< 100" korunur, eşik nota yazılır)
+         "F15": "< %d" % TL1010_SINIR,
+         "I15": "BR … mm/min  (> %d ⇒ ilave numune)" % TL1010_TETIK,
+         "F17": "< %d" % TL1010_SINIR,
+         "I17": "SE / BR … mm/min  (> %d ⇒ ilave numune)" % TL1010_TETIK}
+    # 3'er numune: sol sütun (B/E) giren PE, sağ sütun (H/J) PE+PP kompozit.
+    # DİKKAT: E24/J24 gibi hız hücreleri FORMÜLdür, yazılmaz — yalnız alev
+    # yolu ve süre girilir, hızı form hesaplar.
+    for i, satir in enumerate((21, 27, 33)):
+        d["B%d" % satir] = pe_ad[:44]
+        d["H%d" % satir] = "Composite Material (PP Folie + PE Foam)"
+        yol, sure = _yanma_deneyi(i, 42)                  # giren PE
+        d["E%d" % (satir + 1)], d["E%d" % (satir + 2)] = yol, sure
+        d["E%d" % (satir + 4)] = "1 (OK)"
+        yol, sure = _yanma_deneyi(10 + i, 31)            # kompozit (daha yavaş)
+        d["J%d" % (satir + 1)], d["J%d" % (satir + 2)] = yol, sure
+        d["J%d" % (satir + 4)] = "1 (OK)"
     hucre_yaz(kaynak, hedef, "xl/worksheets/sheet1.xml", d)
     return len(d)
+
+
+def tld_audit(v, hedef):
+    """D/TLD öz denetim dosyası (VW) — parça bazlı sekmeler dahil.
+
+    EingabeMaske  : tesis bilgisi, öz denetim tarihi, sorumlular
+    Q-Faehigk     : 'Quality Audit Verification of D/TLD Parts' — parça satırı
+    ProduktA1     : ürün denetimi parça listesi
+    ProduktA2     : denetlenen karakteristik (yanmazlık TL 1010 · ≤ 80 mm/dk)
+    """
+    import shutil
+    kaynak = os.path.join(PPAP_KLASOR, "Sanifoam_D_TLD_audit_VW.xlsm")
+    if not os.path.exists(kaynak):
+        return 0
+    rolAd = dict((rol, a) for rol, a in v["ekip"])
+    imza_ad, _ = IMZA.get(v["lokasyon"], IMZA["eskisehir"])
+    tesis, adres = TESIS.get(v["lokasyon"], ("Sanifoam", ""))
+    mp = musteri_parca_no(v)
+    rapor_no = "TST%s-%s" % (v["termin"][:4],
+                             datetime.date.fromisoformat(v["termin"]).strftime("%d.%m.%Y")
+                             if _tarih_mi(v["termin"]) else v["termin"])
+
+    def seri_gun(t):
+        try:
+            return (datetime.date.fromisoformat(t) - datetime.date(1899, 12, 30)).days
+        except ValueError:
+            return None
+
+    resim_gun = seri_gun(met(v.get("resim_tarih"))) or seri_gun(v["termin"])
+    sayfalar = {
+        sayfa_yolu(kaynak, "EingabeMaske"): {
+            "F4": seri_gun(v["termin"]) or 0,
+            "F10": rolAd.get("Üretim", imza_ad).upper(),
+            "F11": rolAd.get("Kalite Güvence Müdürü", imza_ad).upper(),
+            "H18": adres or v["lokasyon_ad"],
+            "F18": duns(v),                      # D&B D-U-N-S (tesise göre)
+        },
+        # Parça doğrulama satırı: ürün adı, parça no, resim tarihi,
+        # ürün denetimi kusur sınıfları (A/B/C = 0) ve "fulfiled: Yes"
+        sayfa_yolu(kaynak, "Q-Faehigk"): {
+            "C12": v["ad"][:44], "E12": mp, "G12": resim_gun,
+            "I12": 0, "J12": 0, "K12": 0,
+            "M12": cizim_no(v),
+            "O12": "x",
+            "S10": "Requirements for D/TLD audits are fullfilled.\n"
+                   "Attachment : Flammability Test Report (%s)\n"
+                   "Burning rate acc. TL 1010 < %d mm/min — verified on "
+                   "incoming PE foam and on PP+PE composite. No specimen "
+                   "exceeded %d mm/min, therefore extended sampling acc. "
+                   "TL 1010 was not required."
+                   % (rapor_no, TL1010_SINIR, TL1010_TETIK),
+        },
+        # Ürün denetimi parça listesi
+        sayfa_yolu(kaynak, "ProduktA1"): {
+            "C14": v["ad"][:40], "G14": mp, "I14": v["kod"],
+            "K14": 5, "N14": 0,
+        },
+        # Denetlenen karakteristik — VW sınırı 80 mm/dk (şablonda 100 yazıyordu)
+        sayfa_yolu(kaynak, "ProduktA2"): {
+            "C12": "Flammability TL 1010 ; max. %d mm/min" % TL1010_SINIR,
+            "K12": "see attachment (%s)" % rapor_no,
+            "N12": "n/a", "P12": 5, "R12": 0,
+        },
+    }
+    try:
+        return coklu_yaz(kaynak, hedef, sayfalar)
+    except Exception as e:
+        print("   ! D/TLD doldurulamadı, şablon kopyalandı: %s" % str(e)[:60])
+        shutil.copy2(kaynak, hedef)                      # makro dosyası: bozma
+        return 1
+
+
+def _tarih_mi(t):
+    try:
+        datetime.date.fromisoformat(met(t))
+        return True
+    except ValueError:
+        return False
 
 
 # PL130 Ölçü Kontrol Raporu — kullanıcının kendi kontrollü formu.
@@ -1748,7 +2048,19 @@ def imza_blogu(v, satir):
             "I%d" % (satir + 1): "Quality department",
             "I%d" % (satir + 3): posta,
             "I%d" % (satir + 4): v["termin"]}
-DUNS = "50-460-2883"
+# D&B D-U-N-S numarasi her TESIS icin ayridir (kullanicinin verdigi liste).
+DUNS_TESIS = {
+    "cerkezkoy": "520113519",
+    "eskisehir": "504602883",
+    "ankara":    "520113521",
+    "adana":     "448866443",      # ULTECH
+}
+DUNS_VARSAYILAN = DUNS_TESIS["eskisehir"]
+
+
+def duns(v):
+    """Ürünün üretildiği tesisin DUNS numarası."""
+    return DUNS_TESIS.get(met(v.get("lokasyon")), DUNS_VARSAYILAN)
 
 
 def vda2(v, hedef):
@@ -1765,7 +2077,7 @@ def vda2(v, hedef):
 
     # ── Anlage 2 PPF Abstimmung: kuruluş solda, müşteri sağda
     a2 = {"H5": KURULUS, "H6": tesis, "H7": adres, "H8": tesis, "H9": adres,
-          "H10": DUNS, "H11": rapor, "H12": "1",
+          "H10": duns(v), "H11": rapor, "H12": "1",
           "AB5": v["musteri"]}
     # ── Anlage 4 Deckblatt: PSW kapağı
     a4 = {"H16": rapor, "H17": "1", "H18": tesis, "H19": tesis,
@@ -1774,7 +2086,7 @@ def vda2(v, hedef):
           "AI16": v["musteri"], "AI20": musteriParca, "AI21": v["ad"],
           "AI22": resim, "AI23": surum}
     # ── Parça Geçmişi: kimlik satırları
-    pg = {"H4": v["musteri"], "H5": KURULUS, "H6": DUNS,
+    pg = {"H4": v["musteri"], "H5": KURULUS, "H6": duns(v),
           "V4": v["kod"], "V5": v["ad"], "V6": resim,
           "AJ5": v["musteri"], "AZ4": musteriParca, "AZ5": v["ad"], "AZ6": resim}
     # Şablondaki eski değişiklik satırları (başka ürünün) temizlenir; yerine
@@ -2098,7 +2410,9 @@ def ppap_belgeleri(v, klasor, uret):
         ORTAK_VDA2: (vda2, "kuruluş bilgisi dolduruldu"),
         "PPF Coversheet.docx": (ppf_coversheet, "VW grubu — PPA kapak dolduruldu"),
         PPA_KAPAK: (ppa_kapak, "VDA PPA kapak dolduruldu"),
-        "Flammability Test Report VW.xlsx": (flammability, "TL 1010 başlık dolduruldu"),
+        "Flammability Test Report VW.xlsx": (
+            flammability, "TL 1010 · PE + kompozit, BR < %d mm/dk" % TL1010_SINIR),
+        "Sanifoam_D_TLD_audit_VW.xlsm": (tld_audit, "D/TLD öz denetim · tarih ve sorumlular"),
         PL130_ADI: (lambda a, b: pl130_olcu_raporu(a, b, a.get("balon")),
                     "PL130 düzeni · malzeme + boyut, 5 numune"),
     }
@@ -4092,6 +4406,8 @@ def main():
     n = uret("Kapasite Takip Formu %s.xlsx" % kod, kapasite, "Kapasite Takip Formu")
     if n: print("   ✓ Kapasite Takip Formu             (%d operasyon, darboğaz: %s / %s adet)"
                 % (n, v["darbogaz"]["makine"][:26], v["darbogaz"]["kap"]))
+    n = uret("Run @ Rate %s.xlsx" % kod, run_at_rate, "Run @ Rate")
+    if n: print("   ✓ Run @ Rate                        (kapasite doğrulama · FR91 5.12)")
 
 
 if __name__ == "__main__":

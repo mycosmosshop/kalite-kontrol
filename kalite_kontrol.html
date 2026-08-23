@@ -572,6 +572,12 @@ async function afterLogin(){
     return;
   }
   $('#pending').classList.add('hidden');
+  // Derin baglanti: ?sekme=operasyon&kod=700.0.444 -> o sekme, o stok kodu
+  // (APQP modulu "Operasyon/Calisma talimatlari" adimindan buraya gonderiyor)
+  const _q=new URLSearchParams(location.search);
+  const _istek=_q.get('sekme');
+  const _ib=_istek&&document.querySelector('nav.tabs button[data-tab="'+_istek+'"]');
+  if(_ib && !_ib.classList.contains('hidden')){ switchTab(_istek); return; }
   let _last=null; try{ _last=localStorage.getItem('kk_active_tab'); }catch(e){}
   const _lb=_last&&document.querySelector('nav.tabs button[data-tab="'+_last+'"]');
   switchTab(_lb && !_lb.classList.contains('hidden') ? _last : 'uretimler');   // yenileme sonrası kaldığın sekme (yetkin yoksa varsayılan)
@@ -5335,6 +5341,8 @@ async function renderOperasyon(root){
     cnt)));
   const search=el('input',{class:'inp',placeholder:'🔍 stok kodu / ad / rota ile ara…',style:'width:100%'});
   search.oninput=()=>{ clearTimeout(_opDeb); _opDeb=setTimeout(renderList,200); };
+  // ?kod=... ile gelindiyse dogrudan o urunun karti suzulur (APQP madde 3.8)
+  { const _k=new URLSearchParams(location.search).get('kod'); if(_k) search.value=_k; }
   const listDiv=el('div',{style:'border:1px solid var(--line);border-radius:8px;margin-top:8px;overflow:hidden'});
   root.append(el('div',{class:'card'},el('label',{class:'lab'},'Operasyon Kartı Seç — koda tıkla → kart ALTINDA açılır; aynı koda tekrar tıkla → kapanır'),search,listDiv));
   let HEADERS=[], openCloser=null;

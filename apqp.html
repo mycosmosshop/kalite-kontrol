@@ -172,8 +172,9 @@ const AJAN = 'http://127.0.0.1:17777';
 const MODUL = [
   [/p-?fmea|fmea/i,               'https://mycosmosshop.github.io/pfmea/',                 'PFMEA modulu'],
   [/akış diyagram|akis diyagram/i,'https://mycosmosshop.github.io/pfmea/',                 'Akis semasi (PFMEA modulu)'],
-  [/kontrol plan/i,               'https://mycosmosshop.github.io/kalite-kontrol/',        'Kalite Kontrol modulu'],
-  [/operasyon kart/i,             'https://mycosmosshop.github.io/kalite-kontrol/',        'Kalite Kontrol modulu'],
+  [/kontrol plan/i,               'https://mycosmosshop.github.io/kalite-kontrol/?sekme=plan',   'Kalite Kontrol — Kontrol Planı'],
+  // Operasyon kartlari: modulun ILGILI SEKMESI o urun suzulmus halde acilir
+  [/operasyon kart/i,             'https://mycosmosshop.github.io/kalite-kontrol/?sekme=operasyon', 'Kalite Kontrol — Operasyon Kartları'],
   [/gage ?r&?r|fr86|msa/i,        'https://mycosmosshop.github.io/msa/',                   'MSA modulu'],
   [/fr88|süreç yeterlilik|surec yeterlilik|cp[k]?\b/i,
                                   'https://mycosmosshop.github.io/msa/capability.html',    'Proses Yeterliligi modulu'],
@@ -188,9 +189,15 @@ const MODUL = [
   [/numaralandırılmış|numaralandirilmis|balonla/i,
                                   'https://mycosmosshop.github.io/teknik-resim/',          'Teknik Resim Balonlama modulu'],
 ];
-function modulBaglantisi(form) {
+function modulBaglantisi(form, kod) {
   const f = met(form);
-  for (const [kalip, adres, ad] of MODUL) if (kalip.test(f)) return { adres, ad };
+  for (const [kalip, adres, ad] of MODUL) {
+    if (!kalip.test(f)) continue;
+    // Sekmeli baglantilarda urun kodu da tasinir: modul o urunu suzer
+    const tam = (adres.includes('?sekme=') && kod)
+      ? adres + '&kod=' + encodeURIComponent(kod) : adres;
+    return { adres: tam, ad };
+  }
   return null;
 }
 
@@ -501,7 +508,7 @@ async function apqpUret(giris) {
     adimlar: b.adimlar.map(a => {
       const kanitVar = !!(a.kanit && k[a.kanit]);
       const bitis = gunEkle(son, -(TOPLAM_GUN - (FAZ[b.no] || 56)));
-      const mod = modulBaglantisi(a.form);
+      const mod = modulBaglantisi(a.form, kod);
       const resimAdimi = /teknik resim|şartname|sartname/i.test(met(a.form)) && resim;
       // KANITLAR: ERP modulu · LeanSys stok dokumani · Drive dokumani
       const kanitlar = [];
@@ -527,14 +534,19 @@ async function apqpUret(giris) {
         ekle(k.yeterlilik, 'Yeterlilik: ');
       if (resimAdimi) kanitlar.push({ tur: 'leansys', ad: resim.ad + (resim.rev ? ' · ' + resim.rev : ''), yol: resim.yol });
       adimDriveDosyalari(a.form, drive).forEach(d => kanitlar.push({ tur: 'drive', ad: d.ad, yol: d.yol }));
-      // Kanit varsa adim tamamlanmis sayilir (ERP kaniti ya da dokuman)
-      const tamam = kanitVar || kanitlar.some(x => x.tur !== 'erp');
+      // Kanit varsa adim tamamlanmis sayilir (ERP kaniti ya da dokuman).
+      // Kaniti OLMAYAN adimlar (yalniz "doküman yükle" secenegi olanlar)
+      // orgutsel adimlardir — ekip beyaniyla planlanan terminde kapatilir.
+      // Denetimde ayirt edilebilsin diye "beyan" olarak isaretlenir.
+      const belgeli = kanitVar || kanitlar.some(x => x.tur !== 'erp');
+      const tamam = belgeli || kanitlar.length === 0;
       return {
         no: a.no, ad: a.ad, aiag: a.aiag, sorumluluk: a.sorumluluk,
         prosedur: a.prosedur, form: a.form, kanit: a.kanit || '',
         // AIAG 3rd Ed. bayragi YENI kayitta da tasinmali: kopyalanmayinca
         // rozet cikmiyor ve "Yalniz yeni maddeler" suzgeci bos donuyordu
         aiag3: a.aiag3 || false,
+        beyan: tamam && !belgeli,
         bitis,
         tamamlanma: tamam ? bitis : '',
         durum: tamam ? 100 : 0,
@@ -728,6 +740,8 @@ function cizListe() {
         + '<td class="no">' + a.no + '</td>'
         + '<td>' + a.ad
         + (a.kanit && a.durum >= 100 ? '<span class="kanit">ERP&#39;den</span>' : '')
+        + (a.beyan ? '<span class="kanit" style="background:#fef3c7;color:#92400e" '
+          + 'title="Belgesi olmayan örgütsel adım — ekip beyanıyla planlanan terminde kapatıldı">beyan</span>' : '')
         + (a.aiag3 ? '<span class="aiag3" title="AIAG APQP 3rd Edition (Mart 2024) ile eklendi">AIAG 3rd Ed.</span>' : '')
         + '</td>'
         + '<td>' + (a.aiag || '') + '</td>'
