@@ -17,6 +17,12 @@ gorseller, makrolar, stiller) bit bit korunuyor.
 """
 import sys, re, io, json, math, zipfile, shutil, urllib.request, urllib.parse, datetime, os
 
+# Yardimci modullerin (balonla, ai_okuyucu) importu CALISMA DIZININE
+# bagli kalmasin: zenginlestir() icindeki "import balonla" bir try blogunda
+# ve basarisiz olursa SESSIZCE "teknik resim ERP'de kayitli degil" yaziliyor.
+# O metin QTR, FR90 ve VDA_2 gibi musteriye giden belgelere de dusuyor.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 SUPABASE = "https://nnubrxbpthmkitueixbh.supabase.co/rest/v1"
 ANON = ("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5udWJyeGJwdGhta2l0"
         "dWVpeGJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1NjI2MDIsImV4cCI6MjA5NjEzODYwMn0"
@@ -928,6 +934,42 @@ RR_KULLANIM, RR_PERFORMANS, RR_KALITE = 0.94, 0.97, 0.995
 FR192_SABLON = "FR192_Risk analizi AYPA_PP_RiskAnalizi.xlsm"
 
 
+def fr192_islet_verisi(ted):
+    """Onayli tedarikci DISA AKTARIMINDAKI (41 sutun) isletme verisi.
+    Supabase tablosu yalniz sinif/puan/ppm/belge tutar; saha problemi,
+    musteri aksakligi, ekstra navlun, termin puani ve 8D sayilari yalniz
+    Excel disa aktariminda var."""
+    kaynak = onayli_liste_sablonu()
+    if not kaynak or not ted:
+        return {}
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(kaynak, data_only=True)
+        ws = wb["Onaylı Tedarikçi Listesi"]
+    except Exception:
+        return {}
+    bas = next((r for r in range(1, 15)
+                if sum(1 for c in range(1, 42)
+                       if str(ws.cell(r, c).value or "").strip()) > 12), None)
+    if not bas:
+        return {}
+    anahtar = met(ted).upper()[:18]
+    for r in range(bas + 1, ws.max_row + 1):
+        if met(ws.cell(r, 3).value).upper()[:18] != anahtar:
+            continue
+        say = lambda c: float(ws.cell(r, c).value or 0)
+        return {"saha": say(33), "aksaklik": say(24), "navlun": say(27),
+                "termin": say(20), "tamamlanma": say(21),
+                "hata": say(12), "hata_hedef": say(11),
+                "talep_8d": say(17), "cevap_8d": say(18)}
+    return {}
+
+
+def _olay_puani(n):
+    """Olay sayisi -> VDA MLA puani: cok sik = 2, sik = 1, dusuk = 0."""
+    return 0 if n <= 0 else (1 if n <= 2 else 2)
+
+
 def fr192_tedarikci_puani(ted):
     """4.x tedarikçi kriterleri -> {hucre: puan}. ERP verisine dayanır."""
     if not ted:
@@ -946,7 +988,27 @@ def fr192_tedarikci_puani(ted):
     d44 = 0 if kayit.get("iatf") else (1 if kayit.get("iso9001") else 2)
     # 4.5 Önceki teslimatlarda sorunlar: PPM'e göre
     d45 = 0 if ppm < 1000 else (1 if ppm < 10000 else 2)
-    return {"E39": d41, "E41": 0, "E43": 0, "E45": d44, "E47": d45}
+    p = {"E39": d41, "E41": 0, "E43": 0, "E45": d44, "E47": d45}
+
+    # Onayli listedeki ISLETME GECMISI, proje yargisi olmayan kriterleri de
+    # nesnel olarak besler. Kullanici: "bunlar onayli listede var sen bakarsin".
+    i = fr192_islet_verisi(ted)
+    if i:
+        # 1.3 Gecmisteki kritik sorunlar (sahada reddedilen parcalar)
+        p["E15"] = _olay_puani(i["saha"])
+        # 1.4 Gecmisteki lansman (baslatma) sorunlari
+        p["E17"] = _olay_puani(i["aksaklik"])
+        # 2.5 Teslimat / cagri sureleri — ekstra navlun olayi tasima riskidir
+        p["E31"] = _olay_puani(i["navlun"])
+        # 3.3 Genel takvim guvenilirligi — termin puani (100 uzerinden)
+        p["E37"] = 0 if i["termin"] >= 80 else (1 if i["termin"] >= 50 else 2)
+        # 4.5 Onceki teslimatlarda sorunlar: PPM'in yaninda hata hedefi asimi
+        # ve cevapsiz 8D de sayilir; ucunun EN KOTUSU alinir.
+        hata = 0 if not i["hata_hedef"] else _olay_puani(
+            max(0, i["hata"] - i["hata_hedef"]))
+        acik8d = _olay_puani(max(0, i["talep_8d"] - i["cevap_8d"]))
+        p["E47"] = max(d45, hata, acik8d)
+    return p
 
 
 def fr192(v, hedef, malzeme_kodu, malzeme_adi, tedarikci):
