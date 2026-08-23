@@ -1187,6 +1187,34 @@ async function adimlariGuncelle(sessiz) {
 // Drive'a yeni dokuman eklenince adimlara yeniden baglanir (durum korunur:
 // elle %100 yapilmis adim geri alinmaz).
 // Drive klasorunu yeniden tarar: yeni dokumanlari baglar, silinenleri dusurur
+// ERP calismalari (MSA + yeterlilik) adimlara YENIDEN eslestirilir.
+// NEDEN PAYLASILAN FONKSIYON: bu baglama eskiden yalniz "Yenile" dugmesinin
+// govdesindeydi. "Belgeleri uret" calismalari ERP'ye YAZAR ama baglamayi
+// calistirmadigi icin adimda yalniz modul linki gorunuyordu; calismalarin
+// gelmesi icin kullanicinin AYRICA Yenile'ye basmasi gerekiyordu (basilmadi,
+// yeterlilik ve MSA yollari bos kaldi). kanitTazele'nin yedi cagiranindan
+// (uretim, yeniden adlandirma, silme, yukleme, adim guncelleme, acilis)
+// hepsi artik ayni baglamayi calistirir.
+async function erpCalismaBagla() {
+  if (!aktif) return 0;
+  let calisma = 0;
+  try {
+    const c = await msaCalismalari(aktif.stokKodu, aktif.musteriParca);
+    aktif.bolumler.forEach(b => b.adimlar.forEach(a => {
+      const once = (a.kanitlar || []).filter(erpCalismasi).length;
+      const metin = met(a.form) + ' ' + met(a.ad);
+      const msaAdimi = /msa|gage ?r&?r|fr ?86|ölçüm sistemi/i.test(metin);
+      const yetAdimi = /yeterlilik|fr ?88|cp ?, ?cpk|cpk|süreç potansiyeli|varyasyonun azalt/i.test(metin);
+      if (!once && !msaAdimi && !yetAdimi) return;
+      a.kanitlar = (a.kanitlar || []).filter(x => !erpCalismasi(x));
+      if (msaAdimi) (c.msa || []).forEach(x => a.kanitlar.push(erpCalismaKaniti(x, 'MSA: ')));
+      if (yetAdimi) (c.yeterlilik || []).forEach(x => a.kanitlar.push(erpCalismaKaniti(x, 'Yeterlilik: ')));
+      calisma += Math.abs((a.kanitlar || []).filter(erpCalismasi).length - once);
+    }));
+  } catch (e) { /* ERP'ye ulasilamazsa mevcut kanitlar korunur */ }
+  return calisma;
+}
+
 async function kanitTazele() {
   if (!aktif) return;
   const drive = await driveDosyalari(aktif.stokKodu, aktif.musteriParca);
@@ -1202,6 +1230,7 @@ async function kanitTazele() {
     if (!a.kanitlar.length && a.durum === 100 && a.kanit === '') { a.durum = 0; a.tamamlanma = ''; }
     else if (a.kanitlar.length && !a.durum) { a.durum = 100; a.tamamlanma = a.bitis; }
   }));
+  await erpCalismaBagla();          // ERP calismalari da baglansin
   await kaydet(aktif); ciz();
   return dusen;
 }
@@ -1389,24 +1418,7 @@ $('#tazeleBtn').addEventListener('click', async () => {
     }
   } catch (e) { /* ERP'ye ulasilamazsa mevcut deger korunur */ }
 
-  // ERP calismalari (MSA + yeterlilik) YENIDEN eslestirilir. Eski kayitlarda
-  // baska urunun calismalari yapisik kalabiliyor (700.0.444-2X -> 700.0.444)
-  // ve calisma turu yazmiyordu; Yenile bunlari da duzeltir.
-  let calisma = 0;
-  try {
-    const c = await msaCalismalari(aktif.stokKodu, aktif.musteriParca);
-    aktif.bolumler.forEach(b => b.adimlar.forEach(a => {
-      const once = (a.kanitlar || []).filter(erpCalismasi).length;
-      const metin = met(a.form) + ' ' + met(a.ad);
-      const msaAdimi = /msa|gage ?r&?r|fr ?86|ölçüm sistemi/i.test(metin);
-      const yetAdimi = /yeterlilik|fr ?88|cp ?, ?cpk|cpk|süreç potansiyeli|varyasyonun azalt/i.test(metin);
-      if (!once && !msaAdimi && !yetAdimi) return;
-      a.kanitlar = (a.kanitlar || []).filter(x => !erpCalismasi(x));
-      if (msaAdimi) (c.msa || []).forEach(x => a.kanitlar.push(erpCalismaKaniti(x, 'MSA: ')));
-      if (yetAdimi) (c.yeterlilik || []).forEach(x => a.kanitlar.push(erpCalismaKaniti(x, 'Yeterlilik: ')));
-      calisma += Math.abs((a.kanitlar || []).filter(erpCalismasi).length - once);
-    }));
-  } catch (e) { /* ERP'ye ulasilamazsa mevcut kanitlar korunur */ }
+  const calisma = await erpCalismaBagla();
   await kaydet(aktif); ciz();
   const p = [];
   if (lokasyonYeni) p.push('lokasyon/ekip güncellendi (' + lokasyonYeni + ')');

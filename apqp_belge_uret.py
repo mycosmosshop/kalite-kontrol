@@ -151,14 +151,16 @@ def hucre_yaz(kaynak, hedef, sayfa_dosyasi, degerler, ek_xml=None, yeni_parcalar
             zout.writestr(e, xml.encode("utf-8"))
         elif ek_xml and e.filename in ek_xml:
             zout.writestr(e, ek_xml[e.filename].encode("utf-8"))
+        elif yeni_parcalar and e.filename in yeni_parcalar:
+            continue                     # yeni içerik aşağıda yazılır (üzerine yazar)
         else:
             zout.writestr(e, zin.read(e.filename))
-    varolan = {e.filename for e in zin.infolist()}
     for yol, veri in (yeni_parcalar or {}).items():      # yeni görseller
-        # Kaynakta zaten varsa ikinci kez YAZILMAZ: zip'te yinelenen giriş
-        # oluşuyor ve Excel dosyayı bozuk sayabiliyor.
-        if yol not in varolan:
-            zout.writestr(yol, veri)
+        # Kaynakta AYNI ADLA bir parça varsa yukarıda atlandı; burada yeni
+        # içerik yazılır. Eskiden kaynaktaki korunuyordu ve şablona bir kez
+        # imza sızdığında ürettiğimiz yeni imza hiç geçmiyor, ESKİ İSİM
+        # görünüyordu. Yinelenen zip girişi de bu sayede oluşmaz.
+        zout.writestr(yol, veri)
     zout.close()
     zin.close()
 
@@ -370,6 +372,24 @@ def imza_pngi(ad):
     return tampon.getvalue()
 
 
+def imza_yinelenmesin(cizim, rels, rid):
+    """Aynı rId ile ÖNCEDEN eklenmiş imza çapasını ve ilişkisini siler.
+
+    NEDEN: şablon klasöründeki forma bir kez üretilmiş çıktı yazıldığında
+    (FR182 ve FR90 şablonlarında bu olmuş) rels'te aynı Id İKİ KEZ oluşuyor.
+    Yinelenen Relationship Id geçersiz OPC'dir; Excel o çizimdeki BÜTÜN
+    resimleri reddediyor ve kullanıcı üç imza yerine üç "Resim
+    görüntülenemiyor" kutusu görüyor — şablondan gelenler dahil.
+    Temizlik üretimde yapılır: şablon kirli olsa da çıktı doğru çıkar.
+    """
+    for etiket in ("twoCellAnchor", "oneCellAnchor"):
+        for m in list(re.finditer(r"<xdr:%s.*?</xdr:%s>" % (etiket, etiket), cizim, re.S)):
+            if 'r:embed="%s"' % rid in m.group(0):
+                cizim = cizim.replace(m.group(0), "")
+    rels = re.sub(r'<Relationship Id="%s"[^>]*/>' % re.escape(rid), "", rels)
+    return cizim, rels
+
+
 def imza_capasi(cizim, ornek_ad, sutun, satir, rid, no):
     """Var olan bir imzanın çapa XML'ini kopyalayıp hedef hücreye taşır;
     boyut ve yerleşim kullanıcının formundakiyle aynı kalır."""
@@ -438,6 +458,7 @@ def fr90(v, hedef):
             continue
         rid = "rIdImza%d" % (i + 1)
         dosya = "imzaUret%d.png" % (i + 1)
+        cizim, rels = imza_yinelenmesin(cizim, rels, rid)
         capa = imza_capasi(cizim, "Imza 5", sutun, satir, rid, 900 + i)
         if not capa:
             continue
@@ -569,6 +590,7 @@ def fr182(v, hedef):
     uretim = rols.get("Üretim", "")
     yeni_media = {}
     # Üretim imzası: Arge imzasının (Imza 3) çapası örnek alınır, C sütununa taşınır
+    cizim, rels = imza_yinelenmesin(cizim, rels, "rIdImza182")
     capa = imza_capasi(cizim, "Imza 3", 2, 33, "rIdImza182", 9182) if uretim else None
     if capa:
         yeni_media["xl/media/imzaUretim182.png"] = imza_pngi(uretim)
@@ -1351,15 +1373,20 @@ def malzeme_tedarikcisi(kod):
         for x in mk:
             if met(x["stok_kodu"]).startswith(a) and met(x["cari_adi"]):
                 ad = met(x["cari_adi"])
-                if "SANIFOAM" in ad.upper():        # kendi şubeleri tedarikçi değil
-                    continue
+                # SANIFOAM ELENMEZ: kendi tesisleri arasindaki malzeme aktarimi
+                # da tedarik zinciridir ve sirketin KENDI onayli tedarikci
+                # listesinde "SANIFOAM ENDÜSTRI VE TÜKETIM ÜRÜNLERI" ONAYLI /
+                # sinif B / otomotiv olarak kayitli. Elenince PES elyaf,
+                # fleece ve sanifelt gibi malzemeler "mal kabul kaydi yok"
+                # gorunuyor ve alt tedarikci PPAP'i uretilemiyordu.
                 say[ad] = say.get(ad, 0) + 1
         if say:
             ad = max(say, key=say.get)
             kayit = next((v for k, v in onayli.items() if k.startswith(ad.upper()[:18])), None)
             nasil = "kod" if a == kod else ("ürün ailesi" if a.count(".") == 2 else "ürün kökü")
             return ad, "%s eşleşmesi%s" % (nasil, "" if kayit else " · onaylı listede bulunamadı")
-    return None, "mal kabul kaydı yok"
+    return None, ("mal kabul kaydı yok — bu malzeme girdi kontrolünden geçmiyor "
+                  "(ambalaj/etiket); tedarikçi onaylı listeden seçilecek")
 
 
 def alt_tedarikci_ppap(v, klasor, uret):
