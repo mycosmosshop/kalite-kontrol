@@ -1665,10 +1665,17 @@ def alt_tedarikci_ppap(v, klasor, uret):
     if not os.path.exists(kaynak):
         return []
     sonuc = []
-    for a in v["agac"]:
+    # DERIN AGAC: urunun KENDI agacinda cogu zaman yalniz ambalaj vardir;
+    # gercek hammadde tedarikcileri bir kat asagida, kompozit yari mamulun
+    # agacindadir. 700.0.454'te AYPA (945.4.994 PP folyo), ALTERNATIF
+    # (951.4.054 EVA film) ve DURFOM (944.4.FFR30-03.4 PE kopuk) bu yuzden
+    # HIC alt tedarikci PPAP'i ve risk analizi almiyordu.
+    gorulen = set()
+    for a in _ham_agaci(v):
         kod = met(a.get("tuketim_kodu"))
-        if not kod or not SATIN_ALINAN.search(kod):
+        if not kod or not SATIN_ALINAN.search(kod) or kod in gorulen:
             continue
+        gorulen.add(kod)
         kp = kp_satirlari(kod)
         if not kp:
             sonuc.append((kod, met(a.get("tuketim_adi")), None, 0, "girdi kontrol planı yok"))
