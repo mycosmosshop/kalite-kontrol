@@ -158,6 +158,13 @@ def olculeri_oku(im, log=None):
         return []
     H, W = im.shape[:2]
     sonuc, hata = [], 0
+    # KOTA KADANSI: ucretsiz katman dakikada 20 istek = 3 sn'de BIR ISTEK.
+    # Eskiden her cagridan SONRA kosulsuz BEKLE kadar uyunuyordu; istegin
+    # kendisi zaten ~1,4 sn surdugu icin o sure ikinci kez odeniyordu
+    # (olculdu: 24 parcada 72 sn uyku, 33 sn gercek AI). Artik iki istegin
+    # BASLANGICI arasinda BEKLE saniye olmasi saglanir: kota birebir ayni,
+    # gereksiz bekleme yok.
+    son_baslangic = [0.0]
     for y0 in range(0, H, KARE - ORTUSME):
         for x0 in range(0, W, KARE - ORTUSME):
             x1, y1 = min(x0 + KARE, W), min(y0 + KARE, H)
@@ -167,6 +174,10 @@ def olculeri_oku(im, log=None):
             if not ok:
                 continue
             b64 = base64.b64encode(tampon.tobytes()).decode()
+            kalan = BEKLE - (time.time() - son_baslangic[0])
+            if son_baslangic[0] and kalan > 0:
+                time.sleep(kalan)
+            son_baslangic[0] = time.time()
             metin = None
             for deneme in range(DENEME):
                 try:
@@ -178,6 +189,7 @@ def olculeri_oku(im, log=None):
                     if e.code == 429 and deneme < DENEME - 1:
                         # Hiz siniri: sunucunun soyledigi kadar beklenir
                         time.sleep(_bekleme_suresi(e, BEKLE * (2 ** deneme)))
+                        son_baslangic[0] = time.time()
                         continue
                     hata += 1
                     if log:
@@ -192,7 +204,6 @@ def olculeri_oku(im, log=None):
                 if hata >= 4:                 # servis gercekten kapali
                     return sonuc and _tekille(sonuc) or []
                 continue
-            time.sleep(BEKLE)                 # sonraki parcaya kadar nefes
             for o in _cozumle(metin):
                 try:
                     d = str(o.get("deger", "")).strip()

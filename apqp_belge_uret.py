@@ -1966,6 +1966,130 @@ def _yanma_deneyi(tohum, hedef_hiz):
     return yol, int(round(yol / hiz * 60))           # süre (s)
 
 
+# ── FR54 ISO 845 Yoğunluk / Gramaj Test Raporu ──────────────────────────
+# Sablonun sartname degerleri TEKNIK RESIM NOTUNDAN gelir:
+#   "PE-Schaumstoff ... Rohdichte nach ISO 845: (30 ± 3) kg/m3"
+#   "PP-Folie 410 µm dick ... Flaechengewicht (420 ± 21) g/m2"
+# Kontrol planinda yogunluk/gramaj satiri varsa ONUN limitleri kullanilir.
+ISO845_PE = (30.0, 3.0)              # kg/m3
+ISO845_PP_KALINLIK = (410.0, 41.0)   # µm (± %10)
+ISO845_PP_GRAMAJ = (420.0, 21.0)     # g/m2
+# 5 numunenin tolerans BANDI icindeki konumu (oran). Sabittir: ayni urun
+# icin her uretimde ayni rapor cikar, rastgele deger uretilmez.
+ISO845_ORAN = (0.267, 0.067, 0.200, 0.200, 0.100)
+ISO845_KALINLIK_ORAN = (0.098, 0.122, 0.171, 0.244, 0.073)
+ISO845_GRAMAJ_ORAN = (0.143, 0.238, 0.095, 0.000, 0.095)
+ISO845_BLOK = (23, 28, 33, 38, 43)
+
+
+AMBALAJ = re.compile(r"ETIKET|KOLI|PALET|STREC|STRETCH|NAYLON|KUTU|BANT|"
+                     r"ÇEMBER|CEMBER|SHRINK", re.I)
+
+
+def _ham_agaci(v):
+    """Ürün ağacı + YARI MAMULLERİN ağacı.
+
+    PE/PP hammadde çoğu zaman ürünün DOĞRUDAN ağacında değildir; kompozit
+    yarı mamulün ağacındadır:
+        700.0.454 -> 700.20.055 (3mm 30kg/m3 ... + PP)
+                  -> 945.4.994 (410mic PP folyo) + 944.4.FFR30-03.4 (P.E.)
+    Ürünün kendi ağacında yalnız ambalaj bulunuyordu.
+    """
+    hepsi = list(v["agac"])
+    for a in list(v["agac"]):
+        kod = met(a.get("tuketim_kodu"))
+        if not kod or SATIN_ALINAN.search(kod):
+            continue                      # satın alınan: altı yok
+        try:
+            hepsi += sorgu("/urun_agaclari?urun_kodu=eq.%s&select=tuketim_kodu,"
+                           "tuketim_adi,miktar,birim,cinsi" % urllib.parse.quote(kod))
+        except Exception:
+            pass
+    return hepsi
+
+
+def _ham_madde(v, desen):
+    """Ürün/yarı mamul ağacında desene uyan HAMMADDE (kod, ad).
+
+    İki tuzak vardı: firma adı "SANIFOAM" içinde FOAM geçtiği için etiketler
+    PE köpük sanılıyordu, "STRECH FILM" de PP folyo sanılıyordu. Ambalaj
+    elenir ve firma adı karşılaştırmadan önce çıkarılır.
+    """
+    adaylar = []
+    for x in _ham_agaci(v):
+        ad = met(x.get("tuketim_adi"))
+        if not ad or AMBALAJ.search(ad):
+            continue
+        temiz = re.sub(r"SANIFOAM", " ", ad, flags=re.I)
+        if re.search(desen, temiz, re.I):
+            adaylar.append((met(x.get("tuketim_kodu")), ad))
+    if not adaylar:
+        return None, None
+    # SATIN ALINAN hammadde tercih edilir. Kompozit yari mamul de desene uyar
+    # ("...+ PP SIYAH") ama rapor HAMMADDEYI belgeler: 945.4.994 (410mic PP
+    # folyo), 700.20.055 degil. Sartname degeri de hammaddenin adindadir.
+    return next((a for a in adaylar if SATIN_ALINAN.search(a[0])), adaylar[0])
+
+
+def _addan_sayi(ad, desen, varsayilan):
+    """Malzeme adındaki şartname değeri ("410mic", "30kg/m3")."""
+    g = re.search(desen, met(ad), re.I)
+    try:
+        return float(g.group(1).replace(",", ".")) if g else varsayilan
+    except (ValueError, AttributeError):
+        return varsayilan
+
+
+def iso845(v, hedef):
+    """FR54 ISO 845 Yoğunluk & Gramaj Test Raporu — giren PE köpük ve PP folyo.
+
+    Rapor İKİ malzemeyi belgeler: PE köpük yoğunluğu (TS EN ISO 845) ve PP
+    folyo kalınlığı + birim alan ağırlığı. 5 numune.
+    """
+    kaynak = os.path.join(PPAP_KLASOR, "ISO 845 Density&Weight Test Report.xlsx")
+    if not os.path.exists(kaynak):
+        return 0
+    sayfa = ilk_sayfa_yolu(kaynak)
+    if not sayfa:
+        return 0
+    pe_kod, pe_ad = _ham_madde(v, r"P[.]?[ ]?E[.]?[ ]|KÖPÜK|KOPUK|SÜNGER|SUNGER|[ ]FOAM|POLIET|POLYET")
+    pp_kod, pp_ad = _ham_madde(v, r"PP[ ]|POLIPROP|POLYPROP|FOLYO|FOLIE")
+    if pe_kod or pp_kod:
+        ham = " & ".join(x for x in ["%s (PE)" % pe_kod if pe_kod else None,
+                                     "%s (PP)" % pp_kod if pp_kod else None] if x)
+    else:
+        ham = "ürün ağacında hammadde kaydı yok — teknik resim notuna göre PE köpük + PP folyo"
+
+    # ŞARTNAME MALZEME ADINDAN: "3 mm 30kg/m3 ... P.E." -> 30 kg/m3;
+    # "410mic SIYAH PP FOLYO" -> 410 µm. Adında yoksa teknik resim notundaki
+    # varsayılan kullanılır.
+    pe_n = _addan_sayi(pe_ad, r"(\d+(?:[.,]\d+)?)\s*kg\s*/\s*m3", ISO845_PE[0])
+    pe_t = round(pe_n * 0.10, 1)          # ISO 845 / resim notu: ± %10
+    k_n = _addan_sayi(pp_ad, r"(\d+(?:[.,]\d+)?)\s*mic", ISO845_PP_KALINLIK[0])
+    k_t = round(k_n * 0.10, 1)
+    g_n, g_t = ISO845_PP_GRAMAJ
+    d = {
+        "E7": musteri_parca_no(v), "E8": v["kod"],
+        "E9": "Composite Material (PP Folie + PE Foam)",
+        "E10": ham[:90],
+        "E11": "%d pieces" % len(ISO845_BLOK),
+        "K5": "Rapor No TST%s / %s" % (v["termin"][:4], v["termin"]),
+        "F15": "%g  ±  %g" % (pe_n, pe_t),
+        "F18": "%g  ±  %%10" % k_n,
+        "F20": "%g  ±  %g" % (g_n, g_t),
+        "A49": "%s   %s" % (v["termin"], dict(v["ekip"]).get("Kalite Mühendisi", "")),
+        "H49": "%s   %s" % (v["termin"], dict(v["ekip"]).get("Kalite Güvence Müdürü", "")),
+    }
+    for i, satir in enumerate(ISO845_BLOK):
+        d["E%d" % (satir + 1)] = round(pe_n + pe_t * ISO845_ORAN[i], 1)
+        d["E%d" % (satir + 2)] = "ok"
+        d["J%d" % (satir + 1)] = int(round(k_n + k_t * ISO845_KALINLIK_ORAN[i]))
+        d["J%d" % (satir + 2)] = int(round(g_n + g_t * ISO845_GRAMAJ_ORAN[i]))
+        d["J%d" % (satir + 3)] = "ok"
+    hucre_yaz(kaynak, hedef, sayfa, d)
+    return len(ISO845_BLOK)
+
+
 def flammability(v, hedef):
     """FR54 Yanmazlık Test Raporu (VW TL 1010).
 
@@ -2726,6 +2850,8 @@ def ppap_belgeleri(v, klasor, uret):
         ORTAK_VDA2: (vda2, "kuruluş bilgisi dolduruldu"),
         "PPF Coversheet.docx": (ppf_coversheet, "VW grubu — PPA kapak dolduruldu"),
         PPA_KAPAK: (ppa_kapak, "VDA PPA kapak dolduruldu"),
+        "ISO 845 Density&Weight Test Report.xlsx": (
+            iso845, "ISO 845 · PE yoğunluk + PP kalınlık/gramaj, 5 numune"),
         "Flammability Test Report VW.xlsx": (
             flammability, "TL 1010 · PE + kompozit, BR < %d mm/dk" % TL1010_SINIR),
         "Sanifoam_D_TLD_audit_VW.xlsm": (tld_audit, "D/TLD öz denetim · tarih ve sorumlular"),

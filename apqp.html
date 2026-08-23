@@ -280,8 +280,12 @@ const DOSYA_ANAHTAR = [
   [/numaraland|balonlu|ballooned/i,
    /teknik resim|balonlu|numaraland|çizim|cizim|drawing/i],
   // VW/VDA kapak ve parca gecmisi
+  // DIKKAT: form tarafinda "ppa" SINIR ISARETLI olmali. Ciplak "ppa"
+  // "Alt Tedarikci PPAP" kelimesinin ICINE de takiliyordu; musteriye giden
+  // PPA/PPF kapak belgeleri madde 3.10 "Alt Tedarikci APQP plani" adimina
+  // kanit olarak baglaniyordu. Kapaklar madde 6.2'ye (Cover Sheet) aittir.
   [/ppf ?coversheet|ppa ?cover ?sheet/i,
-   /cover ?sheet|kapak|ppa|psw|part submission/i],
+   /cover ?sheet|kapak|\bppa\b|psw|part submission/i],
   [/parts? ?history|parça geçmişi/i,                 /parça geçmiş|parca gecmis|part history/i],
   [/flammability|yanmazlık|tl ?1010/i,               /yanmazlık|yanmazlik|flammab|malzeme test/i],
 ];

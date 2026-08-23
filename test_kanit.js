@@ -51,3 +51,51 @@ for (const [ad, kanitlar, beklenen] of DURUMLAR) {
 }
 if (hata) { console.error('\nBASARISIZ: ' + hata + ' kural'); process.exit(1); }
 console.log('\nkanit kurali: TAMAM — hicbir adim %0 kalmaz, kanitsizlar "beyan" isaretli');
+
+// ── Dosya -> adim baglama ───────────────────────────────────────────────
+// NEDEN: musteriye giden PPA/PPF KAPAK belgeleri madde 3.10 "Alt Tedarikci
+// APQP plani" adimina kanit olarak baglaniyordu. Sebep DOSYA_ANAHTAR'daki
+// ciplak "ppa" deseniydi: "Alt Tedarikci PPAP" kelimesinin ICINE takiliyor.
+// Kapaklar madde 6.2 "Cover Sheet"e aittir.
+function blok(kaynak, bas, bit) {
+  const i = kaynak.indexOf(bas);
+  if (i < 0) throw new Error('apqp.html icinde bulunamadi: ' + bas);
+  const j = kaynak.indexOf(bit, i);
+  return kaynak.slice(i, j + bit.length);
+}
+
+const esle = eval([
+  blok(s, 'const met = ', '\n'),
+  blok(s, 'const formKodlari = ', '))];'),
+  blok(s, 'const adSade = ', '.trim();'),
+  blok(s, 'const DOSYA_ANAHTAR = [', '\n];'),
+  blok(s, 'function adimDriveDosyalari', '\n}'),
+  'adimDriveDosyalari',
+].join('\n'));
+
+const DOSYALAR = [
+  'Alt Tedarikçi PPAP 700.0.454 - 981.4.204.xlsx',
+  'PPA COVER SHEET LEAR 700.0.454.xlsx',
+  'PPF Coversheet 700.0.454.docx',
+  'VDA_2_2020_Anlagen_Attachments_2-6_7 MAN 700.0.454.xlsx',
+].map(ad => ({ ad, yol: ad }));
+
+// [adim formu, baglanmasi BEKLENEN dosyalar]
+const BEKLENEN = [
+  ['Alt Tedarikçi PPAP (VDA 2)', ['Alt Tedarikçi PPAP 700.0.454 - 981.4.204.xlsx']],
+  ['Cover Sheet (Kapak)', ['PPA COVER SHEET LEAR 700.0.454.xlsx',
+    'PPF Coversheet 700.0.454.docx',
+    'VDA_2_2020_Anlagen_Attachments_2-6_7 MAN 700.0.454.xlsx']],
+];
+
+let hata2 = 0;
+for (const [form, bekle] of BEKLENEN) {
+  const bulunan = esle(form, DOSYALAR).map(d => d.ad).sort();
+  const ok = JSON.stringify(bulunan) === JSON.stringify([...bekle].sort());
+  if (!ok) hata2++;
+  console.log((ok ? '  OK   ' : '  HATA ') + form.padEnd(28) + ' -> ' + bulunan.length + ' dosya');
+  if (!ok) console.log('         beklenen: ' + JSON.stringify(bekle)
+    + '\n         bulunan : ' + JSON.stringify(bulunan));
+}
+if (hata2) { console.error('\nBASARISIZ: ' + hata2 + ' adim eslesmesi'); process.exit(1); }
+console.log('dosya-adim baglama: TAMAM — kapaklar 3.10\'a baglanmiyor');
