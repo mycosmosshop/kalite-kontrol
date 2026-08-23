@@ -412,7 +412,25 @@ function erpCalismaKaniti(c, on) {
   };
 }
 // Bir kanit ERP CALISMASI mi (MSA/yeterlilik) yoksa modul baglantisi mi?
-const erpCalismasi = x => x.tur === 'erp' && /\/msa\//.test(met(x.adres));
+// AYIRT EDICI ISARET "?id=" — calisma adresinde calismanin kimligi vardir
+// (msaAdres: .../cap-results.html?id=91). Yalniz "/msa/" aramak YETMIYORDU:
+// modul baglantisinin kendisi de /msa/capability.html altinda. Sonucu iki
+// yerde yanlisti — (1) modul baglantisi "calisma" sayilip adimi kanitli
+// gosteriyordu, (2) erpCalismaBagla tazelerken modul baglantisini calisma
+// sanip SILIYOR ve yerine koymuyordu.
+const erpCalismasi = x => x.tur === 'erp' && /\/msa\//.test(met(x.adres))
+  && /[?&]id=/.test(met(x.adres));
+// TEK KURAL — bir adimda GERCEK kanit var mi?
+//   gercek kanit : Drive/LeanSys dokumani, ya da ERP CALISMASI (id'li, olcumlu,
+//                  kabul kararli kayit — denetimde gosterilebilir)
+//   kanit DEGIL  : yalin modul baglantisi ("su modulden bakilir")
+// ONEMLI: eskiden butun tur:'erp' kanitlari dislaniyordu. ERP calismalari da
+// 'erp' turunde oldugu icin, 14 yeterlilik/MSA calismasi bagli olan adim yine
+// "kanitsiz" sayilip %0 kaliyordu. Calisma ile modul linki artik ayrilir.
+function gercekKanitVar(kanitlar) {
+  return (kanitlar || []).some(x => x.tur !== 'erp' || erpCalismasi(x));
+}
+
 // Calisma turunun okunur adi — gorsel kontrollerin nitelik analizi oldugu
 // listede gorunsun (kullanici "sayisal MSA mi yapilmis?" diye sormustu).
 const MSA_TUR_AD = {
@@ -562,8 +580,12 @@ async function apqpUret(giris) {
       // Kaniti OLMAYAN adimlar (yalniz "doküman yükle" secenegi olanlar)
       // orgutsel adimlardir — ekip beyaniyla planlanan terminde kapatilir.
       // Denetimde ayirt edilebilsin diye "beyan" olarak isaretlenir.
-      const belgeli = kanitVar || kanitlar.some(x => x.tur !== 'erp');
-      const tamam = belgeli || kanitlar.length === 0;
+      const belgeli = kanitVar || gercekKanitVar(kanitlar);
+      // Gercek kaniti olmayan adimlar da KAPATILIR: bunlar orgutsel adimlardir
+      // (egitim, teslimat plani, kapi onayi, seviye belirleme...) ve ekip
+      // beyaniyla planlanan terminde tamamlanir. "beyan" rozetiyle ayrilir ki
+      // denetimde belgeli adimla karistirilmasin.
+      const tamam = true;
       return {
         no: a.no, ad: a.ad, aiag: a.aiag, sorumluluk: a.sorumluluk,
         prosedur: a.prosedur, form: a.form, kanit: a.kanit || '',
@@ -1227,8 +1249,10 @@ async function kanitTazele() {
     const yeni = adimDriveDosyalari(a.form, drive)
       .filter(d => !a.kanitlar.some(x => x.yol === d.yol));
     if (yeni.length) a.kanitlar = a.kanitlar.concat(yeni.map(d => ({ tur: 'drive', ad: d.ad, yol: d.yol })));
-    if (!a.kanitlar.length && a.durum === 100 && a.kanit === '') { a.durum = 0; a.tamamlanma = ''; }
-    else if (a.kanitlar.length && !a.durum) { a.durum = 100; a.tamamlanma = a.bitis; }
+    // Adim SIFIRLANMAZ: kaniti olmayan orgutsel adimlar da kapali kalir,
+    // yalnizca "beyan" isareti kanit durumuna gore tazelenir.
+    a.beyan = !gercekKanitVar(a.kanitlar);
+    if (!a.durum) { a.durum = 100; a.tamamlanma = a.tamamlanma || a.bitis; }
   }));
   await erpCalismaBagla();          // ERP calismalari da baglansin
   await kaydet(aktif); ciz();
@@ -1401,6 +1425,7 @@ $('#tazeleBtn').addEventListener('click', async () => {
     a.kanitlar = a.kanitlar.concat(yeni.map(d => ({ tur: 'drive', ad: d.ad, yol: d.yol })));
     eklenen += yeni.length;
     if (!a.durum) { a.durum = 100; a.tamamlanma = a.bitis; }
+    a.beyan = !gercekKanitVar(a.kanitlar);
   }));
   // Lokasyon ve ekip de tazelenir: kayitli projede saklandigi icin eski
   // kayitlarda bos ("—") ya da yanlis lokasyonun ekibi kalabiliyor.
