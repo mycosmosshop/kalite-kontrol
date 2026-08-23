@@ -1261,6 +1261,12 @@ def run_at_rate(v, hedef):
     sayfa = sayfa_yolu(kaynak, "Run at Rate Template")
     if not sayfa:
         return 0
+    # IKINCI SAYFA ("Run at Rate Template_") sablonda BASKA BIR URUNUN
+    # (205.0.214-C) doldurulmus ornegidir. Yalniz 1. sayfa doldurulunca o
+    # ornek HER URUNUN ciktisinda kaliyor ve kullanici "hep ayni kod geliyor"
+    # diyordu. Ikinci sayfa DEVAM sayfasi olarak kullanilir: ayni baslik,
+    # 7-12. operasyonlar; operasyon yoksa adim sutunlari BOSALTILIR.
+    sayfa2 = sayfa_yolu(kaynak, "Run at Rate Template_")
 
     saat = float(v["vardiya_saat"]) or 1.0
     d = {
@@ -1278,10 +1284,22 @@ def run_at_rate(v, hedef):
 
     SUT = ["E", "F", "G", "H", "I", "J"]
     GIRDI = [9, 11, 12, 13, 16, 17, 18, 19, 25, 26, 27, 33, 34]
+    d2 = dict(d) if sayfa2 else None             # devam sayfasi ayni baslikla
+    _rar_adimlar(d, satirlar[:6], SUT, GIRDI, saat)
+    if d2 is not None:
+        _rar_adimlar(d2, satirlar[6:12], SUT, GIRDI, saat)
+        coklu_yaz(kaynak, hedef, {sayfa: d, sayfa2: d2})
+        return len(satirlar)
+    hucre_yaz(kaynak, hedef, sayfa, d)
+    return len(satirlar)
+
+
+def _rar_adimlar(d, satirlar, SUT, GIRDI, saat):
+    """Run@Rate adim sutunlarini doldurur; kullanilmayan sutun BOSALTILIR."""
     for i, sut in enumerate(SUT):
         if i >= len(satirlar):
-            for r in GIRDI:                      # kullanilmayan adim sutunu
-                d["%s%d" % (sut, r)] = None      # sablonun ornek verisi kalmasin
+            for r in GIRDI:                      # sablonun ornek verisi kalmasin
+                d["%s%d" % (sut, r)] = None
             continue
         o = satirlar[i]
         uretilen = int(round(o["kap"] * RR_KULLANIM * RR_PERFORMANS))
@@ -1303,8 +1321,6 @@ def run_at_rate(v, hedef):
             "%s34" % sut: "Planlı duruş (ayar/mola/tip değişimi) — gerçek deneme "
                           "kaydı girilene kadar kapasite hesabından türetildi",
         })
-    hucre_yaz(kaynak, hedef, sayfa, d)
-    return len(satirlar)
 
 def kapasite(v, hedef):
     from openpyxl import Workbook
