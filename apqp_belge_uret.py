@@ -3338,6 +3338,16 @@ NITEL_ALET = ("GÖZLE", "GÖRSEL", "GOZLE", "GORSEL", "TL")
 LAB_TESTI = re.compile(r"YANMA|YANMAZ|FLAMMAB|TL\s*206|TL\s*1010|"
                        r"YOĞUNLUK|YOGUNLUK|ISO\s*845|DENSITY", re.I)
 
+# DENETIM MSA KONUSU DEĞİLDİR. VDA 6.5 ürün denetimi, VDA 6.3 proses denetimi
+# ve katmanlı denetim (LPA) bir ÖLÇÜM SİSTEMİ değil, sistem doğrulamasıdır:
+# denetçi bir büyüklük ölçmez, şartlara uygunluğu değerlendirir. Ne Gage R&R
+# (tekrarlanabilirlik/yeniden üretilebilirlik) ne de nitelik uyum (Kappa)
+# analizinin konusu olabilir — denetimin "ölçüm birimi" ve "parçası" yoktur.
+DENETIM = re.compile(r"VDA\s*6[.,]?\s*[35]|ÜRÜN\s*DENET|URUN\s*DENET|"
+                     r"PROSES\s*DENET|SÜREÇ\s*DENET|SUREC\s*DENET|"
+                     r"KATMANLI\s*DENET|LAYERED\s*PROCESS|\bLPA\b|"
+                     r"TETKİK|TETKIK", re.I)
+
 
 def msa_aletleri(kod):
     """Kontrol planındaki her ölçüm aleti için: en dar tolerans, karakteristikler."""
@@ -3372,6 +3382,9 @@ def msa_aletleri(kod):
         # ölçülemez) ve periyodik yapılır. Yanma hızı, yoğunluk, gramaj gibi
         # malzeme testleri kontrol planında akredite yönteme göre yürür.
         if LAB_TESTI.search(g["alet"]) or any(LAB_TESTI.search(k) for k in g["kar"]):
+            continue
+        # Denetimler (VDA 6.5 / 6.3, LPA) ölçüm sistemi değildir — MSA yapılmaz
+        if DENETIM.search(g["alet"]) or any(DENETIM.search(k) for k in g["kar"]):
             continue
         g["nitel"] = g["tol"] is None or g["alet"].upper().startswith(NITEL_ALET)
         sonuc.append(g)
