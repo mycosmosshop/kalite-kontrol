@@ -819,6 +819,37 @@ def tum_olculer(im, capa, plan_degerleri=(), geometri_ele=False):
     return sonuc
 
 
+def _cakisanlari_ele(olcu, plan_deger, esik=46):
+    """Ayni noktaya dusen olculerden BIRI birakilir.
+
+    Kullanici cizimde "cift daire" balon gordu: iki olcu neredeyse ayni
+    koordinata dusunce balonlari ust uste biniyor ve okunamiyor. Bu genelde
+    ayni yaziyi iki kez yakalamaktan olur (biri tam, biri kirpik: "343" ve
+    yanindaki "3" gibi). Tutulan: kontrol planiyla DOGRULANAN, o da yoksa
+    daha uzun/tam olan deger.
+    """
+    def planda(d):
+        try:
+            f = float(str(d).replace(",", ".").lstrip("øØR"))
+        except ValueError:
+            return False
+        return any(abs(f - p) < 0.051 for p in plan_deger)
+
+    kalan = []
+    for o in olcu:
+        deger, x, y = o[0], o[1], o[2]
+        for i, v in enumerate(kalan):
+            if abs(v[1] - x) < esik and abs(v[2] - y) < esik:
+                iyi = (planda(deger), len(str(deger)))
+                eski = (planda(v[0]), len(str(v[0])))
+                if iyi > eski:
+                    kalan[i] = o
+                break
+        else:
+            kalan.append(o)
+    return kalan
+
+
 def _en_yakin_pos(x, y, capa_no):
     """Ölçüyü ait olduğu pozisyona bağlar (en yakın 'Pos.' etiketi)."""
     if not capa_no:
@@ -985,10 +1016,17 @@ def uret(kod, tiff_yolu, klasor, kp_satirlari, sablon_kutusu=None, tam=True):
         olcu = _ai_olculeri(im, plan_deger)
         if not olcu:
             olcu = tum_olculer(im, capa, plan_deger, geometri_ele=not capa)
+        olcu = _cakisanlari_ele(olcu, plan_deger)
         # Her ölçü en yakın pozisyona bağlanır, o grupta okuma sırasıyla numaralanır
+        # NOKTALI NUMARA (1.1, 1.2 ...) YALNIZ POS'LU PLANLARDA.
+        # Cizim uzerindeki daireler POS karakteristigi olmak zorunda degil:
+        # VW cizimlerinde not/detay referansidir. Plan POS'suzken onlara gore
+        # gruplayinca butun olculer "1.1 ... 1.29" diye numaralaniyordu.
+        # Plan POS'suzsa cizimdeki daireler yok sayilir, duz sira: 1..n.
+        pos_capa = capa_no if pos else []
         gruplar = {}
         for deger, x, y, g, h, kaynak, yon in olcu:
-            gruplar.setdefault(_en_yakin_pos(x, y, capa_no), []).append(
+            gruplar.setdefault(_en_yakin_pos(x, y, pos_capa), []).append(
                 {"deger": deger, "x": x, "y": y, "g": g, "h": h,
                  "kaynak": kaynak, "yon": yon})
         atama, satirlar = [], []
@@ -999,7 +1037,7 @@ def uret(kod, tiff_yolu, klasor, kp_satirlari, sablon_kutusu=None, tam=True):
                 sira += 1
                 # Çapa varsa "Pos.alt no", yoksa düz sıra numarası
                 etiket = ("%s.%d" % (pno, i + 1) if pno is not None
-                          else (str(sira) if not capa_no else "?.%d" % (i + 1)))
+                          else (str(sira) if not pos_capa else "?.%d" % (i + 1)))
                 # Balon yazinin USTUNE binmesin: yatay yazida soluna,
                 # dikey (90 donuk) yazida ustune konur
                 if o.get("yon") == "d":

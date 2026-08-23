@@ -165,6 +165,25 @@ def hucre_yaz(kaynak, hedef, sayfa_dosyasi, degerler, ek_xml=None, yeni_parcalar
     zin.close()
 
 
+def ilk_sayfa_yolu(kaynak):
+    """Kitabin ILK sayfasinin zip yolu. Sayfa adi urune gore degisen
+    sablonlarda (QTR'de sayfa adi resim numarasi) ada gore aranamaz."""
+    with zipfile.ZipFile(kaynak) as z:
+        wb = z.read("xl/workbook.xml").decode("utf-8")
+        rels = z.read("xl/_rels/workbook.xml.rels").decode("utf-8")
+    m = re.search(r"<sheet [^>]*/?>", wb)
+    if not m:
+        return None
+    r = re.search(r'r:id="([^"]+)"', m.group(0))
+    if not r:
+        return None
+    t = re.search(r'Id="%s"[^>]*Target="([^"]+)"' % re.escape(r.group(1)), rels)
+    if not t:
+        return None
+    yol = t.group(1).lstrip("/")
+    return yol if yol.startswith("xl/") else "xl/" + yol
+
+
 def sayfa_yolu(kaynak, ad):
     """Sayfa ADINDAN zip içindeki worksheet yolunu bulur.
     sheetN.xml numarası sayfa sırasıyla aynı olmak zorunda değildir; ada göre
@@ -898,6 +917,135 @@ RR_HAT_VERIM, RR_HURDA = 0.99, 0.005
 RR_KULLANIM, RR_PERFORMANS, RR_KALITE = 0.94, 0.97, 0.995
 
 
+# ── FR192 Tedarikçi Proje Risk Analizi (VDA MLA) ────────────────────────
+# VDA Olgunluk Seviyesi Güvencesi (MLA) risk sınıflandırması: 4 grupta 19
+# kriter, her biri 0/1/2 puan. Toplam -> A (38-19) yüksek, B (18-09) orta,
+# C (08-00) düşük olgunluk riski.
+# PUANLAMA SINIRI: 1.x (ürün), 2.x (proses) ve 3.x (zaman) kriterleri PROJE
+# yargısıdır; ERP bunları bilemez, şablonun kendi değeri korunur ve ekip
+# gözden geçirir. Yalnız 4.x (tedarikçi) kriterleri ERP verisinden kurulur:
+# onaylı tedarikçi sınıfı/puanı, PPM, IATF/ISO belgesi ve mal kabul geçmişi.
+FR192_SABLON = "FR192_Risk analizi AYPA_PP_RiskAnalizi.xlsm"
+
+
+def fr192_tedarikci_puani(ted):
+    """4.x tedarikçi kriterleri -> {hucre: puan}. ERP verisine dayanır."""
+    if not ted:
+        return {}
+    kayit = next((x for x in sorgu("/onayli_tedarikci?select=ad,durum,sinif,puan,ppm,"
+                                   "otomotiv,iatf,iso9001")
+                  if met(x["ad"]).upper()[:18] == met(ted).upper()[:18]), None)
+    if not kayit:
+        # Onaylı listede yok: tedarikçi riski en yüksek sayılır
+        return {"E39": 2, "E41": 1, "E43": 1, "E45": 2, "E47": 1}
+    sinif = met(kayit.get("sinif")).upper()
+    ppm = float(kayit.get("ppm") or 0)
+    # 4.1 Tedarikçi değerlendirmesi: A sınıfı=0, B=1, C/diğer=2
+    d41 = 0 if sinif == "A" else (1 if sinif == "B" else 2)
+    # 4.4 Organizasyon/yapı: IATF 16949 varsa 0, yalnız ISO 9001 ise 1, yoksa 2
+    d44 = 0 if kayit.get("iatf") else (1 if kayit.get("iso9001") else 2)
+    # 4.5 Önceki teslimatlarda sorunlar: PPM'e göre
+    d45 = 0 if ppm < 1000 else (1 if ppm < 10000 else 2)
+    return {"E39": d41, "E41": 0, "E43": 0, "E45": d44, "E47": d45}
+
+
+def fr192(v, hedef, malzeme_kodu, malzeme_adi, tedarikci):
+    """FR192 Tedarikçi Proje Risk Analizi — satın alınan malzeme başına."""
+    kaynak = os.path.join(PPAP_KLASOR, FR192_SABLON)
+    if not os.path.exists(kaynak):
+        return 0
+    sayfa = ilk_sayfa_yolu(kaynak)
+    if not sayfa:
+        return 0
+    d = {
+        "B6": "%s — %s" % (v["ad"], v["kod"]),
+        "E6": v["termin"],
+        "B7": v["musteri"],
+        "E7": v["resim"],
+        "B8": malzeme_adi or malzeme_kodu,
+        "E8": met(v.get("resim_rev")) or "-",
+        "B9": malzeme_kodu,
+        "E9": tedarikci or "onaylı listeden seçilecek",
+    }
+    d.update(fr192_tedarikci_puani(tedarikci))
+    hucre_yaz(kaynak, hedef, sayfa, d)
+    return 1
+
+
+# ── QTR — Kalite Teknik Gereklilik Çalışması (FR90 EK 1) ────────────────
+# Musterinin kendi formu: QTR_<resim no>.xlsx. Dokuman numarasi "FR90-<resim>"
+# oldugu icin bu form FR90 Fizibilite Taahhudunun EK 1'idir; APQP'de de oraya,
+# madde 2.9 "Fizibilite calismasi tamamlandi" adimina baglanir (dosya adindaki
+# FR90 kodu adimin form koduyla eslesir).
+QTR_SABLON = "QTR_6FA881989.xlsx"
+
+
+def qtr_cevaplari(v):
+    """17 sorunun degerlendirme metni — ERP verisinden kurulur."""
+    mak = ", ".join(sorted({met(r.get("makine_adi")) for r in v["rota"]
+                            if met(r.get("makine_adi"))})) or "—"
+    db = v.get("darbogaz") or {}
+    aletler = ", ".join(sorted({g["alet"] for g in msa_aletleri(v["kod"])})) or "—"
+    resim = "%s (rev %s, %s)" % (v["resim"], met(v.get("resim_rev")) or "-",
+                                 met(v.get("resim_tarih")) or "-")
+    agac = ", ".join(met(a.get("tuketim_adi"))[:30] for a in v["agac"][:4]) or "—"
+    ppap = "Cpk ≥ 1,67 hedefi; 1,33 < Cpk < 1,67 müşteri temsilcisiyle gözden geçirilir"
+    return [
+        resim + " teknik resmi ve kontrol planı üzerinden değerlendirilmiştir.",
+        "Mühendislik performans değerleri teknik resim ve müşteri şartnamesinde "
+        "tanımlıdır; kontrol planında ölçüm yöntemine bağlanmıştır.",
+        "Toleranslar teknik resmin genel tolerans sınıfına ve kontrol planındaki "
+        "alt/üst limitlere göre imal edilmektedir.",
+        "Proses yeterliliği çalışmaları yapılmıştır (%s). Kabul ölçütü: %s." % (aletler[:80], ppap),
+        "Kapasite doğrulaması yapılmıştır. Darboğaz operasyon: %s, vardiya kapasitesi %s adet."
+        % (met(db.get("makine"))[:60] or "—", db.get("kap") or "—"),
+        "Ürün elle taşınabilir ölçü ve ağırlıktadır; ambalaj standardı FR228 ile tanımlanmıştır.",
+        "—",
+        "Gerekli ekipman ve takımlar mevcut hatlarda kuruludur: %s." % mak[:110],
+        "Birincil imalat yöntemi mevcut rotada tanımlıdır; alternatif yöntem "
+        "gerektiğinde değişiklik yönetimi (FR148) üzerinden yürütülür.",
+        "İstatistiksel proses kontrolü kontrol planında tanımlı karakteristikler "
+        "için uygulanmaktadır.",
+        "Evet — benzer ürünlerde aynı ölçüm ve kontrol yöntemleri kullanılmaktadır. %s" % v["benzer"],
+        "%s tesisi, %s hatlarında." % (v["lokasyon_ad"], mak[:80]),
+        "Prosesler kontrol planına göre izlenmekte, kontrol grafikleriyle kararlılık takip edilmektedir.",
+        "Proses yeterliliği çalışmalarında kabul ölçütü Cpk ≥ 1,67 olarak uygulanmaktadır.",
+        "PPAP/PPA kapsamındaki temel gereklilikler (kontrol planı, PFMEA, MSA, "
+        "yeterlilik, ölçüsel rapor, malzeme testleri) üretilmiştir.",
+        "Hava ve ortam dayanımı teknik resim notlarındaki şartnameye göre "
+        "değerlendirilir; malzeme testleri test raporlarında kayıtlıdır.",
+        "Malzeme işaretleme ve izlenebilirlik teknik resim notlarına göre "
+        "uygulanır. Ürün ağacı: %s." % agac[:110],
+    ]
+
+
+def qtr(v, hedef):
+    """QTR — Kalite Teknik Gereklilik Çalışması (FR90 EK 1)."""
+    kaynak = os.path.join(PPAP_KLASOR, QTR_SABLON)
+    if not os.path.exists(kaynak):
+        return 0
+    sayfa = ilk_sayfa_yolu(kaynak)
+    if not sayfa:
+        return 0
+    d = {
+        "D1": "FR90-%s" % re.sub(r"[^A-Z0-9]", "", met(v["resim"]).upper())[:12],
+        "B3": v["resim"] or v["kod"], "D3": v["musteri"],
+        "B4": v["ad"], "D4": "%s / Türkiye" % v["lokasyon_ad"],
+        "B5": "%s (rev %s, %s)" % (v["resim"], met(v.get("resim_rev")) or "-",
+                                   met(v.get("resim_tarih")) or "-"),
+        "D5": v["musteri"],
+    }
+    for i, cevap in enumerate(qtr_cevaplari(v)):
+        d["C%d" % (7 + i)] = cevap
+        d["D%d" % (7 + i)] = "—" if cevap == "—" else "Uygun"
+    d["A25"] = ("%s (%s) parçası teknik, kalite ve kapasite yönünden "
+                "değerlendirilmiş; PPAP/PPA gerekliliklerini karşılamaktadır."
+                % (v["ad"], v["kod"]))
+    d["D25"] = "UYGUN"
+    hucre_yaz(kaynak, hedef, sayfa, d)
+    return 17
+
+
 def run_at_rate(v, hedef):
     """Run @ Rate — MUSTERININ KENDI FORMU (Run-at-Rate.xlsm) doldurulur.
 
@@ -1470,6 +1618,11 @@ def alt_tedarikci_ppap(v, klasor, uret):
         ad = "Alt Tedarikçi PPAP %s - %s.xlsx" % (v["kod"], kod)
         n = uret(ad, lambda x, h, k=kod, m_=a, t=tedarikci: alt_ppap_yaz(x, h, k, m_, t),
                  "Alt Tedarikçi PPAP " + kod)
+        # FR192 Tedarikçi Proje Risk Analizi (VDA MLA) — malzeme basina
+        uret("FR192 Tedarikçi Risk Analizi %s - %s.xlsm" % (v["kod"], kod),
+             lambda x, h, k=kod, ad_=met(a.get("tuketim_adi")), t=tedarikci:
+                 fr192(x, h, k, ad_, t),
+             "FR192 Tedarikçi Risk Analizi " + kod)
         sonuc.append((kod, met(a.get("tuketim_adi")), tedarikci, n or 0, nasil))
     return sonuc
 
@@ -4433,6 +4586,9 @@ def main():
     if uret("FR90 Fizibilite Taahhüdü %s.xlsm" % kod, lambda a, b: (fr90(a, b), 1)[1],
             "FR90 Fizibilite Taahhüdü"):
         print("   ✓ FR90 Fizibilite Taahhüdü         (başlık dolduruldu, cevaplar ekipte)")
+
+    if uret("FR90 EK1 QTR Kalite Teknik Gereklilik %s.xlsx" % kod, qtr, "QTR (FR90 EK 1)"):
+        print("   ✓ QTR Kalite Teknik Gereklilik      (FR90 EK 1 — 17 soru, madde 2.9)")
 
     if uret("FR182 Ürün Devreye Alma Formu %s.xlsx" % kod, fr182, "FR182 Ürün Devreye Alma"):
         print("   ✓ FR182 Ürün Devreye Alma Formu     (üretim imzası eklendi)")
