@@ -133,3 +133,50 @@ if (FR91.length !== 7 || adimSayisi !== 77) {
 }
 console.log('  OK   FR91 gecerli JSON — ' + FR91.length + ' bolum / ' + adimSayisi + ' adim');
 console.log('sayfa butunlugu: TAMAM');
+
+// ── Belge -> adim (ters yon) ────────────────────────────────────────────
+// NEDEN: uc belge (D/TLD oz denetimi, TL 1010 yanmazlik, ISO 845 yogunluk)
+// HICBIR adima baglanmiyordu — uretiliyor ama modulde gorunmuyorlardi.
+// Ayrica FR243 BES adima birden dusuyordu: DOSYA_ANAHTAR'daki "fr ?24"
+// deseni "FR243"un icine takiliyor (PPA/PPAP ile ayni tipte hata).
+const FR91_LISTE = JSON.parse(blok(s, 'const FR91 = ', '];')
+  .replace(/^const FR91 = /, '').replace(/;$/, ''));
+
+function adimlariBul(dosyaAdi) {
+  const bulunan = [];
+  FR91_LISTE.forEach(b => b.adimlar.forEach(a => {
+    if (esle(a.form, [{ ad: dosyaAdi, yol: dosyaAdi }]).length) bulunan.push(a.no);
+  }));
+  return bulunan;
+}
+
+// [dosya, baglanmasi BEKLENEN adimlar]
+const BELGE_ADIM = [
+  ['Run @ Rate 700.0.454.xlsm', ['5.12']],
+  ['Sanifoam_D_TLD_audit_VW 700.0.454.xlsm', ['6.17']],
+  ['FR90 EK1 QTR Kalite Teknik Gereklilik 700.0.454.xlsx', ['2.9']],
+  ['FR243 Proje Tanıtım Formu 700.0.454.docx', ['2.11']],
+  ['FR215 İletişim Matrisi 700.0.454.xlsx', ['2.11']],
+];
+
+let hata3 = 0;
+for (const [dosya, bekle] of BELGE_ADIM) {
+  const bulunan = adimlariBul(dosya);
+  const ok = JSON.stringify(bulunan.sort()) === JSON.stringify([...bekle].sort());
+  if (!ok) hata3++;
+  console.log((ok ? '  OK   ' : '  HATA ') + dosya.slice(0, 44).padEnd(46)
+    + '-> ' + (bulunan.join(', ') || 'HICBIR ADIM'));
+  if (!ok) console.log('         beklenen: ' + bekle.join(', '));
+}
+// Test raporlari birden fazla adima kanittir; en az bir malzeme/performans
+// adimina baglanmalari YETER.
+for (const dosya of ['Flammability Test Report VW 700.0.454.xlsx',
+  'ISO 845 Density&Weight Test Report 700.0.454.xlsx']) {
+  const bulunan = adimlariBul(dosya);
+  const ok = bulunan.includes('6.14') || bulunan.includes('6.15');
+  if (!ok) hata3++;
+  console.log((ok ? '  OK   ' : '  HATA ') + dosya.slice(0, 44).padEnd(46)
+    + '-> ' + (bulunan.join(', ') || 'HICBIR ADIM'));
+}
+if (hata3) { console.error('\nBASARISIZ: ' + hata3 + ' belge'); process.exit(1); }
+console.log('belge-adim baglama: TAMAM');
