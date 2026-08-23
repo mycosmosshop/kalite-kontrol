@@ -5,34 +5,71 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://mycosmosshop.github.io/erp-portal/erp-theme.js"></script>
 <style>
-:root{--bg:#f4f6fa;--kart:#fff;--kenar:#dde3ec;--metin:#1f2937;--soluk:#6b7280;--vurgu:#1e3c72}
+/* ── TEMA ────────────────────────────────────────────────────────────────
+   ERP sozlesmesi: portal iframe'e <html data-theme="dark|light"> yazar ve
+   erp-theme.js bu modulu "kendi temasi olan" listesinde tutar; oradan
+   window.applyTheme(t) cagrilir (asagida tanimli). Koyu renk degerleri
+   ERP'nin ortak paletiyle AYNIDIR (erp-dark.css --k-* degiskenleri), boylece
+   portal ile modul arasinda ton farki olmaz. */
+:root{
+  --bg:#f4f6fa;--kart:#fff;--kenar:#dde3ec;--metin:#1f2937;--soluk:#6b7280;
+  --vurgu:#1e3c72;
+  --yuzey2:#eef2f8;      /* tablo basligi */
+  --bolum:#dbe4f3;       /* bolum satiri */
+  --girdi:#fff;          /* dugme ve alan zemini */
+  --iz:#e5e7eb;          /* ilerleme/durum cubugu izi */
+  --iz2:#f1f5f9;         /* gantt satir izi */
+  --bag:#1d4ed8;         /* dosya baglantisi */
+  --ok-bg:#dcfce7;--ok-fg:#166534;
+  --sari-bg:#fef3c7;--sari-fg:#92400e;
+  --kirmizi-bg:#fee2e2;--kirmizi-fg:#991b1b;
+  --mavi-bg:#dbeafe;--mavi-fg:#1e40af;
+  --uyari-bg:#fff7ed;--uyari-kenar:#fed7aa;--uyari-fg:#9a3412;
+  --sil-bg:#fee2e2;--sil-fg:#b91c1c;--sil-kenar:#f0a8a8;
+  color-scheme:light;
+}
+:root[data-theme="dark"]{
+  --bg:#191c20;--kart:#23272d;--kenar:#3c434c;--metin:#e7e9ec;--soluk:#a8b0b9;
+  --vurgu:#2b3037;
+  --yuzey2:#2b3037;--bolum:#333941;--girdi:#2b3037;--iz:#3c434c;--iz2:#2b3037;
+  --bag:#7aa2f7;
+  --ok-bg:#14351f;--ok-fg:#7ee2a8;
+  --sari-bg:#3a2f12;--sari-fg:#f0c674;
+  --kirmizi-bg:#3b1a1a;--kirmizi-fg:#f2a6a6;
+  --mavi-bg:#1a2740;--mavi-fg:#9dbcf5;
+  --uyari-bg:#33240f;--uyari-kenar:#6b4a1c;--uyari-fg:#f0c674;
+  --sil-bg:#3b1a1a;--sil-fg:#f2a6a6;--sil-kenar:#6b2f2f;
+  color-scheme:dark;
+}
+/* Tema degisiminde gecisleri kapat (ERP ile ayni kural) */
+:root.tema-gecis,:root.tema-gecis *{transition:none!important;animation-duration:0s!important}
 *{box-sizing:border-box}
 body{margin:0;font:14px/1.45 "Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--metin)}
 .ust{background:var(--vurgu);color:#fff;padding:10px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 .ust h1{font-size:17px;margin:0;font-weight:700}
 .ust .bilgi{font-size:12px;opacity:.85}
-button{font:inherit;border:1px solid var(--kenar);background:#fff;color:var(--metin);padding:6px 12px;border-radius:6px;cursor:pointer}
+button{font:inherit;border:1px solid var(--kenar);background:var(--girdi);color:var(--metin);padding:6px 12px;border-radius:6px;cursor:pointer}
 button.bas{background:#f59e0b;border-color:#f59e0b;color:#fff;font-weight:600}
 button.bas:disabled{opacity:.6;cursor:default}
 button.sec{background:var(--vurgu);border-color:var(--vurgu);color:#fff}
-input,select{font:inherit;padding:6px 10px;border:1px solid var(--kenar);border-radius:6px;background:#fff;color:var(--metin)}
+input,select{font:inherit;padding:6px 10px;border:1px solid var(--kenar);border-radius:6px;background:var(--girdi);color:var(--metin)}
 .govde{padding:16px;max-width:1700px;margin:0 auto}
 .kart{background:var(--kart);border:1px solid var(--kenar);border-radius:10px;padding:14px;margin-bottom:14px}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th,td{border:1px solid var(--kenar);padding:6px 8px;text-align:left;vertical-align:top}
-th{background:#eef2f8;font-weight:600;font-size:12px;position:sticky;top:0;z-index:2}
-tr.bolum td{background:#dbe4f3;font-weight:700;font-size:13px}
+th{background:var(--yuzey2);font-weight:600;font-size:12px;position:sticky;top:0;z-index:2}
+tr.bolum td{background:var(--bolum);font-weight:700;font-size:13px}
 td.no{white-space:nowrap;font-variant-numeric:tabular-nums;width:52px}
 td.durum{width:110px;text-align:center}
 .rozet{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:700}
-.r0{background:#fee2e2;color:#991b1b}.r50{background:#fef3c7;color:#92400e}.r100{background:#dcfce7;color:#166534}
-.kanit{font-size:11px;color:#166534;background:#dcfce7;border-radius:4px;padding:1px 5px;margin-left:4px}
+.r0{background:var(--kirmizi-bg);color:var(--kirmizi-fg)}.r50{background:var(--sari-bg);color:var(--sari-fg)}.r100{background:var(--ok-bg);color:var(--ok-fg)}
+.kanit{font-size:11px;color:var(--ok-fg);background:var(--ok-bg);border-radius:4px;padding:1px 5px;margin-left:4px}
 .ara-kutu{margin-left:14px;display:inline-flex;align-items:center;gap:8px}
-#ara{width:290px;padding:5px 9px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;
+#ara{width:290px;padding:5px 9px;border:1px solid var(--kenar);background:var(--girdi);color:var(--metin);border-radius:6px;font-size:13px;
   outline:none}
-#ara:focus{border-color:#1d4ed8;box-shadow:0 0 0 2px rgba(29,78,216,.15)}
-.ara-sayi{font-size:12px;color:#64748b}
-.g-sar{position:relative;height:20px;background:#f1f5f9;border-radius:3px}
+#ara:focus{border-color:var(--bag);box-shadow:0 0 0 2px rgba(29,78,216,.15)}
+.ara-sayi{font-size:12px;color:var(--soluk)}
+.g-sar{position:relative;height:20px;background:var(--iz2);border-radius:3px}
 .g-cub{position:absolute;top:3px;height:14px;border-radius:3px;background:#3b82f6;
   box-shadow:inset 0 -1px 0 rgba(0,0,0,.12)}
 .g-cub.tamam{background:#22c55e}
@@ -40,35 +77,35 @@ td.durum{width:110px;text-align:center}
 .g-cub.bolum{top:1px;height:18px;background:#1e3a8a;opacity:.85}
 .g-bugun{position:absolute;top:0;bottom:0;width:2px;background:#ef4444;opacity:.65}
 .g-ok{position:absolute;height:0;border-top:2px dotted #64748b}
-.g-ay{font-size:11px;color:#475569;text-align:center;border-left:1px solid #e2e8f0}
-.g-efsane{font-size:11px;color:#475569;margin:6px 0 10px}
+.g-ay{font-size:11px;color:var(--soluk);text-align:center;border-left:1px solid var(--kenar)}
+.g-efsane{font-size:11px;color:var(--soluk);margin:6px 0 10px}
 .g-efsane i{display:inline-block;width:16px;height:9px;border-radius:2px;margin:0 4px 0 12px;
   vertical-align:middle}
-.ilerleme{height:8px;border-radius:4px;background:#e5e7eb;overflow:hidden;margin-top:7px}
+.ilerleme{height:8px;border-radius:4px;background:var(--iz);overflow:hidden;margin-top:7px}
 .ilerleme i{display:block;height:100%;width:32%;border-radius:4px;
   background:linear-gradient(90deg,#1d4ed8,#60a5fa);animation:ilerKay 1.15s infinite ease-in-out}
 @keyframes ilerKay{0%{margin-left:-32%}100%{margin-left:100%}}
-.iler-sure{color:#64748b;font-size:11px}
-.yukle-dugme{font-size:11px;color:#166534;background:#dcfce7;border-radius:4px;padding:1px 6px;
+.iler-sure{color:var(--soluk);font-size:11px}
+.yukle-dugme{font-size:11px;color:var(--ok-fg);background:var(--ok-bg);border-radius:4px;padding:1px 6px;
   margin-left:4px;text-decoration:none;white-space:nowrap}
 .yukle-dugme:hover{background:#bbf7d0}
-.aiag3{font-size:11px;color:#1e40af;background:#dbeafe;border-radius:4px;padding:1px 5px;margin-left:4px}
+.aiag3{font-size:11px;color:var(--mavi-fg);background:var(--mavi-bg);border-radius:4px;padding:1px 5px;margin-left:4px}
 .form-ad{font-size:12px;color:var(--soluk)}
-a.dosya{color:#1d4ed8;text-decoration:none}a.dosya:hover{text-decoration:underline}
-a.ikon{color:#6b7280;text-decoration:none;font-size:11px;padding:1px 5px;border:1px solid var(--kenar);border-radius:4px}
-a.ikon:hover{color:#1e3c72;border-color:#1e3c72}
-a.sil-dugme{color:#b91c1c;font-weight:700;font-size:11px;text-decoration:none;padding:1px 8px;
-  border:1px solid #f0a8a8;border-radius:4px;background:#fee2e2;white-space:nowrap}
+a.dosya{color:var(--bag);text-decoration:none}a.dosya:hover{text-decoration:underline}
+a.ikon{color:var(--soluk);text-decoration:none;font-size:11px;padding:1px 5px;border:1px solid var(--kenar);border-radius:4px}
+a.ikon:hover{color:var(--bag);border-color:var(--bag)}
+a.sil-dugme{color:var(--sil-fg);font-weight:700;font-size:11px;text-decoration:none;padding:1px 8px;
+  border:1px solid var(--sil-kenar);border-radius:4px;background:var(--sil-bg);white-space:nowrap}
 a.sil-dugme:hover{background:#b91c1c;color:#fff;border-color:#b91c1c}
 .gantt{overflow-x:auto}
 .gantt table{font-size:11px}
 .gantt td.hf{padding:0;height:20px;min-width:16px}
 .cubuk{height:14px;border-radius:3px;background:#3b82f6}
 .cubuk.tamam{background:#22c55e}
-.durumcubugu{height:8px;background:#e5e7eb;border-radius:4px;overflow:hidden;margin-top:4px}
+.durumcubugu{height:8px;background:var(--iz);border-radius:4px;overflow:hidden;margin-top:4px}
 .durumcubugu i{display:block;height:100%;background:#22c55e}
 .sekme{display:flex;gap:6px;margin-bottom:12px}
-.uyari{background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:12px}
+.uyari{background:var(--uyari-bg);border:1px solid var(--uyari-kenar);color:var(--uyari-fg);padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:12px}
 </style></head>
 <body>
 <div class="ust">
@@ -79,6 +116,7 @@ a.sil-dugme:hover{background:#b91c1c;color:#fff;border-color:#b91c1c}
   <button class="bas" id="uretBtn">APQP Oluştur</button>
   <select id="projeSec" style="min-width:220px"></select>
   <button id="silBtn" title="Seçili APQP kaydını sil">Sil</button>
+  <button id="temaBtn" title="Açık / koyu tema" style="padding:6px 10px">🌙</button>
 </div>
 
 <div class="govde">
@@ -129,6 +167,43 @@ a.sil-dugme:hover{background:#b91c1c;color:#fff;border-color:#b91c1c}
 <script>
 // FR91 APQP Takip Formu adimlari — SABLONDAN cikarildi, elle yazilmadi.
 const FR91 = [{"no":"2","ad":"Planlama ve Tanım","adimlar":[{"no":"2.1","ad":"Çizim ve spesifikasyonların incelenmesi","aiag":"2.7","sorumluluk":"AR&GE","prosedur":"","form":"Müşteri Teknik Resimleri, Şartnameleri"},{"no":"2.2","ad":"Özel/Kritik Özellikler gözden geçirildi, Yetenek gereksinimleri onaylandı","aiag":"2.11","sorumluluk":"AR&GE \nKalite","prosedur":"","form":"Müşteri Teknik Resimleri"},{"no":"2.3","ad":"Ön Süreç akış şeması ve malzeme listesi oluşturuldu","aiag":"1.9; 1.10","sorumluluk":"AR&GE","prosedur":"","form":"PL74 Proses Akış Diyagramı","kanit":"akis"},{"no":"2.4","ad":"Yeni Alet, Ekipman ve Tesis gereksinimleri belirlendi","aiag":"2.10","sorumluluk":"Proje Ekibi","prosedur":"","form":"FR81 Toplantı Tutanağı"},{"no":"2.5","ad":"Yeni Göstergeler, Fikstürler ve Test ekipmanı gereksinimleri belirlendi","aiag":"2.12","sorumluluk":"Proje Ekibi","prosedur":"","form":"FR81 Toplantı Tutanağı"},{"no":"2.6","ad":"İlk kapasite değerlendirmesi yapıldı","aiag":"","sorumluluk":"Planlama","prosedur":"","form":"Kapasite Takip Formu (oluşturulacak)"},{"no":"2.7","ad":"Onaylı kalite denetimleri yapılarak belirlenen Alt Tedarikçiler tanımlandı","aiag":"","sorumluluk":"Satınalma\nKalite","prosedur":"","form":"PL11 Onaylı Tedarikçi Listesi"},{"no":"2.8","ad":"Müşteri çizim ve spesifikasyon incelemesi","aiag":"2.7","sorumluluk":"Proje Ekibi","prosedur":"","form":"FR81 Toplantı Tutanağı"},{"no":"2.9","ad":"Fizibilite çalışması tamamlandı.","aiag":"2.13","sorumluluk":"Proje Ekibi","prosedur":"","form":"FR90 Fizibilite Etüdü Formu"},{"no":"2.10","ad":"Paketleme planı müşteri ile gözden geçirildi (Ambalaj standartları)","aiag":"3.1","sorumluluk":"Satış","prosedur":"","form":"FR228 Ambalaj Standartı Formu"},{"no":"2.11","ad":"Proje kapsamı ve APQP ekibi tanımlandı (roller, yetkiler, toplantı düzeni)","aiag":"0.1; 0.2","sorumluluk":"Proje Ekibi","prosedur":"","form":"FR81 Toplantı Tutanağı","aiag3":true},{"no":"2.12","ad":"Tedarikçi seçimi ve onayı tamamlandı — sourcing kontrol listesi","aiag":"0.5","sorumluluk":"Satınalma","prosedur":"","form":"PL11 Onaylı Tedarikçi Listesi\nFR192 Tedarikçi Proje Risk Analizi","aiag3":true},{"no":"2.13","ad":"Açık konu (concern) matrisi oluşturuldu; sorumlu ve termin atandı","aiag":"0.9","sorumluluk":"Proje Ekibi","prosedur":"","form":"FR81 Toplantı Tutanağı","aiag3":true},{"no":"2.14","ad":"Risk değerlendirme ve azaltma planı hazırlandı — olasılık/etki, risk puanı ve derecesi","aiag":"1.17","sorumluluk":"Proje Ekibi Kalite","prosedur":"","form":"FR148 Değişiklik Yönetimi Formu","aiag3":true},{"no":"2.15","ad":"Değişiklik yönetimi başlatıldı — değişiklik talebi/onayı FR148 ile, her APQP çıktısında revizyon tarihçesi","aiag":"1.15","sorumluluk":"Kalite","prosedur":"","form":"FR148 Değişiklik Yönetimi Formu","aiag3":true},{"no":"2.16","ad":"APQP program metrikleri hazırlandı ve yönetime sunuldu (kırmızı/sarı/yeşil durum, kapı onayı)","aiag":"1.16; 1.14","sorumluluk":"Proje Yöneticisi","prosedur":"","form":"APQP Program Metrikleri","aiag3":true}]},{"no":"3","ad":"Üretim Süreci Tasarımı ve Geliştirme","adimlar":[{"no":"3.1","ad":"Süreç Akış Şemaları oluşturuldu","aiag":"3.3","sorumluluk":"","prosedur":"","form":"PL74 Proses Akış Diyagramı","kanit":"akis"},{"no":"3.2","ad":"Proses Hata Modu ve Etki Analizi (P-FMEA) tamamlandı","aiag":"3.6","sorumluluk":"","prosedur":"","form":"FR34 P-FMEA","kanit":"fmea"},{"no":"3.3","ad":"Ön Kontrol Planı tamamlandı","aiag":"3.7","sorumluluk":"","prosedur":"","form":"Leansys PL41 Kalite Kontrol Planı","kanit":"plan"},{"no":"3.4","ad":"Ölçüm sistemi analiz (MSA) planı tamamlandı","aiag":"3.9","sorumluluk":"Kalite","prosedur":"","form":"FR86 Gage R&R Formu"},{"no":"3.5","ad":"Yeni Alet, Ekipman ve Tesislerin alınması ve kurulumu","aiag":"2.10; 2.12","sorumluluk":"Satınalma","prosedur":"PR05 Satınalma Prosedürü","form":""},{"no":"3.6","ad":"Yeni Göstergeler, Fikstürler ve Test ekipmanlarının alınması ve kurulumu","aiag":"2.12","sorumluluk":"Satınalma","prosedur":"PR05 Satınalma Prosedürü","form":""},{"no":"3.7","ad":"Ekipman kurulumları yapılması","aiag":"","sorumluluk":"Bakım","prosedur":"","form":""},{"no":"3.8","ad":"Operasyon/Çalışma talimatları hazırlandı","aiag":"3.8","sorumluluk":"Üretim","prosedur":"","form":"Leansys Operasyon Kartları","kanit":"opkart"},{"no":"3.9","ad":"Eğitim planı tamamlandı ve uygulandı","aiag":"","sorumluluk":"İK","prosedur":"PR18 Eğitim","form":"Leansys Eğitim Planı\nFR17 Eğitim Toplantısı Tutanağı"},{"no":"3.10","ad":"Alt Tedarikçi APQP planı tamamlandı","aiag":"","sorumluluk":"Satınalma\nKalite","prosedur":"","form":"Alt Tedarikçi PPAP (VDA 2)"},{"no":"3.11","ad":"Müşteri ön teslimat planı alındı","aiag":"","sorumluluk":"Satış\nPlanlama","prosedur":"","form":""},{"no":"3.12","ad":"Ön Alt Tedarikçi teslimat planı tamamlandı","aiag":"","sorumluluk":"Satınalma\nPlanlama","prosedur":"PR05 Satınalma Prosedürü","form":""},{"no":"3.13","ad":"Ürün/proses kalite sistemi gözden geçirmesi yapıldı","aiag":"3.2","sorumluluk":"Kalite","prosedur":"","form":"FR81 Toplantı Tutanağı","aiag3":true},{"no":"3.14","ad":"Yerleşim planı (floor plan layout) hazırlandı — malzeme akışı, kontrol noktaları, ara stok alanları","aiag":"3.4","sorumluluk":"Üretim","prosedur":"","form":"Yerleşim Planı","aiag3":true}]},{"no":"4","ad":"Mühendislik Örnekleri","adimlar":[{"no":"4.1","ad":"Mühendislik örnekleri gereksinimleri tanımlandı","aiag":"","sorumluluk":"AR&GE","prosedur":"","form":""},{"no":"4.2","ad":"Numune teslim tarihi","aiag":"","sorumluluk":"AR&GE","prosedur":"PR46 İlk Numune Onay Prosedürü","form":"FR56 Numune Takip Formu"},{"no":"4.3","ad":"Mevcut mühendislik örnekleri - tasarım, boyut ve malzeme doğrulaması","aiag":"","sorumluluk":"Kalite","prosedur":"","form":""}]},{"no":"5","ad":"Önemli Üretim Çalışması Ürün ve Süreç doğrulaması","adimlar":[{"no":"5.1","ad":"Üretim Kontrol planı oluşturuldu","aiag":"4.7","sorumluluk":"Kalite","prosedur":"","form":"Leansys Kontrol Planı","kanit":"plan"},{"no":"5.2","ad":"Personelin eğitimi tamamlandı","aiag":"","sorumluluk":"İK","prosedur":"","form":"Leansys Eğitim Planı"},{"no":"5.3","ad":"Tasarım FMEA (tasarımdan sorumlu olunması durumunda) tamamlandı","aiag":"2.2.4","sorumluluk":"AR&GE","prosedur":"","form":""},{"no":"5.4","ad":"Süreç Akış Şeması tamamlandı","aiag":"2.2.5","sorumluluk":"AR&GE","prosedur":"","form":"PL74 Proses Akış Diyagramı","kanit":"akis"},{"no":"5.5","ad":"AIAG formatını kullanarak FMEA'yı işleme tamamlandı","aiag":"2.2.6","sorumluluk":"Proje Ekibi","prosedur":"","form":"FR34 P-FMEA","kanit":"fmea"},{"no":"5.6","ad":"Kontrol Planı, tüm ana ve kritik özelliklerin tanımlandığı AIAG formatı kullanılarak tamamlanmıştır.","aiag":"2.2.7","sorumluluk":"Kalite","prosedur":"","form":"Leansys PL41 Kalite Kontrol Planı","kanit":"plan"},{"no":"5.7","ad":"Önemli Üretim çalışması tamamlandı","aiag":"4.1","sorumluluk":"Üretim","prosedur":"","form":""},{"no":"5.8","ad":"Ölçüm Sistemi Analizi (MSA)","aiag":"4.2","sorumluluk":"Kalite","prosedur":"","form":"FR86 Gage R&R Formu"},{"no":"5.9","ad":"Tüm ana ve kritik boyutlara ilişkin İlk Süreç Potansiyeli Çalışmaları","aiag":"2.2.11","sorumluluk":"Kalite","prosedur":"","form":"FR88 Süreç Yeterlilik Ölçümü Formu"},{"no":"5.10","ad":"Proses yeterliliği çalışmaları tamamlandı (cp, cpk)","aiag":"4.3","sorumluluk":"Kalite","prosedur":"","form":"FR88 Süreç Yeterlilik Ölçümü Formu"},{"no":"5.11","ad":"Hurda oranı hesaplanır ve gerekirse eylem planı oluşturulur.","aiag":"","sorumluluk":"Üretim","prosedur":"","form":"PPM Takip FR100 KPI"},{"no":"5.12","ad":"Kapasite doğrulandı (Döngü/İnceleme Süreleri doğrulandı)","aiag":"","sorumluluk":"Planlama","prosedur":"","form":"Kapasite Takip Formu \nRun @ Rate"},{"no":"5.13","ad":"Kullanım noktasında parça bütünlüğünü sağlamak için doğrulanan paketleme gereksinimleri","aiag":"4.6","sorumluluk":"Satış","prosedur":"","form":"FR228 Ambalaj Standartı Formu"},{"no":"5.14","ad":"Saklanan ana mastar numune (çoklu boşluklu kalıbın, aletin veya modelin her birinin ana numunesi - gelecekte referans olarak kullanılmak üzere.)","aiag":"AIAG PPAP Kılavuzu 2.2.15","sorumluluk":"AR&GE","prosedur":"TL253 Şahit Numune Talimatı","form":""},{"no":"5.15","ad":"ILERI ÜRÜN KALITE PLANLAMASI FAALIYETLERI ONAY TABLOSU","aiag":"","sorumluluk":"AR&GE","prosedur":"","form":"FR91 APQP Takip Formu \n(Bu form)"},{"no":"5.16","ad":"Safe Launch / güçlendirilmiş kontrol dönemi planlandı ve uygulandı (seri üretim başlangıcında ilave muhafaza)","aiag":"4.7","sorumluluk":"Kalite Üretim","prosedur":"","form":"Leansys Kontrol Planı","aiag3":true,"kanit":"plan"},{"no":"5.17","ad":"Faz çıkış onayı alındı — yönetim desteği / kapı gözden geçirmesi","aiag":"4.8; Ek B","sorumluluk":"Proje Yöneticisi","prosedur":"","form":"FR91 APQP Takip Formu","aiag3":true}]},{"no":"6","ad":"Müşteriye gönderilecek PPAP Belgeleri","adimlar":[{"no":"6.1","ad":"Müşteri PPAP seviyesinin incelenmesi, Belirtilmemişse Seviye 2 Uygulanır","aiag":"","sorumluluk":"Kalite","prosedur":"","form":""},{"no":"6.2","ad":"Müşteriye Parça Gönderim Emri (Part Submission Warrant : PSW / Cover Sheet)","aiag":"2.2.18; 4.1","sorumluluk":"Kalite","prosedur":"","form":"Cover Sheet (Kapak)"},{"no":"6.3","ad":"Mevcut üretim çiziminde bulunmayan \"Onaylanmış Mühendislik Değişiklik Belgeleri\"ni dahil edin","aiag":"2.2.2","sorumluluk":"AR&GE","prosedur":"","form":"FR148 Mühendislik Değişiklik Formu"},{"no":"6.4","ad":"Varsa Sapma veya Değişiklik Talebi formları Müşteriye gönderilmiş ve onaylanmıştır","aiag":"","sorumluluk":"AR&GE","prosedur":"","form":"FR89 Sapma Talep Formu"},{"no":"6.5","ad":"Tüm Çizim boyutları, notlar ve materyaller balonlanır ve bir numara atanır (numaralar daire içine alınmalıdır)","aiag":"2.2.1","sorumluluk":"Kalite","prosedur":"","form":"Numaralandırılmış Teknik Resim"},{"no":"6.6","ad":"Boyutsal Sonuçlar, Müşteri Ölçüsel Rapor Formu kullanılarak tamamlanır ve tüm uygunsuzluklar açıkça tanımlanır","aiag":"2.2.9","sorumluluk":"Kalite","prosedur":"","form":"Müşteri Ölçüsel Rapor Formu"},{"no":"6.7","ad":"*Tasarım FMEA (tasarımdan sorumlu tedarikçiler için)","aiag":"2.2.4","sorumluluk":"Kalite","prosedur":"","form":""},{"no":"6.8","ad":"*Süreç akış şeması","aiag":"2.2.5","sorumluluk":"AR&GE","prosedur":"","form":"PL74 Proses Akış Diyagramı","kanit":"akis"},{"no":"6.9","ad":"*AIAG formatını kullanarak FMEA'yı işleyin","aiag":"2.2.6","sorumluluk":"Proje Ekibi","prosedur":"","form":"FR34 P-FMEA","kanit":"fmea"},{"no":"6.10","ad":"*Kontrol planı","aiag":"2.2.7","sorumluluk":"Kalite","prosedur":"","form":"Leansys PL41 Kalite Kontrol Planı","kanit":"plan"},{"no":"6.11","ad":"Ölçüm Sistemi Analiz Çalışmaları (MSA) GageR&R (Cihaz Tekrar Edilebilirlik ve Tekrar Üretilebilirlik)","aiag":"2.2.8","sorumluluk":"Kalite","prosedur":"","form":"FR86 Gage R&R Formu"},{"no":"6.12","ad":"Tüm Kontrol Yardımcıları/Fikstürleri için Uygunluk; Kontrol mastarları","aiag":"2.2.16","sorumluluk":"Kalite","prosedur":"","form":"FR176 Kalıp Doğrulama Formu"},{"no":"6.13","ad":"İlk Süreç Potansiyeli Çalışmaları (tek taraflı limit ya da normal olmayan dağılım durumunda kabul kriterleri müşteri temsilcisi ile birlikte belirlenmelidir cpk >1,67 olmalı, 1,33<cpk<1,67 ise yetkili müşteri temsilcisi ile sonuçları gözden geçirin, cpk<1,33 ise proses yeterli değil.","aiag":"2.2.11","sorumluluk":"Kalite","prosedur":"","form":"FR88 Süreç Yeterlilik Ölçümü Formu"},{"no":"6.14","ad":"Malzeme Test Sonuçları tamamlandı. \nMalzeme Analiz Sertifikası tamamlandı.","aiag":"2.2.10.1","sorumluluk":"Kalite","prosedur":"","form":"FR54 Kalite Kontrol Testi Raporu (Leansys)"},{"no":"6.15","ad":"Performans Test Sonuçları tamamlandı.","aiag":"2.2.10.2","sorumluluk":"Kalite","prosedur":"","form":"FR54 Kalite Kontrol Testi Raporu (Leansys)"},{"no":"6.16","ad":"Görünüm Onayı tamamlandı. (Görsel parça ise)","aiag":"2.2.13","sorumluluk":"Kalite","prosedur":"","form":""},{"no":"6.17","ad":"*Müşteri Özel İsteklerine Uygunluk Kayıtları tamamlandı.","aiag":"2.2.17","sorumluluk":"Kalite","prosedur":"","form":"FR54 Kalite Kontrol Testi Raporu (Leansys)\nDış Laboratuvar Testleri"},{"no":"6.19","ad":"Gönderilen PPAP Örnek Parçaları (önemli bir üretim sürecinden olmalıdır)","aiag":"2.2.14","sorumluluk":"Kalite, Üretim","prosedur":"","form":"FR56 Numune Takip Formu"},{"no":"6,20","ad":"Müşterinin talep ettiği diğer bilgiler","aiag":"2.2.17","sorumluluk":"Kalite","prosedur":"","form":""},{"no":"6.21","ad":"PPAP Dokümanları Müşteriye Gönderildi","aiag":"2.2.17","sorumluluk":"Kalite","prosedur":"","form":"FR56 Numune Takip Formu"}]},{"no":"7","ad":"Müşteri onayı, Seri Üretimin başlaması ve Teslimat","adimlar":[{"no":"7.1","ad":"Ürün Devreye Alma","aiag":"","sorumluluk":"AR&GE Üretim","prosedur":"","form":"FR182 Ürün Devreye Alma Formu"},{"no":"7.2","ad":"Müşteri teslimat planı alındı ve onaylandı","aiag":"","sorumluluk":"Kalite","prosedur":"","form":""},{"no":"7.3","ad":"Alt Tedarikçi teslimat planı belirlendi ve onaylandı","aiag":"","sorumluluk":"Planlama","prosedur":"Leansys Termin","form":""}]},{"no":"8","ad":"Geri Besleme, Değerlendirme ve Düzeltici Faaliyet","adimlar":[{"no":"8.1","ad":"Varyasyonun azaltılması — proses yeterliliği izlemeye alındı, iyileştirme planı yapıldı","aiag":"5.1","sorumluluk":"Kalite","prosedur":"","form":"FR88 Süreç Yeterlilik Ölçümü Formu","aiag3":true},{"no":"8.2","ad":"Müşteri memnuniyeti izleniyor (şikâyet, PPM, skorkart)","aiag":"5.2","sorumluluk":"Kalite Satış","prosedur":"","form":"PPM Takip FR100 KPI","aiag3":true},{"no":"8.3","ad":"Müşteri hizmeti ve teslimat performansı izleniyor (termin, eksik/fazla)","aiag":"5.3","sorumluluk":"Lojistik","prosedur":"","form":"PPM Takip FR100 KPI","aiag3":true},{"no":"8.4","ad":"Öğrenilmiş dersler kaydedildi ve benzer ürünlere aktarıldı (TGR/TGW, hataya dayanıklı çözümlerin kalıcı kaydı)","aiag":"5.4","sorumluluk":"Kalite","prosedur":"","form":"FR181 Öğrenilmiş Dersler","aiag3":true}]}];
+
+// ── TEMA ────────────────────────────────────────────────────────────────
+// ERP sozlesmesi: erp-theme.js bu modulu "kendi temasi olan" listesinde
+// tutuyor ve window.applyTheme(t) cagiriyor — ama fonksiyon TANIMLI DEGILDI,
+// bu yuzden portal temayi surdugunde hicbir sey olmuyordu.
+// Tema degeri portalin ORTAK anahtarinda saklanir; modul tek basina acildiginda
+// da ayni anahtardan okunur, boylece portal ile modul ayni temada acilir.
+const TEMA_ANAHTAR = 'erp_portal_theme';
+
+window.applyTheme = function (t) {
+  const tema = (t === 'light') ? 'light' : 'dark';
+  const kok = document.documentElement;
+  kok.classList.add('tema-gecis');                 // gecis animasyonlarini kapat
+  kok.setAttribute('data-theme', tema);
+  kok.setAttribute('data-bs-theme', tema);         // portalin ikinci anahtari
+  const d = document.getElementById('temaBtn');
+  if (d) d.textContent = (tema === 'dark') ? '☀️' : '🌙';
+  setTimeout(() => kok.classList.remove('tema-gecis'), 140);
+  return true;
+};
+
+function temaOku() {
+  // Once portalin iframe'e yazdigi deger, sonra ortak localStorage
+  const y = document.documentElement.getAttribute('data-theme');
+  if (y === 'dark' || y === 'light') return y;
+  try {
+    const k = localStorage.getItem(TEMA_ANAHTAR);
+    if (k === 'dark' || k === 'light') return k;
+  } catch (e) { /* depolama kapali olabilir */ }
+  return 'light';
+}
+window.applyTheme(temaOku());
+
+// Portal iframe'e dogrudan yazamadiginda postMessage ile bildirir
+window.addEventListener('message', e => {
+  if (e.data && e.data.tip === 'erp-tema') window.applyTheme(e.data.tema);
+});
 
 const URL_ = 'https://nnubrxbpthmkitueixbh.supabase.co';
 const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5udWJyeGJwdGhta2l0dWVpeGJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1NjI2MDIsImV4cCI6MjA5NjEzODYwMn0.CHZUOylf_q8kkOQbFf9VWZ6-doUTlynmAhahM2EuImE';
@@ -1380,6 +1455,12 @@ $('#zipBtn').addEventListener('click', async () => {
   } catch (e) {
     mesaj('ZIP üretilemedi: ' + e.message + ' (yerel ajan çalışıyor mu?)');
   } finally { ilerlemeBitir(); $('#zipBtn').disabled = false; }
+});
+
+$('#temaBtn').addEventListener('click', () => {
+  const yeni = (document.documentElement.getAttribute('data-theme') === 'dark') ? 'light' : 'dark';
+  window.applyTheme(yeni);
+  try { localStorage.setItem(TEMA_ANAHTAR, yeni); } catch (e) { /* yoksay */ }
 });
 
 $('#belgeBtn').addEventListener('click', async () => {
