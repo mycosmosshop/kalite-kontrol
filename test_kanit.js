@@ -99,3 +99,37 @@ for (const [form, bekle] of BEKLENEN) {
 }
 if (hata2) { console.error('\nBASARISIZ: ' + hata2 + ' adim eslesmesi'); process.exit(1); }
 console.log('dosya-adim baglama: TAMAM — kapaklar 3.10\'a baglanmiyor');
+
+// ── Sayfa sozdizimi + FR91 butunlugu ────────────────────────────────────
+// NEDEN: FR91 sabitine bir adim eklerken "\n" kacisi GERCEK SATIR SONUNA
+// donustu; JS dizesi ortadan kirildi ve modul hic acilmadi
+// ("Uncaught SyntaxError: Invalid or unexpected token", satir 131).
+// Sozdizimi hatasi sessizdir — ancak tarayicida fark edilir. Artik burada
+// yakalanir.
+const betik = (s.match(/<script(?![^>]*src=)[^>]*>([\s\S]*?)<\/script>/g) || [])
+  .map(b => b.replace(/^<script[^>]*>/, '').replace(/<\/script>$/, ''))
+  .join('\n');
+try {
+  new Function(betik);
+} catch (e) {
+  console.error('  HATA apqp.html icindeki betik AYRISTIRILAMIYOR: ' + e.message);
+  process.exit(1);
+}
+console.log('  OK   apqp.html betigi ayristiriliyor');
+
+const fr91Ham = blok(s, 'const FR91 = ', '];').replace(/^const FR91 = /, '').replace(/;$/, '');
+let FR91;
+try {
+  FR91 = JSON.parse(fr91Ham);
+} catch (e) {
+  console.error('  HATA FR91 gecerli JSON degil: ' + e.message);
+  process.exit(1);
+}
+const adimSayisi = FR91.reduce((t, b) => t + b.adimlar.length, 0);
+if (FR91.length !== 7 || adimSayisi !== 77) {
+  console.error('  HATA FR91 beklenen 7 bolum / 77 adim degil: '
+    + FR91.length + ' / ' + adimSayisi);
+  process.exit(1);
+}
+console.log('  OK   FR91 gecerli JSON — ' + FR91.length + ' bolum / ' + adimSayisi + ' adim');
+console.log('sayfa butunlugu: TAMAM');
