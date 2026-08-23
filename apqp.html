@@ -1309,6 +1309,22 @@ $('#tazeleBtn').addEventListener('click', async () => {
     eklenen += yeni.length;
     if (!a.durum) { a.durum = 100; a.tamamlanma = a.bitis; }
   }));
+  // Lokasyon ve ekip de tazelenir: kayitli projede saklandigi icin eski
+  // kayitlarda bos ("—") ya da yanlis lokasyonun ekibi kalabiliyor.
+  let lokasyonYeni = '';
+  try {
+    const k = await erpKanit(aktif.stokKodu);
+    if (k && met(k.lokasyon) && met(k.lokasyon) !== met(aktif.lokasyon)) {
+      aktif.lokasyon = k.lokasyon;
+      lokasyonYeni = k.lokasyon;
+    }
+    const dogruEkip = ekipListesi(aktif.lokasyon);
+    if (JSON.stringify(dogruEkip) !== JSON.stringify(aktif.ekip)) {
+      aktif.ekip = dogruEkip;
+      if (!lokasyonYeni) lokasyonYeni = aktif.lokasyon || 'ekip';
+    }
+  } catch (e) { /* ERP'ye ulasilamazsa mevcut deger korunur */ }
+
   // ERP calismalari (MSA + yeterlilik) YENIDEN eslestirilir. Eski kayitlarda
   // baska urunun calismalari yapisik kalabiliyor (700.0.444-2X -> 700.0.444)
   // ve calisma turu yazmiyordu; Yenile bunlari da duzeltir.
@@ -1329,6 +1345,7 @@ $('#tazeleBtn').addEventListener('click', async () => {
   } catch (e) { /* ERP'ye ulasilamazsa mevcut kanitlar korunur */ }
   await kaydet(aktif); ciz();
   const p = [];
+  if (lokasyonYeni) p.push('lokasyon/ekip güncellendi (' + lokasyonYeni + ')');
   if (calisma) p.push(calisma + ' ERP çalışması yenilendi');
   if (yeniAdim) p.push(yeniAdim + ' yeni adım');
   if (eklenen) p.push(eklenen + ' doküman bağlandı');
