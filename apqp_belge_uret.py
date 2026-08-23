@@ -923,6 +923,138 @@ RR_HAT_VERIM, RR_HURDA = 0.99, 0.005
 RR_KULLANIM, RR_PERFORMANS, RR_KALITE = 0.94, 0.97, 0.995
 
 
+# ── FR243 Proje Tanıtım Formu / FR215 İletişim Matrisi ──────────────────
+# İkisi de VDA 6.3 / MLA proje dosyasının parçasıdır ve APQP madde 2.11
+# "Proje kapsamı ve APQP ekibi tanımlandı (roller, yetkiler, toplantı düzeni)"
+# adımına aittir: FR243 projeyi tanımlar, FR215 kimin kiminle iletişim
+# kuracağını. ERP'de karşılığı olmayan alanlara N/A yazılır.
+FR243_SABLON = "FR243 Proje_Tanıtım_Formu.docx"
+FR215_SABLON = "FR215 İletişim Matrisi.xlsx"
+# Şablondaki örnek proje (bu değerler ürünün kendi değerleriyle değiştirilir)
+FR243_ORNEK = {
+    "parca": "6FA.881.989",
+    "musteri": "Lear Corporation Martorell SLU",
+    "proje": "SEAT SE210 SmallBEV",
+    "proje_no": "6FA-LEAR-2024-01",
+    "lokasyon": "Sanifoam Çerkezköy Fabrikası",
+}
+
+
+def fr243(v, hedef):
+    """FR243 Proje Tanıtım Formu — şablondaki ÖRNEK PROJE bu ürüne çevrilir.
+
+    Şablon Lear/SEAT SE210 projesine ait; başka bir müşteride adres, program
+    adı ve müşteri temsilcisi YANLIŞ kalırdı. Karşılığı olmayan alanlara N/A
+    yazılır. Anahtarlar KISA ve kesin seçilir: şablonda "Ar -Ge", "5 0.000"
+    gibi bölünmüş boşluklar var, uzun cümleyi anahtar yapmak tutmuyor.
+    """
+    import docx
+    kaynak = os.path.join(PPAP_KLASOR, FR243_SABLON)
+    if not os.path.exists(kaynak):
+        return 0
+    rol = dict(v["ekip"])
+    parca = musteri_parca_no(v) or v["kod"]
+    mak = ", ".join(sorted({met(r.get("makine_adi")) for r in v["rota"]
+                            if met(r.get("makine_adi"))})) or "N/A"
+    akis = " → ".join(met(r.get("makine_adi")) for r in v["rota"]
+                      if met(r.get("makine_adi"))) or "N/A"
+    ham = ", ".join(met(a.get("tuketim_adi"))[:34] for a in v["agac"][:3]) or "N/A"
+    harita = {
+        # Parça ve müşteri
+        "6FA.881.989": parca,
+        "Lear Corporation Martorell SLU": v["musteri"] or "N/A",
+        "Av. de Lear 15-25": "adres N/A",
+        "08760 Martorell, Barcelona / İspanya": "",
+        "Lear Martorell (İspanya)": v["musteri"] or "N/A",
+        "Lear Martorell": v["musteri"] or "N/A",
+        "Lear üretim planına göre": "%s üretim planına göre" % (v["musteri"] or "Müşteri"),
+        "Lear PPA": "VDA 2 / müşteri PPAP",
+        # Program / proje
+        "SEAT – SE210 SmallBEV": v["proje_no"],
+        "SEAT SE210 SmallBEV": v["proje_no"],
+        "SEAT SE210": v["proje_no"],
+        "(Fridola)": "",
+        "Fridola Back Cover": v["ad"][:44],
+        "Backrest Cover": v["ad"][:44],
+        "6FA-LEAR-2024-01": v["proje_no"],
+        # Yer ve süreç
+        "Sanifoam Çerkezköy Fabrikası": "Sanifoam %s Fabrikası" % v["lokasyon_ad"],
+        "Pres Kesim + Su Jeti + Lazer Markalama Hattı": mak[:110],
+        "PE köpük plaka → Pres kesim / Su jeti kesim → Lazer markalama (DMC) → Kontrol → Paketleme":
+            akis[:150],
+        "Karton koli": "FR228 Ambalaj Standardı Formuna göre",
+        # Tarihler
+        "10.06.2024": _gun_nokta(v["devreye_baslangic"]),
+        "Q1 2026 (Process Sign-off: 27.04.2026)": _gun_nokta(v["devreye"]),
+        "Eylül 2024": _gun_nokta(v["termin"]),
+        "Ocak 2025": _gun_nokta(v["devreye"]),
+        # Kişiler
+        "Carles Lozano Sibina": "N/A",
+        # Musteri temsilcisi satirindaki firma etiketi ve MLA ML0 aciklamasi
+        "(Supplier Quality Engineer, LEAR)": "(müşteri kalite temsilcisi)",
+        "( Supplier Quality Engineer , LEAR )": "(müşteri kalite temsilcisi)",
+        "Lear sourcing": "müşteri sourcing kararı",
+        "Sinem Kaya": rol.get("AR&GE Proje Yöneticisi", "N/A"),
+        "Osman Volkan Pekatik": rol.get("Kalite Güvence Müdürü", "N/A"),
+        "Kutlay Altıparmak": rol.get("Satın Alma", "N/A"),
+        "Ender Zaimoğlu": rol.get("Satış", "N/A"),
+        "Ünal Ürkmez": rol.get("Üretim", "N/A"),
+        "Gökhan Öztekin": rol.get("Üretim", "N/A"),
+        "Umut Çiftçioğulları": rol.get("Kalite Mühendisi", "N/A"),
+    }
+    # Malzeme satiri: urun agacindan
+    harita["PE köpük (Kapalı hücreli polietilen köpük)"] = ham[:110]
+    d = docx.Document(kaynak)
+    n = _docx_degistir(d, {k: x for k, x in harita.items()
+                           if k and x is not None and k != x})
+    d.save(hedef)
+    return n or 1
+
+
+def _gun_nokta(t):
+    """2025-08-11 -> 11.06.2025 biçimi (formun kendi düzeni)."""
+    try:
+        return datetime.date.fromisoformat(met(t)[:10]).strftime("%d.%m.%Y")
+    except ValueError:
+        return "N/A"
+
+
+# Şablonun müşteri iletişim bloğu LEAR'a aittir; başka müşteride kişiler
+# geçersizdir, N/A yazılır (kullanıcı: "yok veya ilgili değil ise N/A yap").
+FR215_SABLON_MUSTERI = re.compile(r"LEAR", re.I)
+FR215_MUSTERI_SATIR = range(12, 25)      # müşteri kişileri
+FR215_BIZ_SATIR = range(34, 45)          # Sanifoam kişileri (şablonda doğru)
+
+
+def fr215(v, hedef):
+    """FR215 İletişim Matrisi — müşteri ve üretim yeri bilgisi güncellenir."""
+    kaynak = os.path.join(PPAP_KLASOR, FR215_SABLON)
+    if not os.path.exists(kaynak):
+        return 0
+    sayfa = ilk_sayfa_yolu(kaynak)
+    if not sayfa:
+        return 0
+    d = {
+        "A5": "Last Update : %s" % _gun_nokta(datetime.date.today().isoformat()),
+        # Müşteri bloğu
+        "A8": v["musteri"] or "N/A", "B8": "N/A", "C8": "N/A", "D8": "N/A", "E8": "N/A",
+        # Seri üretim (bizim) bloğu
+        "A30": "Sanifoam Endüstri ve Tüketim Ürünleri San. Tic. A.Ş.",
+        "B30": "%s / Türkiye" % v["lokasyon_ad"],
+        "D30": duns(v), "E30": "Turkiye",
+    }
+    # Müşteri LEAR değilse şablondaki LEAR kişileri bu projeye ait DEĞİLDİR
+    if not FR215_SABLON_MUSTERI.search(met(v["musteri"])):
+        kisa = met(v["musteri"]).split()[0] if met(v["musteri"]) else "N/A"
+        for r in FR215_MUSTERI_SATIR:
+            d["A%d" % r] = kisa                 # C sütunu (pozisyon) korunur
+            d["B%d" % r] = "N/A"
+            d["D%d" % r] = "N/A"
+            d["E%d" % r] = "N/A"
+    hucre_yaz(kaynak, hedef, sayfa, d)
+    return 1
+
+
 # ── FR192 Tedarikçi Proje Risk Analizi (VDA MLA) ────────────────────────
 # VDA Olgunluk Seviyesi Güvencesi (MLA) risk sınıflandırması: 4 grupta 19
 # kriter, her biri 0/1/2 puan. Toplam -> A (38-19) yüksek, B (18-09) orta,
@@ -4787,6 +4919,11 @@ def main():
 
     if uret("FR182 Ürün Devreye Alma Formu %s.xlsx" % kod, fr182, "FR182 Ürün Devreye Alma"):
         print("   ✓ FR182 Ürün Devreye Alma Formu     (üretim imzası eklendi)")
+
+    if uret("FR243 Proje Tanıtım Formu %s.docx" % kod, fr243, "FR243 Proje Tanıtım"):
+        print("   ✓ FR243 Proje Tanıtım Formu         (madde 2.11 — proje tanımı)")
+    if uret("FR215 İletişim Matrisi %s.xlsx" % kod, fr215, "FR215 İletişim Matrisi"):
+        print("   ✓ FR215 İletişim Matrisi            (madde 2.11 — roller ve iletişim)")
 
     n = uret("FR81 Toplantı Tutanağı %s.xlsx" % kod, fr81, "FR81 Toplantı Tutanağı")
     if n: print("   ✓ FR81 Toplantı Tutanağı            (%d madde — APQP madde no ile eklenir)" % n)
