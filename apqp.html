@@ -458,6 +458,23 @@ async function erpKanit(giris) {
   ]);
   const planSatir = coz.satir;
   const urunAdi = met((planSatir[0] || {}).stok_adi) || kod;
+  // ANA KOD ROTASI: ana kodun (700.0.444) kendi operasyon karti olmayabilir;
+  // uretim varyant kodlari altinda yurur (700.0.444-7). Rota bossa ayni
+  // aileden en cok operasyonlu varyantin rotasi kullanilir, yoksa lokasyon
+  // bos kaliyor ve akis/kapasite bilgisi cikmiyordu.
+  if (!(rota.data || []).length) {
+    const aile = await sb.from('operasyon_kartlari')
+      .select('stok_kodu,makine_adi,kayit_tarihi,gecerlilik_tarihi')
+      .like('stok_kodu', kod + '%').limit(200);
+    const grup = {};
+    (aile.data || []).forEach(x => {
+      const k = met(x.stok_kodu);
+      if (k === kod) return;
+      (grup[k] = grup[k] || []).push(x);
+    });
+    const enCok = Object.keys(grup).sort((a, b) => grup[b].length - grup[a].length)[0];
+    if (enCok) rota.data = grup[enCok];
+  }
   // Kontrol planindaki olcum yontemleri — MSA calismalariyla eslestirmek icin
   const yont = await sb.from('leansys_kontrol_plani').select('yontem').eq('stok_kodu', kod).limit(400);
   const aletler = [...new Set((yont.data || []).map(x => met(x.yontem).trim()).filter(Boolean))];

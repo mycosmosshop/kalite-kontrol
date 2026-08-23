@@ -271,53 +271,6 @@ def _cember_icinde(im, s):
     return isabet >= len(aci) * 0.8
 
 
-def _olcu_cizgisi_var(im, s):
-    """Kutunun yanında ÖLÇÜ ÇİZGİSİ var mı?
-
-    Gerçek ölçü, kendisinden belirgin biçimde uzun bir ölçü çizgisine
-    yaslanır. Antet yazısı, not cümlesi ve standart referansı ("VW 10500")
-    böyle bir çizgiye yaslanmaz. Bu POZİTİF kanıt, eskiden kullandığım
-    yoğunluk elemesinin yerini alır — o eleme ölçü yoğun bölgelerde gerçek
-    ölçüleri de kesiyordu (kullanıcı: "birçok sayıya balon verilmemiş").
-    """
-    import numpy as np
-    H, W = im.shape
-    dikey = s.get("yon") == "d"
-    # Okuma yönündeki uzunluk ve ona dik kalınlık
-    uzun = s["h"] if dikey else s["g"]
-    kalin = s["g"] if dikey else s["h"]
-    if uzun < 4 or kalin < 4:
-        return False
-    gerek = max(int(uzun * 2.0), 40)
-    a0 = int(max(0, (s["y"] if dikey else s["x"]) - uzun * 1.5))
-    a1 = int(min(H if dikey else W, (s["y"] + s["h"] if dikey else s["x"] + s["g"])
-                 + uzun * 1.5))
-    if a1 - a0 < gerek:
-        return False
-
-    def tarama(b0, b1):
-        b0, b1 = int(max(0, b0)), int(min(W if dikey else H, b1))
-        if b1 <= b0:
-            return False
-        bant = (im[a0:a1, b0:b1] if dikey else im[b0:b1, a0:a1]) < 128
-        # Her hat (dikey yazıda sütun) boyunca en uzun koyu diziyi bul
-        for i in range(bant.shape[1] if dikey else bant.shape[0]):
-            hat = bant[:, i] if dikey else bant[i]
-            en, sayac = 0, 0
-            for p in hat:
-                sayac = sayac + 1 if p else 0
-                if sayac > en:
-                    en = sayac
-            if en >= gerek:
-                return True
-        return False
-
-    ust = (s["x"] if dikey else s["y"])
-    alt = (s["x"] + s["g"] if dikey else s["y"] + s["h"])
-    return (tarama(ust - kalin * 2.5, ust - kalin * 0.15)
-            or tarama(alt + kalin * 0.15, alt + kalin * 2.5))
-
-
 def _metin_satirinda(s, hepsi):
     """Kutu bir YAZI SATIRININ parçası mı? (aynı hizada, yakınında başka
     kutu var mı)
@@ -679,8 +632,7 @@ def tum_olculer(im, capa, plan_degerleri=(), geometri_ele=False):
         kutu = [s for s in kutu
                 if s["y"] + s["h"] < H * 0.90 and s["x"] < W * 0.79]
         kutu = [s for s in kutu
-                if _olcu_cizgisi_var(im, s)
-                and not _cizgili_hucrede(im, s)
+                if not _cizgili_hucrede(im, s)
                 and not _cember_icinde(im, s)
                 and not _metin_satirinda(s, kutu)]
     plan = {("%g" % float(d)) for d in plan_degerleri}
