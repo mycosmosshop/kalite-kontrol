@@ -647,6 +647,79 @@ def _sablonla_oku(model, etiket, s, kar, im=None):
     return t if re.fullmatch(r"\d{1,4}(\.\d{1,2})?", t) else None
 
 
+def _ai_olculeri(im, plan_degerleri=()):
+    """Görme modeli + geometri: model NE olduğunu, geometri NEREDE olduğunu.
+
+    Model ölçüyü nottan/tablodan/referans balonundan anlayarak ayırıyor ve
+    değerleri doğru okuyor (700.0.444'te 30 ölçünün 30'u doğru). Verdiği
+    piksel konumu kabataslak; o yüzden balon, konumun YAKININDAKİ yazı
+    kutusuna hizalanır — kutu tespiti saf geometridir ve kesindir.
+
+    Kural: modelin konumu ESASTIR.
+      * yakında kutu varsa  → balon o kutuya oturur (kesin konum)
+      * yakında kutu yoksa  → modelin konumu kullanılır (ölçü DÜŞMEZ)
+    Uzakta aynı değeri okuyan kutuya ASLA kaçılmaz; öyle yapınca balonlar
+    not bloğuna ve referans listesine düşüyordu.
+
+    Dönüş: [(deger, x, y, g, h, kaynak, yon)] — boşsa klasik yola düşülür.
+    """
+    try:
+        import ai_okuyucu
+    except ImportError:
+        return []
+    import cv2
+    import numpy as np
+    ham = ai_okuyucu.olculeri_oku(im)
+    if not ham:
+        return []
+    H, W = im.shape[:2]
+    kutu = _yakinlari_birlestir(
+        [s for s in _yazi_kutulari(im) if not _olcu_disi(s, W, H, [])])
+    merkez = (np.array([[k["x"] + k["g"] / 2.0, k["y"] + k["h"] / 2.0] for k in kutu])
+              if kutu else np.zeros((0, 2)))
+    siyah = (im < 128).astype(np.uint8)
+    n0, etiket0, ist0, _ = cv2.connectedComponentsWithStats(siyah, 8)
+    model = rakam_modeli(im, kutu, etiket0, ist0, n0) if kutu else {}
+
+    plan = {("%g" % float(d)) for d in plan_degerleri}
+    # Konum olcegi duzeltildikten sonra sapma ortanca 32 px; hizalama
+    # yaricapi olcume gore dar tutulur.
+    YAKIN = max(80, int(max(W, H) * 0.025))
+    sonuc, kullanilan = [], set()
+    for metin, mx, my in ham:
+        g = re.search(r"\d{1,4}(?:\.\d{1,2})?", metin.replace(",", "."))
+        if not g:
+            continue
+        sayi = g.group(0)
+        kaynak = "plan" if ("%g" % float(sayi)) in plan else "okundu"
+        secilen = None
+        if len(merkez):
+            d = np.abs(merkez - np.array([mx, my])).max(axis=1)
+            yakinlar = [int(i) for i in np.argsort(d)
+                        if d[i] <= YAKIN and int(i) not in kullanilan]
+            # Yakındakiler arasında AYNI DEĞERİ okuyan varsa o seçilir
+            for i in yakinlar:
+                kar = _karakterler(im, kutu[i], etiket0, ist0, n0)
+                t = _sablonla_oku(model, etiket0, kutu[i], kar, im)
+                try:
+                    if t is not None and abs(float(t) - float(sayi)) < 1e-9:
+                        secilen = i
+                        break
+                except ValueError:
+                    continue
+            if secilen is None and yakinlar:
+                secilen = yakinlar[0]          # en yakın kutu
+        if secilen is not None:
+            kullanilan.add(secilen)
+            k = kutu[secilen]
+            sonuc.append((sayi, k["x"], k["y"], k["g"], k["h"], kaynak, k["yon"]))
+        else:
+            # Kutu bulunamadı: ölçü DÜŞMEZ, modelin konumu kullanılır
+            kg, kh = max(30, 15 * len(metin)), 30
+            sonuc.append((sayi, mx - kg / 2.0, my - kh / 2.0, kg, kh, kaynak, "y"))
+    return sonuc
+
+
 def tum_olculer(im, capa, plan_degerleri=(), geometri_ele=False):
     """Çizimdeki tüm ölçü kutuları: [(deger|None, x, y, g, h, kaynak)].
     kaynak: 'plan' (kontrol planıyla doğrulandı) · 'okundu' · None (okunamadı)
@@ -906,7 +979,12 @@ def uret(kod, tiff_yolu, klasor, kp_satirlari, sablon_kutusu=None, tam=True):
         # planla eslesmiyordu (hepsi genel toleransa dusuyordu).
         plan_deger = [d[0] for k in pos.values() for d in k] or _plan_degerleri(
             kp_satirlari, kod)
-        olcu = tum_olculer(im, capa, plan_deger, geometri_ele=not capa)
+        # ÖNCE görme modeli: ölçüyü nottan/tablodan/referans balonundan
+        # ANLAYARAK ayırır. Anahtar yoksa ya da servis yanıt vermezse
+        # klasik OCR+geometri yoluna düşülür.
+        olcu = _ai_olculeri(im, plan_deger)
+        if not olcu:
+            olcu = tum_olculer(im, capa, plan_deger, geometri_ele=not capa)
         # Her ölçü en yakın pozisyona bağlanır, o grupta okuma sırasıyla numaralanır
         gruplar = {}
         for deger, x, y, g, h, kaynak, yon in olcu:
