@@ -247,28 +247,34 @@ def _olcu_disi(s, W, H, capa):
     return any(abs(x - cx) < 420 and -80 < (y - cy) < 150 for cx, cy in capa)
 
 
-def _cember_icinde(im, s):
+def _cember_icinde(im, s, tol=4):
     """Sayı ZATEN bir çemberin içinde mi? (çizimin kendi referans balonu)
 
-    Teknik resimlerde detay/kesit referansları daire içinde numaralanır.
-    Bunlara yeniden balon konmamalı — kullanıcının tespiti.
+    Çember 2-3 piksellik İNCE bir çizgidir; tam daire üzerinde nokta
+    örneklemek onu ıskalıyordu (400 kutuda 0 tespit). Her açıda radyal bir
+    BANT taranır ve yarıçap 0,75–2,6 kutu boyu arasında denenir.
     """
     import numpy as np
     H, W = im.shape
     cx, cy = s["x"] + s["g"] / 2.0, s["y"] + s["h"] / 2.0
-    R = max(s["g"], s["h"]) * 0.75
-    if R < 6:
+    R0 = max(s["g"], s["h"])
+    if R0 < 6:
         return False
-    aci = np.linspace(0, 2 * np.pi, 36, endpoint=False)
-    isabet = 0
-    for a in aci:
-        for kat in (0.95, 1.15, 1.35):
-            x = int(round(cx + np.cos(a) * R * kat))
-            y = int(round(cy + np.sin(a) * R * kat))
-            if 0 <= x < W and 0 <= y < H and im[y, x] < 128:
-                isabet += 1
-                break
-    return isabet >= len(aci) * 0.8
+    aci = np.linspace(0, 2 * np.pi, 32, endpoint=False)
+    kos, sin = np.cos(aci), np.sin(aci)
+    for kat in np.arange(0.75, 2.6, 0.08):
+        r = R0 * kat
+        isabet = 0
+        for k in range(len(aci)):
+            for dr in range(-tol, tol + 1):
+                x = int(cx + kos[k] * (r + dr))
+                y = int(cy + sin[k] * (r + dr))
+                if 0 <= x < W and 0 <= y < H and im[y, x] < 128:
+                    isabet += 1
+                    break
+        if isabet >= len(aci) * 0.88:
+            return True
+    return False
 
 
 def _blok_ele(kutular, mesafe=90, esik=6):
@@ -330,7 +336,7 @@ def _metin_satirinda(s, hepsi):
         bosluk = b0 - a1 if b0 >= a1 else a0 - b1
         # Esik DAR tutulur: cumle icindeki kelime araligi (~0,4·h) yakalanir,
         # ayni hizadaki iki AYRI olcu ("17   21", ~1,3·h) korunur.
-        if -kalin * 0.2 < bosluk < kalin * 1.0:
+        if -kalin * 0.2 < bosluk < kalin * 0.7:
             return True
     return False
 
@@ -667,10 +673,12 @@ def tum_olculer(im, capa, plan_degerleri=(), geometri_ele=False):
         # form dipnotudur; ikisinde de olcu bulunmaz. DIN/ISO'da baslik blogu
         # ~180 mm genisligindedir, A1 sayfada sayfa eninin ~%21'i.
         kutu = [s for s in kutu
-                if s["y"] + s["h"] < H * 0.90 and s["x"] < W * 0.79]
+                if s["y"] + s["h"] < H * 0.90 and s["x"] < W * 0.73]
+        # _cizgili_hucrede KALDIRILDI: olculdu, 15.05 ve 20 olculerini
+        # kesiyordu (yanlis pozitif). Tablolari blok kumeleme ve sag sutun
+        # elemesi zaten hallediyor.
         kutu = [s for s in kutu
-                if not _cizgili_hucrede(im, s)
-                and not _cember_icinde(im, s)
+                if not _cember_icinde(im, s)
                 and not _metin_satirinda(s, tum_yazi)]
         kutu = _blok_ele(kutu)
     plan = {("%g" % float(d)) for d in plan_degerleri}
