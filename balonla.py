@@ -36,6 +36,23 @@ def _pos_kumesi(kp_satirlari, kod):
     return pos
 
 
+def _plan_degerleri(kp_satirlari, kod):
+    """Kontrol planındaki tüm ölçülebilir nominal değerler (POS'suz planlar
+    için doğrulama kaynağı)."""
+    deger = []
+    for x in kp_satirlari(kod):
+        alt, ust = x.get("alt_limit"), x.get("ust_limit")
+        hedef = x.get("hedef_nicel")
+        try:
+            if hedef not in (None, ""):
+                deger.append(float(hedef))
+            elif alt is not None and ust is not None:
+                deger.append((float(alt) + float(ust)) / 2)
+        except (TypeError, ValueError):
+            continue
+    return deger
+
+
 def _capalar(im, sablon, esik=0.65):
     """'Pos.' etiketlerinin konumu (şablon eşleştirme)."""
     import cv2
@@ -217,7 +234,9 @@ def _olcu_disi(s, W, H, capa):
     x, y = s["x"], s["y"]
     # Kenar cetveli dar bir bant; pay genis tutulunca cizimin sol kenarindaki
     # olculer (or. "255") de eleniyordu.
-    if x < W * 0.021 or x > W * 0.978 or y < H * 0.022 or y > H * 0.972:
+    # Cerceve cetveli (kenar harf/rakamlari) icin pay. Balon kutunun soluna
+    # ciziliyor; kenar harfleri paya kil payi girmiyordu.
+    if x < W * 0.032 or x > W * 0.978 or y < H * 0.022 or y > H * 0.972:
         return True
     if x > W * 0.655 and y > H * 0.735:
         return True
@@ -226,6 +245,84 @@ def _olcu_disi(s, W, H, capa):
     # Etiket cevresindeki notlar ("x2", "©", "Scale: 1:5") olcu degildir;
     # dikey pencere dardi ve etiketin ALTINDAKI notlar balonlaniyordu.
     return any(abs(x - cx) < 420 and -80 < (y - cy) < 150 for cx, cy in capa)
+
+
+def _metin_satirinda(s, hepsi):
+    """Kutu bir YAZI SATIRININ parçası mı? (aynı hizada, yakınında başka
+    kutu var mı)
+
+    Gerçek ölçü çizim alanında TEK BAŞINA durur. Standart referansları
+    ("VW 10500", "ISO 845"), not cümleleri ("410 µm dick"), tolerans ve
+    revizyon tablosu satırları ise hep komşulu gelir. 'Pos.' çapası olmayan
+    çizimde antet/tablo bölgeleri konumdan bilinemediği için ayrım buradan
+    yapılır — yoksa 105 balonun 75'i tablo/başlık sayısı oluyordu.
+    """
+    dikey = s.get("yon") == "d"
+    # Okuma yönündeki eksen: yatay yazıda x, 90° dönük yazıda y
+    a0, a1 = (s["y"], s["y"] + s["h"]) if dikey else (s["x"], s["x"] + s["g"])
+    kalin = s["g"] if dikey else s["h"]
+    # Yazıya dik eksende merkez (aynı satırda mı?)
+    dik = (s["x"] + s["g"] / 2) if dikey else (s["y"] + s["h"] / 2)
+    for o in hepsi:
+        if o is s or o.get("yon") != s.get("yon"):
+            continue
+        odik = (o["x"] + o["g"] / 2) if dikey else (o["y"] + o["h"] / 2)
+        if abs(odik - dik) > kalin * 0.6:
+            continue                        # başka satır
+        b0, b1 = (o["y"], o["y"] + o["h"]) if dikey else (o["x"], o["x"] + o["g"])
+        bosluk = b0 - a1 if b0 >= a1 else a0 - b1
+        if -kalin * 0.2 < bosluk < kalin * 2.0:
+            return True
+    return False
+
+
+def _yogun_kumede(s, hepsi, yaricap_kat=5.0, esik=6):
+    """Kutu YOĞUN bir kümenin (tablo) içinde mi?
+
+    Genel tolerans tablosu, revizyon tablosu gibi ızgaralarda sayılar küçük
+    bir alanda sıkışıktır; çizim üstündeki gerçek ölçüler ise geometriye
+    yayılmış ve seyrektir. Hücre içindeki sayının aynı satırda komşusu
+    olmadığı için _metin_satirinda onları yakalayamıyor.
+    """
+    r = max(s["g"], s["h"]) * yaricap_kat
+    cx, cy = s["x"] + s["g"] / 2, s["y"] + s["h"] / 2
+    n = 0
+    for o in hepsi:
+        if o is s:
+            continue
+        ox, oy = o["x"] + o["g"] / 2, o["y"] + o["h"] / 2
+        if abs(ox - cx) <= r and abs(oy - cy) <= r:
+            n += 1
+            if n >= esik:
+                return True
+    return False
+
+
+def _cizgili_hucrede(im, s):
+    """Kutu, ÜSTÜNDE ve ALTINDA tablo çizgisi olan bir hücrenin içinde mi?
+
+    Revizyon/referans tablolarının gözleri hem üstten hem alttan çizgilidir.
+    Çizim üstündeki bir ölçünün ölçü çizgisi olur ama iki yanında birden
+    yatay cetvel bulunmaz — tablo gözlerini bu ayırır.
+    """
+    import numpy as np
+    H, W = im.shape
+    x0, x1 = max(0, s["x"] - 4), min(W, s["x"] + s["g"] + 4)
+    if x1 - x0 < 6:
+        return False
+    genislik = x1 - x0
+
+    def cizgi(y0, y1):
+        y0, y1 = max(0, int(y0)), min(H, int(y1))
+        if y1 <= y0:
+            return False
+        bant = im[y0:y1, x0:x1] < 128
+        # Satırın en az %85'i koyu ise orada yatay bir cetvel vardır
+        return bool((bant.sum(axis=1) >= genislik * 0.85).any())
+
+    h = max(s["h"], 8)
+    return (cizgi(s["y"] - h * 1.4, s["y"] - h * 0.12)
+            and cizgi(s["y"] + s["h"] + h * 0.12, s["y"] + s["h"] + h * 1.4))
 
 
 def _yakinlari_birlestir(kutular, esik=26):
@@ -354,8 +451,25 @@ def rakam_modeli(im, kutular, etiket, ist, n):
     olduğu için şablon eşleştirme OCR'dan belirgin biçimde daha iyi okur."""
     import cv2
     import numpy as np
-    tohum = {}
+    # Tohum icin kutu basina Tesseract cagriliyor. 'Pos.' capasi olmayan
+    # cizimlerde 470+ kutu var ve hepsini okumak dakikalar suruyordu; sablon
+    # ogrenmek icin o kadari gereksiz. Yeterli ornek toplanınca durulur.
+    KOTA, YETER = 160, 3
+    # Tohum adaylari OLCUYE BENZEYEN kutular: 2-5 karakter. Kutu sirasi
+    # sayfa duzenine gore geldiginden ilk N kutu bastik/not alani olabiliyor
+    # ve hic rakam ornegi toplanmiyordu (0 balon). Kisa kutular one alinir.
+    aday = []
     for s in kutular:
+        k = len(_karakterler(im, s, etiket, ist, n))
+        if 2 <= k <= 5:
+            aday.append((k, s))
+    aday.sort(key=lambda z: z[0])
+    tohum, bakilan = {}, 0
+    for _, s in aday:
+        if bakilan >= KOTA or (len(tohum) >= 8 and
+                               all(len(v) >= YETER for v in tohum.values())):
+            break
+        bakilan += 1
         t = _kutu_oku(im, s)
         if not t or "." in t:
             continue
@@ -392,14 +506,28 @@ def _sablonla_oku(model, etiket, s, kar):
     return t if ("?" not in t and guven and min(guven) > 0.55) else None
 
 
-def tum_olculer(im, capa, plan_degerleri=()):
+def tum_olculer(im, capa, plan_degerleri=(), yalniz_sayi=False):
     """Çizimdeki tüm ölçü kutuları: [(deger|None, x, y, g, h, kaynak)].
-    kaynak: 'plan' (kontrol planıyla doğrulandı) · 'okundu' · None (okunamadı)"""
+    kaynak: 'plan' (kontrol planıyla doğrulandı) · 'okundu' · None (okunamadı)
+
+    yalniz_sayi=True: 'Pos.' çapası olmayan çizimlerde kullanılır. Çapa
+    yokken hangi yazının ölçü olduğunu konumdan ayırt edemiyoruz; bu
+    çizimde 473 yazı kutusu var ve çoğu not/başlık. O yüzden yalnız SAYI
+    olarak okunabilen kutular balonlanır, kutu başına Tesseract çağrılmaz
+    (aksi hâlde hem dakikalarca sürüyor hem yüzlerce anlamsız balon çıkıyor).
+    """
     import cv2
     import numpy as np
     H, W = im.shape
     kutu = _yakinlari_birlestir(
         [s for s in _yazi_kutulari(im) if not _olcu_disi(s, W, H, capa)])
+    if yalniz_sayi:
+        # Çapa yokken tablo/not bölgeleri konumdan bilinemez; iki elemeyle
+        # ayrılır: yazı satırının parçası olanlar (komşulu) ve tablo
+        # ızgarasında sıkışık duranlar atılır, tek başına duran ölçüler kalır.
+        kutu = [s for s in kutu if not _metin_satirinda(s, kutu)]
+        kutu = [s for s in kutu if not _yogun_kumede(s, kutu)]
+        kutu = [s for s in kutu if not _cizgili_hucrede(im, s)]
     plan = {("%g" % float(d)) for d in plan_degerleri}
     siyah = (im < 128).astype(np.uint8)
     n_bil, etiket, ist, _ = cv2.connectedComponentsWithStats(siyah, 8)
@@ -407,7 +535,11 @@ def tum_olculer(im, capa, plan_degerleri=()):
     sonuc = []
     for s in kutu:
         kar = _karakterler(im, s, etiket, ist, n_bil)
-        t = _sablonla_oku(model, etiket, s, kar) or _kutu_oku(im, s)
+        t = _sablonla_oku(model, etiket, s, kar)
+        if t is None and not yalniz_sayi:
+            t = _kutu_oku(im, s)
+        if t is None and yalniz_sayi:
+            continue                       # ölçü olduğu doğrulanamadı, balonlanmaz
         kaynak = None
         if t is not None:
             kaynak = "plan" if ("%g" % float(t)) in plan else "okundu"
@@ -512,20 +644,27 @@ def cizim_adi(dokumanlar):
 def _yerele_al(yol):
     """Ağ paylaşımındaki dosyayı geçici olarak yerele kopyalar (cv2 UNC'de
     Türkçe/uzun yollarda okuyamıyor)."""
+    import hashlib
     import shutil
     import tempfile
     if os.path.exists(yol) and not yol.startswith("\\\\"):
         return yol, False
+    uz = os.path.splitext(yol)[1] or ".tiff"
+    # Ad YOLUN icerigine gore sabit uretilir. Eskiden hash() kullaniliyordu;
+    # Python dize hash'i her surecte farkli oldugu icin onbellek HIC tutmuyor,
+    # her calisma dosyayi yeniden kopyaliyordu. Sabit ad ayrica dosya sunucusu
+    # gecici olarak erisilemezken onceki kopyayla calismayi surdurmeyi saglar.
+    g = os.path.join(tempfile.gettempdir(),
+                     "apqp_cizim_%s%s" % (hashlib.md5(yol.encode("utf-8",
+                                          "replace")).hexdigest()[:12], uz))
     try:
-        uz = os.path.splitext(yol)[1] or ".tiff"
-        # Sabit ad kullanilirsa onceki calismanin gecici dosyasi silinip
-        # yenisi acilamadan kullanilabiliyor; her cagriya ozel ad verilir.
-        g = os.path.join(tempfile.gettempdir(),
-                         "apqp_cizim_%d%s" % (abs(hash(yol)) % 10 ** 8, uz))
-        if not os.path.exists(g):
+        if not os.path.exists(g) or os.path.getsize(g) == 0:
             shutil.copy2(yol, g)
         return g, True
     except OSError:
+        # Kaynak su an erisilemiyor: daha once alinmis kopya varsa onunla devam
+        if os.path.exists(g) and os.path.getsize(g) > 0:
+            return g, True
         return yol, False
 
 
@@ -549,20 +688,26 @@ def uret(kod, tiff_yolu, klasor, kp_satirlari, sablon_kutusu=None, tam=True):
         sablon = im[y0:y1, x0:x1]
     else:
         sablon = _sablon_ogren(im)
-    if sablon is None:
-        return 0, "'Pos.' etiketi bulunamadı", []
-
-    capa = _capalar(im, sablon)
-    if not capa:
+    # Her müşterinin çizimi 'Pos.' etiketi kullanmıyor (MAN kullanıyor, VW/
+    # SITECH kullanmıyor). Çapa yoksa balonlama iptal EDİLMEZ: çizimdeki tüm
+    # ölçüler okuma sırasıyla 1..n numaralanır (PPAP 2.2.1 tam kapsam).
+    capa = _capalar(im, sablon) if sablon is not None else []
+    capa_no = (numaralari_ata(im, capa, set(pos)) if pos else _serbest_ata(im, capa)) \
+        if capa else []
+    if not capa and not tam:
         return 0, "pozisyon etiketi bulunamadı", []
-    capa_no = numaralari_ata(im, capa, set(pos)) if pos else _serbest_ata(im, capa)
 
     if not tam:
         atama = [(a[0], a[1], a[2], a[3]) for a in capa_no]
         satirlar = []
     else:
-        plan_deger = [d[0] for k in pos.values() for d in k]
-        olcu = tum_olculer(im, capa, plan_deger)
+        # Dogrulama degerleri: POS'lu satirlar varsa onlardan, yoksa kontrol
+        # planindaki TUM olculebilir satirlardan. Bu urunun plani "Olcu 1..12"
+        # diye adlandirildigi icin POS kumesi bostu ve okunan hicbir olcu
+        # planla eslesmiyordu (hepsi genel toleransa dusuyordu).
+        plan_deger = [d[0] for k in pos.values() for d in k] or _plan_degerleri(
+            kp_satirlari, kod)
+        olcu = tum_olculer(im, capa, plan_deger, yalniz_sayi=not capa)
         # Her ölçü en yakın pozisyona bağlanır, o grupta okuma sırasıyla numaralanır
         gruplar = {}
         for deger, x, y, g, h, kaynak, yon in olcu:
@@ -570,10 +715,14 @@ def uret(kod, tiff_yolu, klasor, kp_satirlari, sablon_kutusu=None, tam=True):
                 {"deger": deger, "x": x, "y": y, "g": g, "h": h,
                  "kaynak": kaynak, "yon": yon})
         atama, satirlar = [], []
+        sira = 0
         for pno in sorted(gruplar, key=lambda z: (z is None, z)):
             liste = sorted(gruplar[pno], key=lambda o: (o["y"] // 60, o["x"]))
             for i, o in enumerate(liste):
-                etiket = "%s.%d" % (pno, i + 1) if pno is not None else "?.%d" % (i + 1)
+                sira += 1
+                # Çapa varsa "Pos.alt no", yoksa düz sıra numarası
+                etiket = ("%s.%d" % (pno, i + 1) if pno is not None
+                          else (str(sira) if not capa_no else "?.%d" % (i + 1)))
                 # Balon yazinin USTUNE binmesin: yatay yazida soluna,
                 # dikey (90 donuk) yazida ustune konur
                 if o.get("yon") == "d":

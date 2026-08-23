@@ -262,6 +262,18 @@ const DOSYA_ANAHTAR = [
   // FR176 kalip dogrulama: adim "kontrol mastarlari / fikstur" diye geciyor
   [/fr ?176|kalıp doğrulama|kalip dogrulama/i,
    /fr ?176|kalıp|kontrol mastar|fikstür|fikstur|checking fixture/i],
+  // Olcusel rapor: VDA_2 duzenindeki "Olcusel Rapor" ve VW'nin kendi
+  // "Dimension Report" formu ayni adima (PPAP 2.2.9) kanittir.
+  [/ölçüsel rapor|olcusel rapor|dimension report|ölçü kontrol raporu/i,
+   /ölçüsel|olcusel|boyutsal|dimension|ölçüm sonuç|olcum sonuc/i],
+  // Numaralandirilmis (balonlu) teknik resim — PPAP 2.2.1
+  [/numaraland|balonlu|ballooned/i,
+   /teknik resim|balonlu|numaraland|çizim|cizim|drawing/i],
+  // VW/VDA kapak ve parca gecmisi
+  [/ppf ?coversheet|ppa ?cover ?sheet/i,
+   /cover ?sheet|kapak|ppa|psw|part submission/i],
+  [/parts? ?history|parça geçmişi/i,                 /parça geçmiş|parca gecmis|part history/i],
+  [/flammability|yanmazlık|tl ?1010/i,               /yanmazlık|yanmazlik|flammab|malzeme test/i],
 ];
 
 // Klasordeki her dosya bu urune ait DEGIL: sablonlar ("FR90 Fizibilite

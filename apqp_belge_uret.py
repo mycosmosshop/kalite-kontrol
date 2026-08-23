@@ -1276,18 +1276,21 @@ def alt_ppap_yaz(v, hedef, kod, malzeme, tedarikci):
 PPAP_KLASOR = r"C:\\Users\\User\\Desktop\\ppap docs"
 
 # Müşteri anahtar kelimesi -> o müşteriye ait şablonlar
+# VDA 2020 "Cover sheet PPA report" — şablonu Lear örneğiyle geldiği için
+# dosya adı LEAR, düzeni ise VDA standardıdır; müşteri alanları doldurulur.
+PPA_KAPAK = "PPA COVER SHEET LEAR.xlsx"
 MUSTERI_BELGE = {
     "MERCEDES": ["Cover Sheet Mercedes.doc", "Ölçü Kontrol Raporu Mercedes.xls"],
     "MAN":      ["VDA_2_2020_Anlagen_Attachments_2-6_7 MAN.xlsx"],
-    "LEAR":     ["PPA COVER SHEET LEAR.xlsx"],
+    "LEAR":     [PPA_KAPAK],
 }
 # VW grubuna giden parçalarda VDA_2'ye EK olarak istenen formlar
-VW_BELGE = ["PPF Coversheet.docx", "Dimension Report VW.xlsx",
+VW_BELGE = ["PPF Coversheet.docx", PPA_KAPAK, "Dimension Report VW.xlsx",
             "Flammability Test Report VW.xlsx", "Sanifoam_D_TLD_audit_VW.xlsm"]
 # VW grubu parça numarası: 3 karakterlik proje öneki + 3 + 3 hane (5NA 881 989).
 # Tier-1 (Faurecia, Magna, Lear...) adı tek başına VW demek değil — o firmalar
 # Mercedes'e de üretiyor; belirleyici işaret parça numarasıdır.
-VW_PARCA = re.compile(r"\b\d[A-Z0-9]{2}[\s.]\d{3}[\s.]\d{3}\b")
+VW_PARCA = re.compile(r"\b\d[A-Z0-9]{2}[\s._]\d{3}[\s._]\d{3}\b")
 # Ad üzerinden yalnız TARTIŞMASIZ VW grubu şirketleri (SITECH, VW'nin koltuk
 # iskeleti iştirakidir). "SKODA" tek başına eşleştirilmez: TEMSA SKODA
 # otobüs ortaklığı VW grubu değildir.
@@ -1328,37 +1331,74 @@ def musteri_belgeleri(v):
 
 
 def musteri_parca_no(v):
-    """Müşteri parça no: ürün adındaki VW/OEM parça numarası, yoksa alan."""
+    """Müşteri parça no: ürün adındaki OEM parça numarası; yoksa stok
+    doküman adlarından (700.0.444'te numara yalnız resim/IMDS dosya
+    adlarında geçiyor: '5NA.881.989'), o da yoksa ürün kodu."""
     g = VW_PARCA.search(met(v.get("ad")).upper())
-    return g.group(0) if g else (met(v.get("musteriParca")) or v["kod"])
+    if not g:
+        for d in (v.get("dok") or []):
+            g = VW_PARCA.search((met(d.get("doc_adi")) + " " +
+                                 os.path.basename(met(d.get("link")))).upper())
+            if g:
+                break
+    if not g:
+        return met(v.get("musteriParca")) or v["kod"]
+    # Dosya adlarında ayraç alt çizgi olabiliyor; gösterimde nokta kullanılır
+    return re.sub(r"[_\s]", ".", g.group(0))
+
+
+def cizim_no(v):
+    """Teknik resim numarası. ERP'deki tr_revno bazen yalnız bir revizyon
+    hanesi oluyor ("6"); tek/çift haneli bir sayı resim numarası olamaz —
+    o durumda müşteri parça numarası kullanılır (VW'de resim no = parça no)."""
+    r = met(v.get("resim_no"))
+    if len(re.sub(r"\W", "", r)) < 4:
+        return musteri_parca_no(v)
+    return r
 
 
 def _docx_degistir(d, harita):
     """Şablondaki örnek değerleri bu ürünün değerleriyle değiştirir.
     Metin run'lara bölünmüş olabildiği için paragraf düzeyinde birleştirilip
-    yazılır; kutucuklar ve biçim korunur."""
-    sayac = 0
+    yazılır; kutucuklar ve biçim korunur.
 
-    def paragraf(p):
-        nonlocal sayac
+    İKİ TUZAK (ikisi de PPF kapağını bozmuştu):
+    1) Birleşik hücreli tabloda row.cells AYNI paragrafı defalarca (181 kez'e
+       kadar) döndürür — paragraflar kimliğe göre tekilleştirilir.
+    2) Yeni değer eski anahtarı İÇEREBİLİR (LEHNENABDECKUNG -> "... LEHNEN-
+       ABDECKUNG ...") — art arda değiştirme metni katlar. Tek geçişte, tek
+       regex ile değiştirilir; yerine konan metin yeniden taranmaz.
+    """
+    anahtarlar = [k for k in harita if k]
+    if not anahtarlar:
+        return 0
+    # Uzun anahtar önce: "5NA.881.989" kısa anahtarı uzununun içini yemesin
+    kalip = re.compile("|".join(re.escape(k) for k in
+                                sorted(anahtarlar, key=len, reverse=True)))
+    # Paragraflar ONCE toplanir. python-docx her erisimde YENI vekil nesne
+    # uretir; id() ile tekillestirmek serbest kalan kimligin yeniden
+    # kullanilmasi yuzunden bazi paragraflari yanlislikla atliyordu
+    # (PPF kapaginda musteri/parca alanlari degismeden kaliyordu). Vekiller
+    # listede tutuldugu icin kimlikler artik sabittir; tekillestirme ise
+    # ALTTAKI XML ogesine gore yapilir.
+    hepsi = list(d.paragraphs)
+    for t in d.tables:
+        for satir in t.rows:
+            for h in satir.cells:
+                hepsi.extend(h.paragraphs)
+    sayac, gorulen = 0, set()
+    for p in hepsi:
+        oge = p._p
+        if id(oge) in gorulen:
+            continue
+        gorulen.add(id(oge))
         tam = "".join(r.text for r in p.runs)
-        yeni = tam
-        for eski, taze in harita.items():
-            if eski and eski in yeni:
-                yeni = yeni.replace(eski, str(taze))
+        yeni = kalip.sub(lambda m: str(harita[m.group(0)]), tam)
         if yeni != tam and p.runs:
             p.runs[0].text = yeni
             for r in p.runs[1:]:
                 r.text = ""
             sayac += 1
-
-    for p in d.paragraphs:
-        paragraf(p)
-    for t in d.tables:
-        for satir in t.rows:
-            for h in satir.cells:
-                for p in h.paragraphs:
-                    paragraf(p)
     return sayac
 
 
@@ -1373,7 +1413,7 @@ def ppf_coversheet(v, hedef):
     ad, posta = IMZA.get(v["lokasyon"], IMZA["eskisehir"])
     tesis, adres = TESIS.get(v["lokasyon"], ("Sanifoam", ""))
     mp = musteri_parca_no(v)
-    resim = met(v.get("resim_no")) or mp
+    resim = cizim_no(v)
     tarih = datetime.date.fromisoformat(v["termin"]).strftime("%d.%m.%Y")
     # Şablondaki örnek (Magna / 700.0.444) değerleri -> bu ürün
     harita = {
@@ -1396,18 +1436,23 @@ def ppf_coversheet(v, hedef):
     return n or 1
 
 
-def lear_kapak(v, hedef):
-    """PPA Cover sheet (Lear düzeni) — kuruluş/numune/müşteri blokları."""
-    kaynak = os.path.join(PPAP_KLASOR, "PPA COVER SHEET LEAR.xlsx")
+def ppa_kapak(v, hedef):
+    """VDA 2020 'Cover sheet PPA report' — kuruluş / numune / müşteri
+    blokları. Şablon Lear örneğiyle geldiği için müşteri adı, adresi ve
+    müşteri karar bloğu da bu ürünün müşterisine göre yazılır."""
+    kaynak = os.path.join(PPAP_KLASOR, PPA_KAPAK)
     if not os.path.exists(kaynak):
         return 0
     ad, posta = IMZA.get(v["lokasyon"], IMZA["eskisehir"])
     tesis, adres = TESIS.get(v["lokasyon"], ("Sanifoam", ""))
     mp = musteri_parca_no(v)
-    resim = met(v.get("resim_no")) or mp
+    resim = cizim_no(v)
     surum = "%s / %s" % (met(v.get("resim_rev")) or "-",
                          met(v.get("resim_tarih")) or v["termin"])
     d = {
+        "A3": "Organization", "A4": "%s\n%s" % (KURULUS, adres or v["lokasyon_ad"]),
+        # Şablondaki Lear adresi bu ürünün müşterisiyle değiştirilir
+        "A10": v["musteri"],
         "C16": "PPAP %s" % v["kod"], "C17": "01",          # rapor no / sürüm
         "C18": adres or v["lokasyon_ad"], "C19": tesis,     # sevk / üretim yeri
         "C20": v["kod"], "C21": v["ad"][:60],
@@ -1417,6 +1462,8 @@ def lear_kapak(v, hedef):
         "L22": resim, "L23": surum,
         "D28": ad, "D29": "Quality department",
         "D31": posta, "D32": v["termin"],
+        # Müşteri karar bloğu: şablondaki Lear yetkilisi bu üründe boş kalır
+        "D38": "", "D39": "", "D40": "", "D41": "",
     }
     hucre_yaz(kaynak, hedef, "xl/worksheets/sheet1.xml", d)
     return len(d)
@@ -1463,7 +1510,7 @@ def vw_olcu_raporu(v, hedef, balon=None):
     r = 6
     tarih = datetime.date.fromisoformat(v["termin"]).strftime("%d.%m.%Y")
     for etiket, deger in (("Part No / Parça No :", "%s / %s" % (v["kod"], musteri_parca_no(v))),
-                          ("Drawing No :", met(v.get("resim_no")) or musteri_parca_no(v)),
+                          ("Drawing No :", cizim_no(v)),
                           ("Customer :", v["musteri"]),
                           ("Test Date :", tarih)):
         e = ws.cell(r, 1, etiket); e.font = Font(bold=True, size=10)
@@ -1922,7 +1969,7 @@ def ppap_belgeleri(v, klasor, uret):
         "Parts History.xlsx": (parts_history, "ürün bilgisi dolduruldu"),
         ORTAK_VDA2: (vda2, "kuruluş bilgisi dolduruldu"),
         "PPF Coversheet.docx": (ppf_coversheet, "VW grubu — PPA kapak dolduruldu"),
-        "PPA COVER SHEET LEAR.xlsx": (lear_kapak, "Lear PPA kapak dolduruldu"),
+        PPA_KAPAK: (ppa_kapak, "VDA PPA kapak dolduruldu"),
         "Flammability Test Report VW.xlsx": (flammability, "TL 1010 başlık dolduruldu"),
         "Dimension Report VW.xlsx": (
             lambda a, b: vw_olcu_raporu(a, b, a.get("balon")), "VW düzeni, 5 numune"),
