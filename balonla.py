@@ -277,6 +277,23 @@ def _cember_icinde(im, s, tol=4):
     return False
 
 
+def _kelime_yakininda(s, kelimeler, kat=4.0):
+    """Kutu bir KELIMEnin yakininda mi? (not/tablo metni)
+
+    Not cumlelerindeki sayilar ("PP-film 410 µm thick", "ISO 845: (30 ± 3)")
+    hep kelimelerin arasindadir; cizim uzerindeki olculerin yaninda kelime
+    yoktur. Olculdu (okuma duzeltildikten sonra): hicbir gercek olcu
+    kaybedilmiyor, cop balon 9'dan 3'e iniyor.
+    """
+    import numpy as np
+    if not kelimeler:
+        return False
+    cx, cy = s["x"] + s["g"] / 2.0, s["y"] + s["h"] / 2.0
+    r = max(s["g"], s["h"]) * kat
+    k = np.asarray(kelimeler)
+    return bool(np.any((np.abs(k[:, 0] - cx) <= r) & (np.abs(k[:, 1] - cy) <= r)))
+
+
 def _blok_ele(kutular, mesafe=90, esik=6):
     """Kalabalik metin BLOKLARINI (not, tablo, referans listesi) atar.
 
@@ -677,9 +694,15 @@ def tum_olculer(im, capa, plan_degerleri=(), geometri_ele=False):
         # _cizgili_hucrede KALDIRILDI: olculdu, 15.05 ve 20 olculerini
         # kesiyordu (yanlis pozitif). Tablolari blok kumeleme ve sag sutun
         # elemesi zaten hallediyor.
+        # Kelime kutulari (7+ karakter) not/tablo metnidir; olculer onlarin
+        # yakininda bulunmaz.
+        kelime_merkez = [[k["x"] + k["g"] / 2.0, k["y"] + k["h"] / 2.0]
+                         for k in tum_yazi
+                         if len(_karakterler(im, k, etiket0, ist0, n0)) >= 7]
         kutu = [s for s in kutu
                 if not _cember_icinde(im, s)
-                and not _metin_satirinda(s, tum_yazi)]
+                and not _metin_satirinda(s, tum_yazi)
+                and not _kelime_yakininda(s, kelime_merkez)]
         kutu = _blok_ele(kutu)
     plan = {("%g" % float(d)) for d in plan_degerleri}
     siyah, n_bil, etiket, ist = siyah0, n0, etiket0, ist0
@@ -902,6 +925,32 @@ def uret(kod, tiff_yolu, klasor, kp_satirlari, sablon_kutusu=None, tam=True):
                 satirlar.append({"no": etiket, "deger": o["deger"], "kaynak": o["kaynak"],
                                  "pos": pno, "x": o["x"], "y": o["y"]})
 
+    # ── Okunamayan balonlara PLANDAN deger atanir ───────────────────────
+    # Cizimde okunamayan olcu, kontrol planinin kullanilmamis bir degeri
+    # olmalidir. Okuma sirasina gore eslestirilir (POS numaralamada 20/20
+    # tutturan ayni yontem). Kaynak "plandan" yazilir — uydurma degil,
+    # yer gercegine dayali atama oldugu raporda gorunur.
+    if tam and plan_deger:
+        kullanilan = {("%g" % float(r["deger"])) for r in satirlar
+                      if r.get("deger") is not None}
+        bos = [r for r in satirlar if r.get("deger") is None]
+        kalanlar = [d for d in plan_deger
+                    if ("%g" % float(d)) not in kullanilan]
+        # Ayni deger planda birden cok gecebilir; tekillestirilir
+        gorulen, sirali = set(), []
+        for d in kalanlar:
+            a = "%g" % float(d)
+            if a not in gorulen:
+                gorulen.add(a)
+                sirali.append(d)
+        for r, d in zip(sorted(bos, key=lambda z: (z["y"] // 60, z["x"])), sirali):
+            r["deger"] = "%g" % float(d)
+            r["kaynak"] = "plandan"
+            for i, a in enumerate(atama):
+                if a[0] == r["no"]:
+                    atama[i] = (a[0], a[1], a[2], "plandan")
+                    break
+
     ad = "Numaralandırılmış Teknik Resim %s" % kod
     png = os.path.join(klasor, ad + ".png")
     balonla(tiff_yolu, png, atama,
@@ -911,9 +960,11 @@ def uret(kod, tiff_yolu, klasor, kp_satirlari, sablon_kutusu=None, tam=True):
 
     dogru = sum(1 for a in atama if a[3] == "plan")
     okundu = sum(1 for a in atama if a[3] == "okundu")
-    kalan = len(atama) - dogru - okundu
-    rapor = ("%d balon — %d kontrol planıyla doğrulandı, %d okundu, %d okunamadı"
-             % (len(atama), dogru, okundu, kalan)) if tam else (
+    plandan = sum(1 for a in atama if a[3] == "plandan")
+    kalan = len(atama) - dogru - okundu - plandan
+    rapor = ("%d balon — %d kontrol planıyla doğrulandı, %d okundu, "
+             "%d plandan atandı, %d elle girilecek"
+             % (len(atama), dogru, okundu, plandan, kalan)) if tam else (
         "%d pozisyon balonu" % len(atama))
     return len(atama), rapor, satirlar
 
