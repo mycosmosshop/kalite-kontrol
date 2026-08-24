@@ -93,6 +93,13 @@ ISTEM = (
     "pafta numaraları, standart kodları (VW 10500, DIN 1451, TL 1010, ISO 845 "
     "gibi), not cümlelerinin içindeki sayılar, tablo hücreleri, antet/başlık "
     "bloğu, revizyon tablosu.\n"
+    # Olculdu: 6FA.881.989 ciziminde detay gorunusun yanindaki OLCEK notu
+    # "1:5" model tarafindan "1" diye okunup balonlanmisti; deger olarak
+    # "1" geldigi icin kalip filtresi de yakalayamiyor — kaynagi burasi.
+    "ÖLÇEK NOTUNU ASLA LİSTELEME: \"1:5\", \"1:1\", \"2:1\" gibi oranlar ve "
+    "bunların yanındaki görünüş/detay adları ölçü DEĞİLDİR; oranın tek bir "
+    "rakamını da (1 ya da 5) ölçü diye yazma. Aynı şekilde kağıt formatı "
+    "(A1, A3), tarih (31.07.2025), sayfa no ve ağırlık (63g) ölçü değildir.\n"
     "Ondalık ayracı NOKTA yaz. Çap işaretini ø, yarıçapı R olarak koru.\n"
     "Her ölçü için: {\"deger\": \"48\", \"x\": 123, \"y\": 456}\n"
     "x,y = ölçü YAZISININ bu görüntüdeki piksel merkezi (sol üst köşe 0,0).\n"

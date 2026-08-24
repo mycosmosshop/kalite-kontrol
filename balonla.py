@@ -936,6 +936,24 @@ def tum_olculer(im, capa, plan_degerleri=(), geometri_ele=False):
     return sonuc
 
 
+# ANTETTEKI SAYILAR OLCU DEGILDIR. Olculdu: 6FA.881.989 ciziminin sag alt
+# kosesindeki OLCEK notu ("1:5") balonlanip 32 numarasini almisti — musteriye
+# giden PPAP ciziminde yanlis balon, eksik balondan daha zor fark edilir.
+# Elenenler: olcek/oran (1:5, 1:1), sayfa orani, format kodu (A1, A3),
+# tarih (31.07.2025) ve saf yil (2025).
+OLCU_DISI = (
+    re.compile(r"^\s*\d+\s*[:/]\s*\d+\s*$"),          # 1:5 · 1/2 olcek
+    re.compile(r"^\s*A\d\s*$", re.I),                    # A1 · A3 kagit
+    re.compile(r"^\s*\d{1,2}[.,]\d{1,2}[.,]\d{2,4}\s*$"),  # 31.07.2025
+    re.compile(r"^\s*(19|20)\d{2}\s*$"),                 # 2025
+)
+
+
+def _olcu_disi_mi(deger):
+    d = str(deger if deger is not None else "").strip()
+    return any(k.match(d) for k in OLCU_DISI)
+
+
 def _cakisanlari_ele(olcu, plan_deger, esik=46):
     """Ayni noktaya dusen AYNI olcuden BIRI birakilir.
 
@@ -998,22 +1016,50 @@ def balonla(tiff_yolu, hedef_png, atamalar, baslik=""):
     # ayrimi icin iki renk vardi, cizimde karisik gorunuyordu; o ayrim
     # olcusel raporun "Not" sutununda zaten yaziyor.
     RENK = {"plan": (200, 0, 0), "okundu": (200, 0, 0), "sıradan": (200, 0, 0)}
+    gri = renk.convert("L")   # bos alan aramasi icin
     kondu = []            # (x, y, r) — yerlestirilmis balonlar
     for no, x, y, kaynak in atamalar:
         boya = RENK.get(kaynak, (215, 150, 0))       # bilinmiyorsa sarı
         e = str(no) if no is not None else "?"
         r = 34 if len(e) > 2 else 40
-        # UST USTE BINMESIN: olcu zincirinde iki FARKLI olcu ayni noktaya
+        # ARALARINDA GORUNUR BOSLUK OLSUN: olcu zincirinde iki FARKLI olcu
         # dusebiliyor (ornek: 30 ve 31 ayni R15'in yaninda). Bunlari elemek
         # bilgi kaybi olur — balon komsuluga kaydirilir, cizgi degismez.
-        cx, cy = x, y
-        for adim in range(16):
-            if all((cx - px) ** 2 + (cy - py) ** 2 >= (1.04 * (r + pr)) ** 2
+        # Balon hem baska balonun hem CIZIMIN uzerine binmesin: 30/31 tek
+        # daire gorunuyordu, 33'un rakami olcu cizgisiyle kesisip "B3"
+        # okunuyordu. Adaylar arasindan CAKISMAYAN ve en az murekkepli
+        # (en bos) konum secilir; hicbiri bos degilse en temizi.
+        def _bos_mu(cx, cy):
+            if not (r < cx < renk.width - r and r < cy < renk.height - r):
+                return None
+            if any((cx - px) ** 2 + (cy - py) ** 2 < (r + pr + 26) ** 2
                    for px, py, pr in kondu):
-                break
-            aci = (adim % 8) * (math.pi / 4)
-            uzak = (r + 40) * (1 + adim // 8) * 1.05
-            cx, cy = x + uzak * math.cos(aci), y + uzak * math.sin(aci)
+                return None
+            k = int(r * 0.8)
+            kutu = gri.crop((int(cx) - k, int(cy) - k, int(cx) + k, int(cy) + k))
+            h = kutu.histogram()
+            return sum(h[:140]) / float(max(1, sum(h)))
+
+        adaylar = []
+        for adim in range(17):
+            if adim == 0:
+                cx, cy = x, y
+            else:
+                # once SAG/SOL/UST/ALT — capraz yonler balonu olcu
+                # cizgisinden fazla uzaklastiriyor
+                d = adim - 1
+                aci = ((d % 8) * 2 % 8 + (d % 8) // 4) * (math.pi / 4)
+                uzak = (r + 40) * (1 + d // 8) * 1.2
+                cx, cy = x + uzak * math.cos(aci), y + uzak * math.sin(aci)
+            p = _bos_mu(cx, cy)
+            if p is not None:
+                adaylar.append((p, adim, cx, cy))
+                if p < 0.02:                  # yeterince bos, aramaya gerek yok
+                    break
+        if adaylar:
+            _, _, cx, cy = min(adaylar)
+        else:
+            cx, cy = x, y                     # yer yok: ozgun konumda birak
         kondu.append((cx, cy, r))
         ciz.ellipse([cx - r, cy - r, cx + r, cy + r], outline=boya, width=6)
         f = kucuk_no if len(e) > 3 else yazi
@@ -1165,6 +1211,7 @@ def uret(kod, tiff_yolu, klasor, kp_satirlari, sablon_kutusu=None, tam=True):
                            "YAPILMADI. Kota yenilenince tekrar üretin."
                            % ("kota doldu" if durum == "kota" else "servis hatası")), []
             olcu = tum_olculer(im, capa, plan_deger, geometri_ele=not capa)
+        olcu = [o for o in olcu if not _olcu_disi_mi(o[0])]
         olcu = _cakisanlari_ele(olcu, plan_deger)
         # Her ölçü en yakın pozisyona bağlanır, o grupta okuma sırasıyla numaralanır
         # NOKTALI NUMARA (1.1, 1.2 ...) YALNIZ POS'LU PLANLARDA.
