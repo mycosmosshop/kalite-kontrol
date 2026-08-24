@@ -664,6 +664,31 @@ def _ai_durumu():
         return "anahtar_yok"
 
 
+def _konumda_rakam_var_mi(im, x, y, sayi, en=150, boy=70):
+    """Konumda GERCEKTEN RAKAM var mi? (murekkep olmasi yetmez)
+
+    TESHIS: 700.0.454'te modelin uydurdugu iki "6" okumasi hicbir yazi
+    kutusuyla eslesmiyordu; yalniz _konumda_yazi_var_mi()'den geciyordu.
+    O kontrol koyu piksele bakiyor ve PARCA KENAR CIZGISINI de yazi
+    sayiyor — balon 7 ve 8 boyle cikti. Burada kucuk bir pencere OCR ile
+    okunur: rakam yoksa okuma hayalettir.
+
+    Yalniz KUTU ESLESMESI OLMAYAN okumalar icin cagrilir (bu cizimde 32
+    okumanin 2'si) — kutuyla eslesen okumalar dokunulmaz, cunku onlari
+    elemek gercek olculeri kaybettiriyor (olculdu: 31 balon -> 4).
+    """
+    try:
+        t = _kutu_oku(im, {"x": int(x - en / 2), "y": int(y - boy / 2),
+                           "g": int(en), "h": int(boy)})
+    except Exception:
+        return False
+    rakam = "".join(c for c in str(t or "") if c.isdigit())
+    if not rakam:
+        return False
+    aranan = "".join(c for c in str(sayi) if c.isdigit())
+    return aranan in rakam or rakam in aranan
+
+
 def _konumda_yazi_var_mi(im, x, y, yaricap=44, esik_piksel=25):
     """Verilen konumun civarinda GERCEK MURKKEP (yazi/cizgi) var mi?
 
@@ -774,10 +799,19 @@ def _ai_olculeri(im, plan_degerleri=()):
         if secilen is not None:
             kullanilan.add(secilen)
             k = kutu[secilen]
+            if os.environ.get("BALON_TESHIS"):
+                import sys as _sys
+                _sys.stderr.write(
+                    "TESHIS deger=%s model=(%d,%d) kutu=(%d,%d %dx%d) uzak=%d yakinsayi=%d%s"
+                    % (sayi, mx, my, k["x"], k["y"], k["g"], k["h"],
+                       int(((k["x"] - mx) ** 2 + (k["y"] - my) ** 2) ** 0.5),
+                       len(yakinlar), chr(10)))
             sonuc.append((sayi, k["x"], k["y"], k["g"], k["h"], kaynak, k["yon"]))
-        elif _konumda_yazi_var_mi(im, mx, my):
-            # Kutu bulunamadı ama konumda GERCEKTEN murekkep var: dusurulmez,
-            # modelin konumu kullanilir.
+        elif (_konumda_yazi_var_mi(im, mx, my)
+              and _konumda_rakam_var_mi(im, mx, my, sayi)):
+            # Kutu bulunamadi ama konumda gercekten O RAKAM var: dusurulmez,
+            # modelin konumu kullanilir. Salt murekkep yetmez — cizgi de
+            # murekkeptir (balon 7/8 oradan geliyordu).
             kg, kh = max(30, 15 * len(metin)), 30
             sonuc.append((sayi, mx - kg / 2.0, my - kh / 2.0, kg, kh, kaynak, "y"))
         # else: kutu da yok, murekkep de yok -> hayalet okuma, SESSIZCE ATILIR
@@ -1120,7 +1154,11 @@ def balonla(tiff_yolu, hedef_png, atamalar, baslik=""):
     RENK = {"plan": (200, 0, 0), "okundu": (200, 0, 0), "sıradan": (200, 0, 0)}
     gri = renk.convert("L")   # bos alan aramasi icin
     kondu = []            # (x, y, r) — yerlestirilmis balonlar
-    for no, x, y, kaynak in atamalar:
+    for oge in atamalar:
+        no, x, y, kaynak = oge[0], oge[1], oge[2], oge[3]
+        # Olcunun KENDI konumu (varsa): balon kaydirilirsa aralarina
+        # baglanti cizgisi cekilir.
+        ox, oy = (oge[4], oge[5]) if len(oge) > 5 else (None, None)
         boya = RENK.get(kaynak, (215, 150, 0))       # bilinmiyorsa sarı
         e = str(no) if no is not None else "?"
         r = 34 if len(e) > 2 else 40
@@ -1163,6 +1201,15 @@ def balonla(tiff_yolu, hedef_png, atamalar, baslik=""):
         else:
             cx, cy = x, y                     # yer yok: ozgun konumda birak
         kondu.append((cx, cy, r))
+        # BAGLANTI CIZGISI: kullanici "bu olculere balon verilmis mi
+        # belli degil" dedi — balon bos alana kaydirilinca hangi olcuye
+        # ait oldugu okunmuyordu. Uzaksa ince bir cizgi ile baglanir.
+        if ox is not None:
+            uz = math.hypot(cx - ox, cy - oy)
+            if uz > r + 55:
+                bx_ = cx + (ox - cx) * (r / uz)
+                by_ = cy + (oy - cy) * (r / uz)
+                ciz.line([(bx_, by_), (ox, oy)], fill=boya, width=3)
         ciz.ellipse([cx - r, cy - r, cx + r, cy + r], outline=boya, width=6)
         f = kucuk_no if len(e) > 3 else yazi
         k = ciz.textbbox((0, 0), e, font=f)
@@ -1346,7 +1393,7 @@ def uret(kod, tiff_yolu, klasor, kp_satirlari, sablon_kutusu=None, tam=True):
                     bx, by = o["x"] + o["g"] // 2, o["y"] - 78
                 else:
                     bx, by = o["x"] - 78, o["y"] + o["h"] // 2
-                atama.append((etiket, bx, by, o["kaynak"]))
+                atama.append((etiket, bx, by, o["kaynak"], o["x"], o["y"]))
                 satirlar.append({"no": etiket, "deger": o["deger"], "kaynak": o["kaynak"],
                                  "pos": pno, "x": o["x"], "y": o["y"]})
 
