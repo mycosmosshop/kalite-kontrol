@@ -647,6 +647,13 @@ def _sablonla_oku(model, etiket, s, kar, im=None):
     return t if re.fullmatch(r"\d{1,4}(\.\d{1,2})?", t) else None
 
 
+# AI 3 denemede de bulamadigi plan degerleri icin GEOMETRIK yedek
+# taramanin ust sure siniri (saniye). Olculdu: kutu basina ~1,6 sn.
+YEDEK_TARAMA_SN = 90
+# Yedek tarama YALNIZ bu kadar veya daha az deger eksikse calisir
+YEDEK_EN_COK_EKSIK = 3
+
+
 def _ai_durumu():
     """Son AI okumasinin durumu: tamam | anahtar_yok | kota | hata."""
     try:
@@ -700,6 +707,32 @@ def _ai_olculeri(im, plan_degerleri=()):
     ham = ai_okuyucu.olculeri_oku(im)
     if not ham:
         return []
+    # DOGRULAMA + HEDEFLI TEKRAR: AI okumasi TUTARSIZ olabiliyor (ayni
+    # cizim, ayni kod, farkli calistirma -> farkli sonuc — olculdu:
+    # 700.0.450'de bir calistirmada 240/300 dogru okundu, bir SONRAKI
+    # calistirmada AYNI IKI DEGER hic gelmedi). Kontrol planindaki her
+    # deger cizimde GERCEKTEN var; biri HICBIR okumada gecmiyorsa bu
+    # muhtemelen o parcanin AGA cagrisinin gecici olarak basarisiz
+    # olmasidir (kullanicinin standart "%100 guvenilir olmali" sartina
+    # gore SANSA BIRAKILMAZ). Kapsam eksikse TEK bir ek tam-gecis yapilir
+    # ve iki sonucun BIRLESIMI (union) kullanilir.
+    if plan_degerleri:
+        def _sayisi(metin):
+            m_ = re.search(r"\d{1,4}(?:\.\d{1,2})?", str(metin).replace(",", "."))
+            return ("%g" % float(m_.group(0))) if m_ else None
+        plan_set = {("%g" % float(d)) for d in plan_degerleri}
+        bulunan = {_sayisi(t) for t, _, _ in ham} - {None}
+        for _deneme in range(2):        # toplam 3 AI cagrisina kadar
+            eksik = plan_set - bulunan
+            if not eksik:
+                break
+            ek = ai_okuyucu.olculeri_oku(im)
+            if not ek:
+                break
+            mevcut = {(round(x / 40), round(y / 40), t) for t, x, y in ham}
+            ham = ham + [o for o in ek
+                        if (round(o[1] / 40), round(o[2] / 40), o[0]) not in mevcut]
+            bulunan = {_sayisi(t) for t, _, _ in ham} - {None}
     H, W = im.shape[:2]
     kutu = _yakinlari_birlestir(
         [s for s in _yazi_kutulari(im) if not _olcu_disi(s, W, H, [])])
@@ -749,6 +782,57 @@ def _ai_olculeri(im, plan_degerleri=()):
         # else: kutu da yok, murekkep de yok -> hayalet okuma, SESSIZCE ATILIR
         # (kontrol planinda karsiligi varsa zaten "plandan atanacak" listesine
         # dusecek; uydurma degil, eksik olarak isaretlenecek).
+
+    # SON GUVENCE: AI, 3 denemeden SONRA HALA plandaki bir degeri hic
+    # bulamadiysa (olculdu: 700.0.450'de "240"/"300" IKI ayri tam gecişte
+    # de kaciriliyordu — gercek rastgelelik, kod hatasi degil), KALAN
+    # (henuz eslesmemis) yazi kutularinda o TEK deger ARANIR. Bu, AI'nin
+    # cozdugu "hangi metin bir olcu?" (siniflandirma) sorusundan cok daha
+    # kolay bir problem: yalniz BILINEN bir sayiyi arama.
+    if plan_degerleri:
+        bulunan_son = {_sayisi(x[0]) for x in sonuc} - {None}
+        eksikler = plan_set - bulunan_son
+        # "0" BIR OLCU DEGILDIR. Kontrol planinda hedef/limit alani bos olan
+        # satirlar _plan_degerleri()'nde 0.0 olarak geliyor; yedek tarama bunu
+        # cizimdeki herhangi bir "0" karakteriyle eslestirip ALAKASIZ bir yere
+        # balon koyuyordu (olculdu: sol kenardaki bir metne "0" balonu dustu).
+        eksikler.discard("0")
+        # YEDEK TARAMA YALNIZ BIRKAC DEGER EKSIKSE. Cok sayida deger eksikse
+        # (AI tamamen basarisiz oldu demektir) tarama YANLIS YERLERE balon
+        # koyuyor — olculdu: AI devre disi birakilan testte "120", not
+        # blogundaki alakasiz bir metne (x=236) yerlesti. YANLIS BALON,
+        # EKSIK BALONDAN KOTUDUR: musteri PPAP'inda gorunuste dogru ama
+        # yanlis yerde bir olcu, hic olmayan bir olcudan daha zararlidir.
+        # 1-2 kalinti icin tarama guvenli (v6'da 240/300 DOGRU bulundu).
+        if len(eksikler) > YEDEK_EN_COK_EKSIK:
+            eksikler = set()
+        if eksikler:
+            # HEDEFLI VE SINIRLI TARAMA. Olculdu: bu cizimde 395 yazi kutusu
+            # var, kutu basina ~1,6 sn Tesseract -> tam tarama 10 DAKIKA.
+            # Kabul edilemez. Iki daraltma:
+            #   1) ADAY SUZGECI — bir OLCU yazisi kisa ve kucuktur (en fazla
+            #      6 karakter genisliginde). Not/tablo/baslik metinleri elenir.
+            #   2) SURE SINIRI — en fazla TL1010_YEDEK_SN saniye taranir;
+            #      bulunamayan deger UYDURULMAZ, "plandan atanacak" olarak
+            #      kalir ve raporda gorulur.
+            import time as _t
+            bitis = _t.time() + YEDEK_TARAMA_SN
+            adaylar = [(i, k) for i, k in enumerate(kutu)
+                       if i not in kullanilan and k["g"] <= 260 and k["h"] <= 90]
+            # Once en olasi olanlar: kucuk kutular (olcu yazisi) once denenir
+            adaylar.sort(key=lambda ik: ik[1]["g"] * ik[1]["h"])
+            for i, k in adaylar:
+                if not eksikler or _t.time() > bitis:
+                    break
+                try:
+                    t = _kutu_oku(im, k)
+                except Exception:
+                    continue
+                d_ = _sayisi(t) if t is not None else None
+                if d_ in eksikler:
+                    kullanilan.add(i)
+                    eksikler.discard(d_)
+                    sonuc.append((d_, k["x"], k["y"], k["g"], k["h"], "plan", k["yon"]))
     return sonuc
 
 

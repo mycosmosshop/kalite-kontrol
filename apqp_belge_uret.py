@@ -2495,6 +2495,47 @@ def _sayfa_tutarli(xml):
     return xml
 
 
+def _sayfa_cizim_yolu(kaynak, sayfa_yolu):
+    """Bir sayfanin ILISKILI cizim (drawing) XML yolu — imza/resim gomulu
+    dosyalardaki gorseller SATIR TASIMAYLA kendiliginden gelmez; bu XML'i
+    de bulup ayrica kaydirmak gerekir."""
+    rels_yol = "xl/worksheets/_rels/" + sayfa_yolu.rsplit("/", 1)[-1] + ".rels"
+    try:
+        with zipfile.ZipFile(kaynak) as z:
+            rels = z.read(rels_yol).decode("utf-8")
+    except KeyError:
+        return None
+    m = re.search(r'Type="[^"]*?/drawing"[^>]*Target="([^"]+)"', rels)
+    if not m:
+        return None
+    yol = m.group(1).lstrip("/")
+    if yol.startswith(".."):
+        yol = "xl/" + yol.replace("../", "", 1)
+    elif not yol.startswith("xl/"):
+        yol = "xl/worksheets/" + yol
+    return yol
+
+
+def _cizim_satirlari_kaydir(xml, esik_0, kaydir):
+    """Cizimdeki (imza/resim) capalari SATIR KAYDIRMAYLA birlikte tasir.
+
+    xdr:row 0-TABANLIDIR (worksheet'in 1-tabanli <row r> ile FARKLI sayaç).
+    esik_0: 0-tabanli esik satir. Kaydirilmayan capalar (esigin USTUNDEKI
+    numune bloklari — Flame Travel/Burning time degerleri) DOKUNULMAZ.
+
+    NEDEN GEREKLI: Sanifoam_D_TLD / Flammability sablonlarindaki GERCEK
+    imza TARAMALARI (Umut Ciftciogullari, Volkan Pekatik) satir 40'a (0-
+    tabanli 39) SABIT capalanmis. Numune bloklari 5'e cikarilirken satirlar
+    kaydirilinca imzalar ESKI KONUMDA KALDI ve YENI 4. numune blogunun
+    UZERINE BINDI (kullanici: "imzalar daralmis ve yer kaymis").
+    """
+    def kaydir_deger(m):
+        n = int(m.group(1))
+        return m.group(0)[:-len(m.group(1)) - len("</xdr:row>")] + \
+            str(n + kaydir if n >= esik_0 else n) + "</xdr:row>"
+    return re.sub(r"<xdr:row>(\d+)</xdr:row>", kaydir_deger, xml)
+
+
 def _tl1010_bloklari(xml):
     """Sablondaki UC numune blogunu BESE cikarir.
 
@@ -2584,9 +2625,17 @@ def flammability(v, hedef):
     # IMZA satirina dusuyordu.
     sayfa = ilk_sayfa_yolu(kaynak) or "xl/worksheets/sheet1.xml"
     ham = zipfile.ZipFile(kaynak).read(sayfa).decode("utf-8")
+    ek = {sayfa: _tl1010_bloklari(ham)}
+    # IMZA TARAMALARI (gercek gorsel) ayri bir XML parcasinda, satir
+    # kaydirmayla KENDILIGINDEN gelmez — cizim de AYRICA kaydirilir.
+    cizim_yolu_ = _sayfa_cizim_yolu(kaynak, sayfa)
+    if cizim_yolu_:
+        cizim_ham = zipfile.ZipFile(kaynak).read(cizim_yolu_).decode("utf-8")
+        kaydir = 2 * (TL1010_KAYNAK[1] - TL1010_KAYNAK[0] + 2)
+        ek[cizim_yolu_] = _cizim_satirlari_kaydir(cizim_ham, TL1010_ALT - 1, kaydir)
     gecici = hedef + ".genis"
     try:
-        _parca_degistir(kaynak, gecici, {sayfa: _tl1010_bloklari(ham)})
+        _parca_degistir(kaynak, gecici, ek)
         hucre_yaz(gecici, hedef, sayfa, d)
     finally:
         if os.path.exists(gecici):
