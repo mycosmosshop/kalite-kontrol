@@ -69,16 +69,35 @@ td.durum{width:110px;text-align:center}
   outline:none}
 #ara:focus{border-color:var(--bag);box-shadow:0 0 0 2px rgba(29,78,216,.15)}
 .ara-sayi{font-size:12px;color:var(--soluk)}
-.g-sar{position:relative;height:20px;background:var(--iz2);border-radius:3px}
-.g-cub{position:absolute;top:3px;height:14px;border-radius:3px;background:#3b82f6;
-  box-shadow:inset 0 -1px 0 rgba(0,0,0,.12)}
+/* ── GANTT ─────────────────────────────────────────────────────────────
+   Cubuklar duz zeminde birbirinden ayirt edilemiyordu; ay izgarasi, ilerleme
+   dolgusu ve faz->faz bagimlilik oku eklendi. */
+.g-sar{position:relative;height:22px;background:var(--iz2);border-radius:4px;
+  overflow:hidden}
+.g-izgi{position:absolute;top:0;bottom:0;width:1px;background:var(--kenar);opacity:.7}
+.g-cub{position:absolute;top:4px;height:14px;border-radius:4px;background:#3b82f6;
+  box-shadow:inset 0 -1px 0 rgba(0,0,0,.15);transition:filter .12s}
+.g-cub:hover{filter:brightness(1.15)}
 .g-cub.tamam{background:#22c55e}
 .g-cub.gecikmis{background:#ef4444}
-.g-cub.bolum{top:1px;height:18px;background:#1e3a8a;opacity:.85}
-.g-bugun{position:absolute;top:0;bottom:0;width:2px;background:#ef4444;opacity:.65}
-.g-ok{position:absolute;height:0;border-top:2px dotted #64748b}
-.g-ay{font-size:11px;color:var(--soluk);text-align:center;border-left:1px solid var(--kenar)}
-.g-efsane{font-size:11px;color:var(--soluk);margin:6px 0 10px}
+.g-cub.bolum{top:2px;height:18px;background:#1e3a8a;border-radius:4px}
+/* Faz cubugunun ICINDE tamamlanma dolgusu ve yuzde etiketi */
+.g-cub.bolum b{position:absolute;left:0;top:0;bottom:0;background:#22c55e;
+  border-radius:4px 0 0 4px;opacity:.85}
+.g-cub.bolum u{position:absolute;right:5px;top:0;line-height:18px;font-size:10px;
+  color:#fff;text-decoration:none;font-weight:700;text-shadow:0 1px 1px rgba(0,0,0,.5)}
+.g-bugun{position:absolute;top:0;bottom:0;width:2px;background:#ef4444;opacity:.8;
+  z-index:3}
+/* Bagimlilik oku: fazin bitisinden sonrakinin baslangicina */
+.g-ok{position:absolute;top:10px;height:0;border-top:2px dotted #64748b;opacity:.8}
+.g-okbas{position:absolute;top:6px;width:0;height:0;margin-left:-5px;
+  border-left:5px solid #64748b;border-top:4px solid transparent;
+  border-bottom:4px solid transparent;opacity:.8}
+.g-aylar{display:flex}
+.g-ay{font-size:10px;color:var(--soluk);text-align:center;
+  border-left:1px solid var(--kenar);flex:none;overflow:hidden;white-space:nowrap}
+.g-tablo tbody tr:hover td{background:var(--yuzey2)}
+.g-efsane{font-size:11px;color:var(--soluk);margin:6px 0 10px;line-height:1.7}
 .g-efsane i{display:inline-block;width:16px;height:9px;border-radius:2px;margin:0 4px 0 12px;
   vertical-align:middle}
 .ilerleme{height:8px;border-radius:4px;background:var(--iz);overflow:hidden;margin-top:7px}
@@ -125,7 +144,9 @@ a.sil-dugme:hover{background:#b91c1c;color:#fff;border-color:#b91c1c}
   <div class="kart" id="baslikKart" hidden>
     <div style="display:flex;gap:26px;flex-wrap:wrap">
       <div><b>Parça Numarası:</b> <span id="bParca">—</span></div>
-      <div><b>Müşteri:</b> <span id="bMusteri">—</span></div>
+      <div><b>Müşteri:</b> <span id="bMusteri">—</span>
+        <a href="#" id="musteriDuzelt" title="LeanSys'te müşteri boşsa elle girin — belgelere bu ad basılır"
+           style="font-size:11px;margin-left:6px;text-decoration:none">✎</a></div>
       <div><b>Lokasyon:</b> <span id="bLokasyon">—</span></div>
       <div><b>APQP Tarihi:</b> <span id="bTarih">—</span></div>
       <div><b>Devreye Alma:</b> <span id="bDevreye">—</span></div>
@@ -769,7 +790,7 @@ function ciz() {
   $('#baslikKart').hidden = $('#sekmeler').hidden = false;
   $('#bParca').textContent = aktif.stokKodu + (aktif.urunAdi ? ' — ' + aktif.urunAdi : '')
     + (aktif.musteriParca && aktif.musteriParca !== aktif.urunAdi ? '  (müşteri: ' + aktif.musteriParca + ')' : '');
-  $('#bMusteri').textContent = aktif.musteri || '—';
+  $('#bMusteri').textContent = aktif.musteri || '— (elle girin)';
   $('#bLokasyon').textContent = aktif.lokasyon || '—';
   $('#bTarih').textContent = aktif.tarih;
   $('#bDevreye').textContent = (aktif.devreyeAlma || '—')
@@ -923,8 +944,9 @@ function cizListe() {
 function cizGantt() {
   const G = 864e5;
   const gun = t => new Date(t).getTime();
-  // Bölüm başlangıcı = bir önceki bölümün bitişi (APQP fazları zincirleme
-  // ilerler); ilk bölüm APQP başlangıcından başlar.
+  const tarihMetni = t => new Date(t).toISOString().slice(0, 10);
+
+  // ── Faz penceresi: her bölüm bir öncekinin bitişinde başlar ────────────
   const bolum = aktif.bolumler.map(b => {
     const bit = b.adimlar.map(a => a.bitis).filter(Boolean).sort();
     return { no: b.no, ad: b.ad, adimlar: b.adimlar,
@@ -938,55 +960,93 @@ function cizGantt() {
   const t1 = Math.max(...bolum.map(b => b.son));
   const genis = Math.max(1, t1 - t0);
   const yuzde = t => ((t - t0) / genis) * 100;
-  const simdi = gun(bugun());          // genel bugun() yardimcisi golgelenmesin
+  const simdi = gun(bugun());
 
-  // Ay başlıkları
+  // ── Ay ızgarası: başlık + dikey çizgiler (okunabilirlik) ──────────────
   const aylar = [];
   for (let d = new Date(t0); d <= new Date(t1); d.setMonth(d.getMonth() + 1)) {
-    const a = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
-    aylar.push(Math.max(a, t0));
+    aylar.push(Math.max(new Date(d.getFullYear(), d.getMonth(), 1).getTime(), t0));
   }
+  const AY_AD = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz',
+                 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
   const ayBaslik = aylar.map((a, i) => {
     const b = i + 1 < aylar.length ? aylar[i + 1] : t1;
-    const g = Math.max(2, yuzde(b) - yuzde(a));
     const d = new Date(a);
-    return '<span class="g-ay" style="display:inline-block;width:' + g + '%">'
-      + (d.getMonth() + 1) + '.' + String(d.getFullYear()).slice(2) + '</span>';
+    return '<span class="g-ay" style="width:' + Math.max(2, yuzde(b) - yuzde(a)) + '%">'
+      + AY_AD[d.getMonth()] + ' ' + String(d.getFullYear()).slice(2) + '</span>';
   }).join('');
+  // Izgara cizgileri her cubugun ARKASINA cizilir: cubuklar zamanda nereye
+  // denk geldigi ancak boyle okunabiliyor (duz zeminde her sey ayni gorunuyordu).
+  const izgara = aylar.map(a =>
+    '<i class="g-izgi" style="left:' + yuzde(a) + '%"></i>').join('');
 
-  const kutu = (icerik) => '<div class="g-sar">' + icerik
-    + '<div class="g-bugun" style="left:' + Math.min(100, Math.max(0, yuzde(simdi))) + '%"></div></div>';
-  const cubuk = (b, s, sinif) => {
-    const l = yuzde(b), g = Math.max(1.2, yuzde(s) - l);
-    return '<div class="g-cub ' + sinif + '" style="left:' + l + '%;width:' + g + '%"></div>';
-  };
+  const bugunCizgi = '<i class="g-bugun" style="left:'
+    + Math.min(100, Math.max(0, yuzde(simdi))) + '%"></i>';
+  const kutu = ic => '<div class="g-sar">' + izgara + ic + bugunCizgi + '</div>';
 
-  let h = '<div class="g-efsane">Çubuklar bölüm başlangıcından adımın bitişine uzanır · '
-    + '<i style="background:#22c55e"></i>tamamlandı <i style="background:#3b82f6"></i>açık '
-    + '<i style="background:#ef4444"></i>gecikmiş <i style="background:#1e3a8a"></i>bölüm · '
-    + 'kırmızı dikey çizgi: bugün</div>';
-  h += '<table><thead><tr><th style="min-width:46px">No</th>'
-    + '<th style="min-width:300px">Adım</th><th style="min-width:120px">Bitiş</th>'
-    + '<th style="min-width:520px">' + ayBaslik + '</th></tr></thead><tbody>';
+  let h = '<div class="g-efsane">'
+    + '<i style="background:#1e3a8a"></i>faz (özet) '
+    + '<i style="background:#22c55e"></i>tamamlandı '
+    + '<i style="background:#3b82f6"></i>açık '
+    + '<i style="background:#ef4444"></i>gecikmiş '
+    + '<b style="color:#ef4444;margin-left:12px">│</b> bugün'
+    + '<span style="margin-left:14px">▸ fazlar zincirleme ilerler; ok bağımlılığı gösterir. '
+    + 'Adım çubukları faz penceresine sırayla yayılır, KESİN termin faz bitişidir '
+    + '(Bitiş sütunu).</span></div>';
+
+  h += '<table class="g-tablo"><thead><tr>'
+    + '<th style="min-width:44px">No</th>'
+    + '<th style="min-width:290px">Adım</th>'
+    + '<th style="min-width:60px">Durum</th>'
+    + '<th style="min-width:96px">Bitiş</th>'
+    + '<th style="min-width:560px"><div class="g-aylar">' + ayBaslik + '</div></th>'
+    + '</tr></thead><tbody>';
 
   bolum.forEach((b, i) => {
-    // Bölüm özet satırı + bir sonrakine bağımlılık oku
+    const tamam = b.adimlar.filter(a => a.durum >= 100).length;
+    const oran = b.adimlar.length ? Math.round(tamam / b.adimlar.length * 100) : 0;
+    const bl = yuzde(b.bas), bg = Math.max(1.5, yuzde(b.son) - bl);
+
+    // Faz -> faz bagimlilik oku (bitisten sonrakinin baslangicina)
     let ok = '';
     if (i + 1 < bolum.length) {
       const x = yuzde(b.son);
-      ok = '<div class="g-ok" style="left:' + x + '%;width:' + Math.max(1, yuzde(bolum[i + 1].bas) - x)
-        + '%;top:10px"></div>';
+      const w = Math.max(0.6, yuzde(bolum[i + 1].bas) - x);
+      ok = '<i class="g-ok" style="left:' + x + '%;width:' + w + '%"></i>'
+         + '<i class="g-okbas" style="left:' + (x + w) + '%"></i>';
     }
-    h += '<tr class="bolum"><td class="no">' + b.no + '</td><td>' + b.ad + '</td>'
-      + '<td class="no">' + new Date(b.son).toISOString().slice(0, 10) + '</td>'
-      + '<td>' + kutu(cubuk(b.bas, b.son, 'bolum') + ok) + '</td></tr>';
+    const ozet = '<i class="g-cub bolum" style="left:' + bl + '%;width:' + bg + '%">'
+      + '<b style="width:' + oran + '%"></b>'
+      + '<u>%' + oran + '</u></i>';
+
+    h += '<tr class="bolum"><td class="no">' + b.no + '</td>'
+      + '<td>' + b.ad + '</td>'
+      + '<td class="no">' + tamam + '/' + b.adimlar.length + '</td>'
+      + '<td class="no">' + tarihMetni(b.son) + '</td>'
+      + '<td>' + kutu(ozet + ok) + '</td></tr>';
+
+    // ADIMLAR FAZ PENCERESINE YAYILIR. Eskiden her adim cubugu faz
+    // BASLANGICINDAN kendi bitisine uzaniyordu; bir fazdaki TUM adimlar
+    // AYNI bitis tarihini tasidigi icin (FAZ ofsetinden geliyor) butun
+    // cubuklar birebir ayniydi ve grafik "blok" gibi gorunuyordu.
+    const n = b.adimlar.filter(a => a.bitis).length || 1;
+    let k = 0;
     b.adimlar.forEach(a => {
       if (!a.bitis) return;
-      const s = gun(a.bitis);
-      const sinif = a.durum >= 100 ? 'tamam' : (s < simdi ? 'gecikmis' : '');
-      h += '<tr><td class="no">' + a.no + '</td><td>' + a.ad.slice(0, 80) + '</td>'
+      const pay = (b.son - b.bas) / n;
+      const ab = b.bas + pay * k, as = b.bas + pay * (k + 1);
+      k++;
+      const gercek = gun(a.bitis);
+      const sinif = a.durum >= 100 ? 'tamam' : (gercek < simdi ? 'gecikmis' : '');
+      const durumAd = a.durum >= 100 ? '✓' : (gercek < simdi ? 'gecikmiş' : 'açık');
+      const l = yuzde(ab), g = Math.max(1.2, yuzde(as) - l);
+      const ipucu = a.no + ' · ' + a.ad.replace(/"/g, '') + ' — termin ' + a.bitis;
+      h += '<tr><td class="no">' + a.no + '</td>'
+        + '<td>' + a.ad.slice(0, 78) + (a.beyan ? ' <span class="rz">beyan</span>' : '') + '</td>'
+        + '<td class="no">' + durumAd + '</td>'
         + '<td class="no">' + a.bitis + '</td>'
-        + '<td>' + kutu(cubuk(b.bas, s, sinif)) + '</td></tr>';
+        + '<td>' + kutu('<i class="g-cub ' + sinif + '" title="' + ipucu
+          + '" style="left:' + l + '%;width:' + g + '%"></i>') + '</td></tr>';
     });
   });
   h += '</tbody></table>';
@@ -1483,6 +1543,27 @@ async function aiAyarAc() {
     mesaj('AI ayarı kaydedilemedi: ' + e.message + ' (yerel ajan çalışıyor mu?)');
   }
 }
+// MUSTERI ADI ELLE DUZELTILEBILIR. LeanSys kontrol planinda cari_adi alani
+// BOS olabiliyor (olculdu: 700.0.450'de tum satirlarda bos) — bu ad VDA_2,
+// PPA kapagi, FR243, FR215 ve QTR gibi MUSTERIYE GIDEN belgelere basiliyor,
+// bos birakmak da uydurmak da olmaz. Elle girilen deger APQP kaydinda
+// saklanir ve LeanSys'teki bos deger UZERINE YAZMAZ.
+document.addEventListener('click', async e => {
+  if (!e.target || e.target.id !== 'musteriDuzelt') return;
+  e.preventDefault();
+  if (!aktif) return;
+  const yeni = prompt('Müşteri adı\n\n'
+    + 'Bu ad müşteriye giden belgelere (VDA 2, PPA kapağı, FR243, FR215, QTR) basılır.\n'
+    + 'LeanSys kontrol planında müşteri boşsa buradan girin.',
+    met(aktif.musteri));
+  if (yeni === null) return;
+  aktif.musteri = met(yeni).trim();
+  aktif.musteriElle = !!aktif.musteri;      // Yenile bunu EZMESIN
+  await kaydet(aktif);
+  ciz();
+  mesaj('Müşteri adı kaydedildi: ' + (aktif.musteri || '(boş)'));
+});
+
 $('#aiBtn').addEventListener('click', aiAyarAc);
 
 $('#zipBtn').addEventListener('click', async () => {

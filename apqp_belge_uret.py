@@ -320,6 +320,16 @@ def urun_agaci_cek(kod):
     return 0
 
 
+def _kayittan_musteri(kod):
+    """APQP kaydinda ELLE girilmis musteri adi (LeanSys bos oldugunda)."""
+    try:
+        r = sorgu("/apqp_projeler?id=eq.apqp_%s&select=data"
+                  % re.sub(r"[.\-]", "_", kod))
+        return met((r[0]["data"] if r else {}).get("musteri"))
+    except Exception:
+        return ""
+
+
 def urun_verisi(kod):
     k = urllib.parse.quote(kod)
     plan = sorgu("/leansys_kontrol_plani?stok_kodu=eq.%s"
@@ -381,7 +391,12 @@ def urun_verisi(kod):
     return {
         "kod": kod,
         "ad": met((plan[0] if plan else {}).get("stok_adi")) or kod,
-        "musteri": met((plan[0] if plan else {}).get("cari_adi")),
+        # MUSTERI: LeanSys bossa APQP kaydindaki ELLE GIRILEN ad kullanilir.
+        # Olculdu: 700.0.450'in kontrol planinda cari_adi TUM satirlarda bos.
+        # Bu ad musteriye giden belgelere (VDA 2, PPA kapagi, FR243, FR215,
+        # QTR) basiliyor; bos birakmak da uydurmak da olmaz.
+        "musteri": (met((plan[0] if plan else {}).get("cari_adi"))
+                    or _kayittan_musteri(kod)),
         # Teknik resim no (FR24'te "drawing" alani) — musteri parca no degil
         "resim_no": met(next((p for p in plan if met(p.get("tr_revno"))), {}).get("tr_revno")),
         "resim_rev": met((plan[0] if plan else {}).get("rev_no")),
