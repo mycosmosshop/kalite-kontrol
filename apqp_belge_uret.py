@@ -320,6 +320,65 @@ def urun_agaci_cek(kod):
     return 0
 
 
+# KENDI GRUP SIRKETLERI: bunlara yapilan sevk MUSTERI sevki degil, GRUP ICI
+# transferdir. 700.0.450'de hacmin %94'u SANIFOAM GMBH'ye (kendi Alman
+# sirketi) gidiyor; PPAP'in muhatabi o degil, parcayi kullanan musteridir.
+GRUP_SIRKET = re.compile(r"SANIFOAM|SANICAR|ULTECH", re.I)
+
+
+def sevk_musterisi(kod):
+    """Urunun GERCEK sevklerinden musteri: (ad, ozet) — LeanSys sevk kaydi.
+
+    NEDEN: kontrol planinin cari_adi alani bos olabiliyor (olculdu:
+    700.0.450'de TUM satirlarda bos) ama urun YILLARDIR sevk ediliyor.
+    Musteri adi VDA 2, PPA kapagi, FR243, FR215 ve QTR'a basildigi icin
+    uydurulamaz; sevk kayitlari bunun GERCEK kaynagidir.
+
+    Grup ici transferler (SANIFOAM GMBH gibi) elenir; kalanlar icinde EN COK
+    HACIM alan musteri secilir. Ayna bossa LeanSys'ten cektirilir (salt
+    okuma, _sevkler.ps1 — RAP005_SEVKIYAT_VW).
+    """
+    def oku():
+        try:
+            return sorgu("/izleme_sevk?urun_kodu=eq.%s&select=musteri,tarih,miktar&limit=500"
+                         % urllib.parse.quote(kod))
+        except Exception:
+            return []
+    r = oku()
+    if not r:
+        _sevkleri_cek(kod)
+        r = oku()
+    if not r:
+        return "", ""
+    hacim, sayi = {}, {}
+    for x in r:
+        ad = met(x.get("musteri"))
+        if not ad or GRUP_SIRKET.search(ad):
+            continue
+        hacim[ad] = hacim.get(ad, 0) + float(x.get("miktar") or 0)
+        sayi[ad] = sayi.get(ad, 0) + 1
+    if not hacim:
+        return "", "yalnız grup içi sevk var (müşteri sevki yok)"
+    ad = max(hacim, key=hacim.get)
+    return ad, "%d sevk · %d adet" % (sayi[ad], round(hacim[ad]))
+
+
+def _sevkleri_cek(kod):
+    """Sevk aynasi bossa LeanSys'ten cektirir (salt okuma)."""
+    import subprocess
+    betik = os.path.join(LEANSYS_BETIK, "_sevkler.ps1")
+    if not os.path.exists(betik):
+        return 0
+    try:
+        c = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                            "-File", betik, "-Urun", kod],
+                           capture_output=True, text=True, timeout=300)
+    except Exception:
+        return 0
+    g = re.search(r"RESULT_OK\s+(\d+)", (c.stdout or "") + (c.stderr or ""))
+    return int(g.group(1)) if g else 0
+
+
 def _kayittan_musteri(kod):
     """APQP kaydinda ELLE girilmis musteri adi (LeanSys bos oldugunda)."""
     try:
@@ -395,8 +454,10 @@ def urun_verisi(kod):
         # Olculdu: 700.0.450'in kontrol planinda cari_adi TUM satirlarda bos.
         # Bu ad musteriye giden belgelere (VDA 2, PPA kapagi, FR243, FR215,
         # QTR) basiliyor; bos birakmak da uydurmak da olmaz.
+        # Sirasiyla: kontrol plani -> APQP kaydinda ELLE girilen -> SEVK kayitlari
         "musteri": (met((plan[0] if plan else {}).get("cari_adi"))
-                    or _kayittan_musteri(kod)),
+                    or _kayittan_musteri(kod)
+                    or sevk_musterisi(kod)[0]),
         # Teknik resim no (FR24'te "drawing" alani) — musteri parca no degil
         "resim_no": met(next((p for p in plan if met(p.get("tr_revno"))), {}).get("tr_revno")),
         "resim_rev": met((plan[0] if plan else {}).get("rev_no")),
