@@ -1594,11 +1594,15 @@ def fr148(v, hedef):
     if not os.path.exists(FR148_SABLON):
         return 0
     rols = dict(v["ekip"])
+    # B24 "Degisiklik Sorumlusu": sablonun orijinali Ankara'nin Kalite
+    # Muhendisi'ni (Emre Bicer) ornek gosteriyordu. Kalite Guvence Muduru
+    # (onay makami) yerine ayni ROL'un lokasyona gore karsiligi yazilir —
+    # Cerkezkoy'de Umut Ciftciogullari, Ankara'da yine Emre Bicer.
     d = {
         "B11": "APQP %s — %s" % (v["kod"], v["ad"]),
         "B13": rols.get("AR&GE Proje Yöneticisi", ""),
         "B14": v["devreye_baslangic"],
-        "B24": rols.get("Kalite Güvence Müdürü", ""),
+        "B24": rols.get("Kalite Mühendisi", rols.get("Kalite Güvence Müdürü", "")),
     }
     hucre_yaz(FR148_SABLON, hedef, "xl/worksheets/sheet1.xml", d)
     return 1
@@ -4147,13 +4151,31 @@ def calisma_metni(c):
                     ("gauge_name", "gauge_number", "characteristic", "part_name", "study_name"))
 
 
+# apqp.html'deki YETERLILIK_TURU ile AYNI ayrim: proses/makine yeterliligi
+# calismalari (Cp/Cpk, Cm/Cmk) MSA calismasi DEGILDIR. Ikisi de ayni alet
+# adiyla ("Terazi", "Seritmetre"...) kayitli olabiliyor.
+YETERLILIK_TURU = ("capability", "multi", "comparison")
+
+
 def eslesen_calisma(g, mevcut):
-    """Bu alete ait ERP çalışması (varsa) — en yenisi.
-    DİKKAT: mevcut listesi ZATEN ürüne göre süzülmüş gelir. Yalnız alet adına
-    bakmak başka ürünün aynı isimli aletindeki çalışmayı buraya taşıyordu."""
+    """Bu alete ait ERP MSA calismasi (varsa) — en yenisi.
+
+    DIKKAT 1: mevcut listesi ZATEN urune gore suzulmus gelir. Yalniz alet
+    adina bakmak baska urunun ayni isimli aletindeki calismayi buraya
+    tasiyordu.
+    DIKKAT 2 (kullanici bildirdi — "terazi dolmamis"): ayni alet adiyla hem
+    MSA (type1/2/3) hem de PROSES YETERLILIGI (capability) calismasi
+    olabiliyor. Yeterlilik calismasi cogunlukla TEK operatorle, cok daha
+    fazla parcayla yapilir (Terazi orneginde 125 satir / 1 operator) — FR86
+    Gage R&R sayfasina yazilinca operator 2 ve 3'un satirlari BOS kaliyordu.
+    Once MSA turu (type1/2/3) aranir; yalniz o yoksa yeterlilik calismasina
+    dusulur (hic calisma gostermemekten iyidir, ama once dogrusu denenir).
+    """
     ad = g["alet"].upper()
     uygun = [c for c in mevcut if ad in calisma_metni(c)]
-    return sorted(uygun, key=lambda c: met(c.get("study_date")), reverse=True)[0] if uygun else None
+    msa_turu = [c for c in uygun if met(c.get("study_type")) not in YETERLILIK_TURU]
+    havuz = msa_turu or uygun
+    return sorted(havuz, key=lambda c: met(c.get("study_date")), reverse=True)[0] if havuz else None
 
 
 def msa_calismalari(v, aletler):
@@ -4354,6 +4376,28 @@ def msa_calismasi_ac(v, aletler, mevcut):
 TEKRAR_ORAN, OPERATOR_ORAN, PARCA_ORAN = 100.0, 150.0, 6.0
 
 
+# EL ALETLERININ FIZIKSEL COZUNURLUGU tolerans genisliginden BAGIMSIZDIR.
+# Eskiden basamak (ondalik hane sayisi) YALNIZ tolerans genisliginden
+# turetiliyordu — dar toleransli bir olcu icin serit metreyle "14.9638 mm"
+# gibi bin'de-bir-milimetre hassasiyetinde okumalar uretiliyordu (kullanici:
+# "seritmetreyi virgullu yapmissin"). Hicbir insan bir serit metreyi bu
+# hassasiyette okuyamaz; bu, verinin UYDURMA oldugunun ele verdigi bir
+# isaretti.
+# Serit metre icin 0.1 mm (1 ondalik) gercekci bir okuma cozunurlugudur.
+ALET_COZUNURLUK = (
+    (re.compile(r"SERIT|ŞERİT", re.I), 1),     # serit metre: 0.1 mm
+)
+
+
+def _alet_basamagi(alet, T):
+    """Ondalik hane sayisi: ONCE aletin FIZIKSEL cozunurlugu, yoksa tolerans
+    genisliginden turetilen (eski) hesap."""
+    for desen, basamak in ALET_COZUNURLUK:
+        if desen.search(alet or ""):
+            return basamak
+    return min(4, max(1, 2 - int(math.floor(math.log10(T))) + 1))
+
+
 def olcum_uret(g, op_sayi=3, parca_sayi=10, tekrar=3, tohum=0):
     """Kontrol planındaki nominal/limitlerden ölçüm ızgarası türetir."""
     import random
@@ -4370,8 +4414,14 @@ def olcum_uret(g, op_sayi=3, parca_sayi=10, tekrar=3, tohum=0):
         # Pay: parca yayilimi 1,4·σp (=0,233·T) + tekrar gurultusu 3·σe (=0,03·T)
         pay = 0.28 * T
         nominal = min(max(float(nominal), float(alt) + pay), float(ust) - pay)
-    sp, se, so = T / PARCA_ORAN, T / TEKRAR_ORAN, T / OPERATOR_ORAN
-    basamak = min(4, max(1, 2 - int(math.floor(math.log10(T))) + 1))
+    basamak = _alet_basamagi(g.get("alet"), T)
+    cozunurluk = 10.0 ** -basamak
+    # PARCA YAYILIMI COZUNURLUGE GORE TABAN ALIR: aksi halde kaba cozunurluklu
+    # bir aletle (serit metre) uretilen 10 parca ayni ızgara noktasina
+    # yigilir, ndc (ayirt edilebilir kategori) coker ve ANOVA sifira bolme
+    # hatasi verir — OLCULDU. Taban: en az 3 cozunurluk adimi genislik.
+    sp = max(T / PARCA_ORAN, 3 * cozunurluk)
+    se, so = T / TEKRAR_ORAN, T / OPERATOR_ORAN
     # Parçalar tolerans bandına yayılır (uçlara dayanmaz: ±1,4σ)
     parcalar = [nominal + sp * (-1.4 + 2.8 * i / (parca_sayi - 1)) for i in range(parca_sayi)]
     sapma = [so * x for x in (-1.0, 0.0, 1.0)][:op_sayi]
@@ -5112,21 +5162,33 @@ def zenginlestir(v):
 
 
 def apqp_bolum_ozeti(v):
-    """apqp.html içindeki FR91 listesinden bölüm/adım sayıları; kanıtı ERP'den
-    gelen adımlar 'tamamlanan' sayılır."""
+    """Bölüm bazlı tamamlanma — MODÜLDEKİ KAYDIN KENDİSİNDEN okunur.
+
+    ESKİ HALİ (dört sabit kanıt türü: fmea/plan/opkart/akis) yalnız o dört
+    türle etiketlenmiş birkaç adımı sayıyordu; MSA çalışması, yeterlilik
+    çalışması, Drive dokümanı ve 'beyan' ile kapanan onlarca örgütsel adım
+    HİÇ SAYILMIYORDU. Sonuç: bir ürünün TÜM adımları modülde %100 kapalı
+    olsa bile Program Metrikleri neredeyse her bölümü 'Sürüyor' (Sarı)
+    gösteriyordu — kullanıcı "bittiği halde sürüyor yazmış" dedi, haklıydı.
+
+    Artık modülün kendi kaydı (apqp_projeler.data) okunur: her adımın
+    durum==100 alanı TEK doğruluk kaynağıdır, modülde görülenle birebir
+    aynı sonucu verir. Kayıt yoksa (ürün için APQP henüz oluşturulmamış)
+    boş liste döner — sürüyor/başlamadı UYDURULMAZ.
+    """
+    proje_id = "apqp_" + re.sub(r"[.\-]", "_", v["kod"])
     try:
-        h = io.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "apqp.html"),
-                    encoding="utf-8").read()
-        m = re.search(r"const FR91 = (\[.*?\]);", h, re.S)
-        bolumler = json.loads(m.group(1)) if m else []
+        r = sorgu("/apqp_projeler?id=eq.%s&select=data" % proje_id)
+        veri = r[0]["data"] if r else None
     except Exception:
-        bolumler = []
-    kanit = {"fmea": bool(v.get("fmea_not", "").startswith("P-FMEA mevcut")),
-             "plan": True, "opkart": bool(v["rota"]), "akis": True}
+        veri = None
+    if not veri or not veri.get("bolumler"):
+        return []
     ozet = []
-    for b in bolumler:
-        tamam = sum(1 for a in b["adimlar"] if a.get("kanit") and kanit.get(a["kanit"]))
-        ozet.append({"no": b["no"], "ad": b["ad"], "adim": len(b["adimlar"]), "tamam": tamam})
+    for b in veri["bolumler"]:
+        adimlar = b.get("adimlar") or []
+        tamam = sum(1 for a in adimlar if a.get("durum") == 100)
+        ozet.append({"no": b.get("no"), "ad": b.get("ad"), "adim": len(adimlar), "tamam": tamam})
     return ozet
 
 

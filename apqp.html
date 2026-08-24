@@ -1453,12 +1453,22 @@ async function aiAyarAc() {
     met(mevcut.model) || 'gemini-3.5-flash-lite');
   if (model === null) return;
   const anahtar = prompt('API anahtarı\n\n'
-    + 'Boş bırakırsanız kayıtlı anahtar KORUNUR.\n'
+    + (sayi > 1 ? 'Şu an ' + sayi + ' anahtar kayıtlı ve DÖNÜŞÜMLÜ kullanılıyor.\n' : '')
+    + 'Birden fazla anahtar girmek için virgülle ayırın — kota artırmak için\n'
+    + 'dönüşümlü kullanılır (2 anahtar = 2 kat kota).\n'
+    + 'Boş bırakırsanız kayıtlı anahtar(lar) KORUNUR.\n'
     + 'Anahtar tarayıcıda saklanmaz; bu bilgisayardaki ayar dosyasına yazılır.', '');
   if (anahtar === null) return;
   const govde = { saglayici: met(sag).trim() || 'gemini', model: met(model).trim() };
-  if (met(anahtar).trim()) govde.anahtar = met(anahtar).trim();
-  else if (mevcut.var) govde.anahtar = '';       // dosyadaki anahtar korunur
+  const liste = met(anahtar).split(',').map(x => x.trim()).filter(Boolean);
+  if (liste.length) {
+    // "anahtarlar" TAM LISTE olarak yazilir — eskisiyle BIRLESTIRILMEZ.
+    // Aksi halde iptal edilmis/degistirilmis bir anahtar listede kalir ve
+    // rotasyon onu kullanmaya devam eder.
+    govde.anahtarlar = liste;
+    govde.anahtar = liste[0];
+  }
+  // liste bossa hicbir alan gonderilmez -> ajan tarafinda dosya oldugu gibi kalir
   if (govde.saglayici === 'xai') govde.uc = 'https://api.x.ai/v1';
   try {
     const bayt = new TextEncoder().encode(JSON.stringify(govde));

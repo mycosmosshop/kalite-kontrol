@@ -48,28 +48,42 @@ DENEME = 4
 
 
 def ayar_oku():
-    """Sağlayıcı ayarı: dosya → ortam değişkeni. Yoksa None."""
+    """Sağlayıcı ayarı: dosya → ortam değişkeni. Yoksa None.
+
+    BİRDEN FAZLA ANAHTAR: "anahtarlar" bir liste ise DÖNÜŞÜMLÜ kullanılır —
+    her istek sırayla farklı anahtardan gider. Ücretsiz katmanın kota sınırı
+    anahtar başınadır; 2 anahtarla dönüşümlü gidince her anahtar kendi
+    sınırının YARISI kadar yük görür, aynı bekleme süresiyle toplam kota
+    iki katına çıkar (BEKLE sabiti buna göre ayarlanır, aşağıda).
+    """
     try:
         a = json.load(io.open(AYAR_YOLU, encoding="utf-8"))
     except Exception:
         a = {}
-    if not a.get("anahtar"):
-        a["anahtar"] = os.environ.get("GEMINI_API_KEY", "")
+    if not a.get("anahtarlar"):
+        # Geriye dönük uyum: tekil "anahtar" varsa tek elemanlı listeye çevrilir
+        a["anahtarlar"] = [a["anahtar"]] if a.get("anahtar") else []
+    if not a["anahtarlar"]:
+        a["anahtarlar"] = [k for k in [os.environ.get("GEMINI_API_KEY", "")] if k]
         a.setdefault("saglayici", "gemini")
-    if not a.get("anahtar"):
+    if not a["anahtarlar"]:
         # Mevzuat Radar / Mail Merkezi ayarlarindaki anahtar
         for yol, alan in ((os.path.join(os.path.expanduser("~"), "Desktop",
                                         "n8n_mail_gorev", "ayarlar.json"), "ai_anahtar"),
                           (os.path.join("D:\\", "Yazılım", "mevzuat-radar",
                                         "ayarlar.json"), "gemini_api_key")):
             try:
-                a["anahtar"] = json.load(io.open(yol, encoding="utf-8")).get(alan, "")
-                if a["anahtar"]:
+                tek = json.load(io.open(yol, encoding="utf-8")).get(alan, "")
+                if tek:
+                    a["anahtarlar"] = [tek]
                     a.setdefault("saglayici", "gemini")
                     break
             except Exception:
                 continue
-    return a if a.get("anahtar") else None
+    if not a["anahtarlar"]:
+        return None
+    a["anahtar"] = a["anahtarlar"][0]      # geriye donuk uyum: ilk anahtar
+    return a
 
 
 ISTEM = (
@@ -85,7 +99,7 @@ ISTEM = (
     "Yalnız JSON dizisi döndür, başka hiçbir şey yazma.")
 
 
-def _gemini(b64, ayar):
+def _gemini(b64, ayar, anahtar=None):
     # flash-lite: ucretsiz katmanda kotasi belirgin daha genis, ayni
     # cizim parcasinda ayni 15 olcuyu dogru okudu.
     model = ayar.get("model") or "gemini-3.5-flash-lite"
@@ -95,7 +109,7 @@ def _gemini(b64, ayar):
         "generationConfig": {"temperature": 0, "maxOutputTokens": 8192},
     }).encode("utf-8")
     url = ("https://generativelanguage.googleapis.com/v1beta/models/"
-           + model + ":generateContent?key=" + ayar["anahtar"])
+           + model + ":generateContent?key=" + (anahtar or ayar["anahtar"]))
     r = urllib.request.Request(url, data=govde,
                                headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(r, timeout=240) as f:
@@ -148,23 +162,36 @@ def _cozumle(metin):
         return []
 
 
+# Son okumanin DURUMU. Bos liste donmenin sebebi cagirana bildirilmeli:
+# "anahtar yok" ile "kota doldu" ayni sey degil. Kota dolduysa klasik OCR'a
+# sessizce dusup NOT BLOGUNA cop balon basmak, balonsuz cizimden kotudur.
+SON_DURUM = "tamam"
+
+
 def olculeri_oku(im, log=None):
     """Çizimdeki ölçüler: [(deger_metni, x, y)] — GLOBAL piksel konumuyla.
     Anahtar yoksa ya da servis yanıt vermezse boş liste döner (çağıran taraf
     klasik OCR'a devam eder)."""
     import cv2
+    global SON_DURUM
+    SON_DURUM = "tamam"
     ayar = ayar_oku()
     if not ayar:
+        SON_DURUM = "anahtar_yok"
         return []
     H, W = im.shape[:2]
     sonuc, hata = [], 0
-    # KOTA KADANSI: ucretsiz katman dakikada 20 istek = 3 sn'de BIR ISTEK.
-    # Eskiden her cagridan SONRA kosulsuz BEKLE kadar uyunuyordu; istegin
-    # kendisi zaten ~1,4 sn surdugu icin o sure ikinci kez odeniyordu
-    # (olculdu: 24 parcada 72 sn uyku, 33 sn gercek AI). Artik iki istegin
-    # BASLANGICI arasinda BEKLE saniye olmasi saglanir: kota birebir ayni,
-    # gereksiz bekleme yok.
+    # KOTA KADANSI: ucretsiz katman dakikada 20 istek = 3 sn'de BIR ISTEK,
+    # ANAHTAR BASINA. N anahtar DONUSUMLU kullanilinca her anahtar kendi
+    # 3 sn sinirinin altinda kalirken GLOBAL kadans BEKLE/N'e duser — toplam
+    # kota N kati olur. Eskiden her cagridan SONRA kosulsuz BEKLE kadar
+    # uyunuyordu; istegin kendisi zaten ~1,4 sn surdugu icin o sure ikinci
+    # kez odeniyordu. Artik iki istegin BASLANGICI arasinda kadans kadar
+    # olmasi saglanir.
+    anahtarlar = ayar["anahtarlar"]
+    kadans = BEKLE / len(anahtarlar)
     son_baslangic = [0.0]
+    sira = [0]
     for y0 in range(0, H, KARE - ORTUSME):
         for x0 in range(0, W, KARE - ORTUSME):
             x1, y1 = min(x0 + KARE, W), min(y0 + KARE, H)
@@ -174,18 +201,27 @@ def olculeri_oku(im, log=None):
             if not ok:
                 continue
             b64 = base64.b64encode(tampon.tobytes()).decode()
-            kalan = BEKLE - (time.time() - son_baslangic[0])
+            kalan = kadans - (time.time() - son_baslangic[0])
             if son_baslangic[0] and kalan > 0:
                 time.sleep(kalan)
             son_baslangic[0] = time.time()
             metin = None
             for deneme in range(DENEME):
+                anahtar = anahtarlar[sira[0] % len(anahtarlar)]
+                sira[0] += 1               # bir sonraki istek/deneme BASKA anahtarla
                 try:
-                    metin = (_gemini(b64, ayar)
+                    metin = (_gemini(b64, ayar, anahtar)
                              if ayar.get("saglayici", "gemini") == "gemini"
                              else _openai_uyumlu(b64, ayar))
-                    break
+                    SON_DURUM = "tamam"        # bu parca basariyla okundu —
+                    break                      # onceki denemedeki 429 gecerliligini yitirdi
                 except urllib.error.HTTPError as e:
+                    if e.code == 429:
+                        SON_DURUM = "kota"
+                        if deneme < DENEME - 1 and len(anahtarlar) > 1:
+                            # Baska anahtar hemen denenir, sunucunun soyledigi
+                            # sureyi BEKLEMEDEN — o anahtarin kotasi degil
+                            continue
                     if e.code == 429 and deneme < DENEME - 1:
                         # Hiz siniri: sunucunun soyledigi kadar beklenir
                         time.sleep(_bekleme_suresi(e, BEKLE * (2 ** deneme)))
@@ -196,11 +232,19 @@ def olculeri_oku(im, log=None):
                         log("   ! AI okuma hatası (%d,%d): %s" % (x0, y0, str(e)[:60]))
                     break
                 except Exception as e:
+                    SON_DURUM = "hata"
                     hata += 1
                     if log:
                         log("   ! AI okuma hatası (%d,%d): %s" % (x0, y0, str(e)[:60]))
                     break
             if metin is None:
+                # KOTA DOLDUYSA HEMEN VAZGEC: her parcayi tek tek denemek
+                # (4 deneme x ustel bekleme x onlarca parca) dakikalar
+                # harciyor ve sonuc yine bos oluyor.
+                if SON_DURUM == "kota":
+                    if log:
+                        log("   ! AI kotasi doldu — okuma durduruldu")
+                    return []
                 if hata >= 4:                 # servis gercekten kapali
                     return sonuc and _tekille(sonuc) or []
                 continue

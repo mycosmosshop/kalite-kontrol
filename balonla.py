@@ -647,6 +647,34 @@ def _sablonla_oku(model, etiket, s, kar, im=None):
     return t if re.fullmatch(r"\d{1,4}(\.\d{1,2})?", t) else None
 
 
+def _ai_durumu():
+    """Son AI okumasinin durumu: tamam | anahtar_yok | kota | hata."""
+    try:
+        import ai_okuyucu
+        return getattr(ai_okuyucu, "SON_DURUM", "tamam")
+    except ImportError:
+        return "anahtar_yok"
+
+
+def _konumda_yazi_var_mi(im, x, y, yaricap=44, esik_piksel=25):
+    """Verilen konumun civarinda GERCEK MURKKEP (yazi/cizgi) var mi?
+
+    Model kutu eslesmesi bulamayinca ham konumunu KANITSIZ kabul ediyorduk
+    ("modelin konumu ESASTIR"). Kullanici tarandigi cizimde metinsiz bos
+    alana dusen bir "hayalet" balon gordu (700.0.454, R15 kosesi). Kutu
+    bulunamayan her okuma icin, iddia edilen konumun civarinda GERCEKTEN
+    koyu piksel olup olmadigi kontrol edilir — sirf beyaz alana dusen bir
+    okuma neredeyse kesin halusinasyondur/konum hatasidir.
+    """
+    H, W = im.shape[:2]
+    x0, y0 = max(0, int(x - yaricap)), max(0, int(y - yaricap))
+    x1, y1 = min(W, int(x + yaricap)), min(H, int(y + yaricap))
+    if x1 <= x0 or y1 <= y0:
+        return False
+    bolge = im[y0:y1, x0:x1]
+    return bool((bolge < 128).sum() >= esik_piksel)
+
+
 def _ai_olculeri(im, plan_degerleri=()):
     """Görme modeli + geometri: model NE olduğunu, geometri NEREDE olduğunu.
 
@@ -713,10 +741,14 @@ def _ai_olculeri(im, plan_degerleri=()):
             kullanilan.add(secilen)
             k = kutu[secilen]
             sonuc.append((sayi, k["x"], k["y"], k["g"], k["h"], kaynak, k["yon"]))
-        else:
-            # Kutu bulunamadı: ölçü DÜŞMEZ, modelin konumu kullanılır
+        elif _konumda_yazi_var_mi(im, mx, my):
+            # Kutu bulunamadı ama konumda GERCEKTEN murekkep var: dusurulmez,
+            # modelin konumu kullanilir.
             kg, kh = max(30, 15 * len(metin)), 30
             sonuc.append((sayi, mx - kg / 2.0, my - kh / 2.0, kg, kh, kaynak, "y"))
+        # else: kutu da yok, murekkep de yok -> hayalet okuma, SESSIZCE ATILIR
+        # (kontrol planinda karsiligi varsa zaten "plandan atanacak" listesine
+        # dusecek; uydurma degil, eksik olarak isaretlenecek).
     return sonuc
 
 
@@ -1024,6 +1056,17 @@ def uret(kod, tiff_yolu, klasor, kp_satirlari, sablon_kutusu=None, tam=True):
         # klasik OCR+geometri yoluna düşülür.
         olcu = _ai_olculeri(im, plan_deger)
         if not olcu:
+            # AI BEKLENIYORDU AMA YANIT VERMEDIYSE KLASIK OCR'A DUSULMEZ.
+            # Olculdu: kota dolunca yedek yol not blogundaki metne ("VDA 260",
+            # "-30°C bis", "50185") balon basiyor, okunamayan konumlara plan
+            # degeri atiyor ve "14 balon — 0 elle girilecek" diyerek BASARILI
+            # gorunuyor. Musteriye giden PPAP ciziminde bu, balonsuz cizimden
+            # kotudur: yanlis balon, eksik balondan zor fark edilir.
+            durum = _ai_durumu()
+            if durum in ("kota", "hata"):
+                return 0, ("AI okuma servisi yanıt vermedi (%s) — balonlama "
+                           "YAPILMADI. Kota yenilenince tekrar üretin."
+                           % ("kota doldu" if durum == "kota" else "servis hatası")), []
             olcu = tum_olculer(im, capa, plan_deger, geometri_ele=not capa)
         olcu = _cakisanlari_ele(olcu, plan_deger)
         # Her ölçü en yakın pozisyona bağlanır, o grupta okuma sırasıyla numaralanır
