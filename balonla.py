@@ -954,6 +954,108 @@ def _olcu_disi_mi(deger):
     return any(k.match(d) for k in OLCU_DISI)
 
 
+def _sayiya(d):
+    """Olcu metnini sayiya cevirir; cevrilemezse None."""
+    try:
+        return float(str(d).replace(",", ".").lstrip("øØR").split()[0])
+    except (ValueError, IndexError, AttributeError):
+        return None
+
+
+def _fazla_yinelemeleri_ele(olcu, plan_deger):
+    """Bir deger kontrol planinda KAC KEZ geciyorsa o kadar balonlanir.
+
+    Olculdu (700.0.454, gemini-3.1-flash-lite): "10 +/- 0.3" olcusu UC kez
+    balonlanmisti (31, 32, 33) — modeli degistirince okuma sayisi 34'ten
+    45'e cikti ama fazlasi ayni olcunun tekrariydi. Plan dogruluk kaynagi:
+    plandaki adet, tavan.
+    """
+    if not plan_deger:
+        return olcu
+    sayim, kullanildi = {}, {}
+    for d in plan_deger:
+        a = "%g" % float(d)
+        sayim[a] = sayim.get(a, 0) + 1
+    kalan = []
+    for o in olcu:
+        f = _sayiya(o[0])
+        a = "%g" % f if f is not None else None
+        if a in sayim:
+            if kullanildi.get(a, 0) >= sayim[a]:
+                continue                      # plandaki adetten fazla okuma
+            kullanildi[a] = kullanildi.get(a, 0) + 1
+        kalan.append(o)
+    return kalan
+
+
+def _gabari_disi_ele(olcu, plan_deger):
+    """Parca gabarisini asan okumalar elenir (plan degeriyse dokunulmaz).
+
+    Olculdu: 300x405 mm parcada "1000" ve "400" okundu — fiziksel olarak
+    mumkun degil, model not/tablo metnini olcu sanmis.
+    """
+    if not plan_deger:
+        return olcu
+    planda = {"%g" % float(d) for d in plan_deger}
+    tavan = max(float(d) for d in plan_deger) * 1.3
+    kalan = []
+    for o in olcu:
+        f = _sayiya(o[0])
+        if f is not None and f > tavan and ("%g" % f) not in planda:
+            continue
+        kalan.append(o)
+    return kalan
+
+
+def _tablo_sutunu_ele(olcu, plan_deger, serit=70, en_az=4):
+    """Dikey dizilmis, TAMAMI plan disi okuma obegi = TABLO, olcu degil.
+
+    Olculdu (700.0.454): VW genel tolerans tablosunun sol alt kosedeki
+    satirlari (>400<=1000 ±2,0 · >120<=400 ±1,6 · ...) olcu sanilip 11 balon
+    basilmisti — degerler 400, 120, 30, 6, 2, 1.6, 0.6, 0.3, 0.2, 0.5.
+    Gercek olcu zincirleri de dikey olabilir ama onlarin degerleri kontrol
+    planinda vardir; obekte plan dogrulamasi olan TEK bir olcu varsa obek
+    korunur.
+    """
+    if not plan_deger or len(olcu) < en_az:
+        return olcu
+    planda = {"%g" % float(d) for d in plan_deger}
+
+    def plan_mi(o):
+        f = _sayiya(o[0])
+        return f is not None and ("%g" % f) in planda
+
+    gruplar = {}
+    for i, o in enumerate(olcu):
+        gruplar.setdefault(int(o[1] // serit), []).append(i)
+    atilacak = set()
+    for _, dizin in gruplar.items():
+        if len(dizin) >= en_az and not any(plan_mi(olcu[i]) for i in dizin):
+            atilacak.update(dizin)
+    return [o for i, o in enumerate(olcu) if i not in atilacak]
+
+
+def _antet_kosesi_ele(olcu, plan_deger, im_en, im_boy):
+    """Cizimin SOL ALT kosesindeki plan disi okumalar elenir.
+
+    Teknik resimde o kose antet/not/tolerans tablolarina ayrilmistir; olcu
+    cizgisi oraya girmez. Olculdu: tolerans tablosunun kenarindaki "7"
+    balonlanmisti (tek basina kaldigi icin sutun suzgeci yakalamadi).
+    Plan degeriyle dogrulanan okuma DOKUNULMAZ — parca gercekten orada
+    cizilmis olabilir.
+    """
+    if not plan_deger or not im_en or not im_boy:
+        return olcu
+    # PLAN DOGRULAMASI BURADA MUAFIYET DEGIL: olculdu, tolerans tablosundan
+    # okunan "7" kontrol planinda da vardi ve muaf tutulunca balon tablonun
+    # ustunde kalmisti. Dogru deger + yanlis konum = yanlis balon. Bolge
+    # dar tutulur (sol %20 x alt %15) ki yalnizca antet kosesi elensin;
+    # elenen plan degeri "kullanilmamis" havuzuna doner.
+    kalan = [o for o in olcu
+             if not (o[1] < im_en * 0.20 and o[2] > im_boy * 0.85)]
+    return kalan
+
+
 def _cakisanlari_ele(olcu, plan_deger, esik=46):
     """Ayni noktaya dusen AYNI olcuden BIRI birakilir.
 
@@ -1213,6 +1315,10 @@ def uret(kod, tiff_yolu, klasor, kp_satirlari, sablon_kutusu=None, tam=True):
             olcu = tum_olculer(im, capa, plan_deger, geometri_ele=not capa)
         olcu = [o for o in olcu if not _olcu_disi_mi(o[0])]
         olcu = _cakisanlari_ele(olcu, plan_deger)
+        olcu = _gabari_disi_ele(olcu, plan_deger)
+        olcu = _fazla_yinelemeleri_ele(olcu, plan_deger)
+        olcu = _tablo_sutunu_ele(olcu, plan_deger)
+        olcu = _antet_kosesi_ele(olcu, plan_deger, im.shape[1], im.shape[0])
         # Her ölçü en yakın pozisyona bağlanır, o grupta okuma sırasıyla numaralanır
         # NOKTALI NUMARA (1.1, 1.2 ...) YALNIZ POS'LU PLANLARDA.
         # Cizim uzerindeki daireler POS karakteristigi olmak zorunda degil:

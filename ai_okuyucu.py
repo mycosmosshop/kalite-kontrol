@@ -96,6 +96,11 @@ ISTEM = (
     # Olculdu: 6FA.881.989 ciziminde detay gorunusun yanindaki OLCEK notu
     # "1:5" model tarafindan "1" diye okunup balonlanmisti; deger olarak
     # "1" geldigi icin kalip filtresi de yakalayamiyor — kaynagi burasi.
+    # Olculdu: VW genel tolerans tablosunun satirlari (400, 120, 30, 6,
+    # 2,0, 1,6, 0,6, 0,3) olcu sanilip 11 balon basilmisti.
+    "GENEL TOLERANS TABLOSUNU LİSTELEME: \">400 \" ile başlayan aralık-"
+    "tolerans satırları ve açı toleransı ölçü DEĞİLDİR; o tablodaki 400, 120, "
+    "30, 6, 2.0, 1.6, 0.6, 0.3 gibi sayıları yazma.\n"
     "ÖLÇEK NOTUNU ASLA LİSTELEME: \"1:5\", \"1:1\", \"2:1\" gibi oranlar ve "
     "bunların yanındaki görünüş/detay adları ölçü DEĞİLDİR; oranın tek bir "
     "rakamını da (1 ya da 5) ölçü diye yazma. Aynı şekilde kağıt formatı "
