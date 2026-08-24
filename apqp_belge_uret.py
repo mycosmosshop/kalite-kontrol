@@ -1471,45 +1471,115 @@ def pl11(v, hedef):
         return 0
     shutil.copy2(kaynak, hedef)
 
+    # SINIF/PUAN SUTUNLARI CANLI ERP'DEN (Supabase onayli_tedarikci) YAZILIR.
+    # Downloads disa aktarimindaki bu iki sutun kendi FORMULUNDEN gelir ve o
+    # formul export ANINDAKI ham metriklere (sevkiyat, PPM, termin...) bakar
+    # — kullanici sonradan ERP'de kaydi duzeltse bile export dosyasi eski
+    # kalir. Ayni tedarikcinin sinif/puani ERP'nin KENDI onayli listesinden
+    # (bu APQP modulunun okudugu ayna, tedarikci modulundeki "Buluta Yaz"
+    # ile guncellenir) alinip PL11'e yazilir; export yalniz govde/format
+    # icin kullanilir (kullanicinin KENDI formati korunur).
+    try:
+        canli = {met(x["ad"]).upper()[:18]: (x.get("puan"), met(x.get("sinif")))
+                 for x in sorgu("/onayli_tedarikci?select=ad,sinif,puan")}
+    except Exception:
+        canli = {}
+    # PowerShell hashtable literaline gomulur (10'a yakin satir, kucuk)
+    ps_harita = "@{" + ";".join(
+        "'%s'=@(%s,'%s')" % (k.replace("'", "''"),
+                             ("%.1f" % p) if p is not None else "$null",
+                             s_.replace("'", "''"))
+        for k, (p, s_) in canli.items()) + "}"
+
     betik = (
         "$ErrorActionPreference='Stop'\n"
+        # Cikti (Write-Output) da UTF-8 olmali — Python taraf encoding='utf-8'
+        # ile okuyor; PowerShell'in konsol cikti kodlamasi varsayilan olarak
+        # sistem ANSI kod sayfasidir, Turkce metin CRASH ederdi.
+        "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)\n"
         "$f = '" + hedef.replace("'", "''") + "'\n"
         "$lok = '" + v["lokasyon_ad"] + "'\n"
+        "$canli = " + ps_harita + "\n"
         "$x = New-Object -ComObject Excel.Application\n"
         "$x.Visible = $false; $x.DisplayAlerts = $false\n"
         "try {\n"
         "  $wb = $x.Workbooks.Open($f)\n"
         "  $ws = $wb.Worksheets.Item(1)\n"
         "  $son = $ws.UsedRange.Rows.Count\n"
-        "  $silinen = 0; $kalan = 0\n"
+        "  $silinen = 0; $kalan = 0; $guncellenen = 0\n"
         "  for ($r = $son; $r -ge 10; $r--) {\n"
         "    $ad = $ws.Cells.Item($r, 3).Text\n"
         "    if ([string]::IsNullOrWhiteSpace($ad)) { continue }\n"
         "    $l = $ws.Cells.Item($r, 4).Text\n"
         "    $oto = $ws.Cells.Item($r, 40).Text\n"
         "    if (($l -notlike ('*' + $lok + '*')) -or ($oto -ne 'EVET')) {\n"
-        "      $ws.Rows.Item($r).Delete() | Out-Null; $silinen++\n"
-        "    } else { $kalan++ }\n"
+        "      $ws.Rows.Item($r).Delete() | Out-Null; $silinen++; continue\n"
+        "    }\n"
+        "    $kalan++\n"
+        "    $anahtar = $ad.ToUpper().Substring(0, [Math]::Min(18, $ad.Length))\n"
+        "    if ($canli.ContainsKey($anahtar)) {\n"
+        "      $puan, $sinif = $canli[$anahtar]\n"
+        # Her HUCRE kendi try/catch'inde: bir tedarikcinin hucresinde
+        # beklenmeyen bir kisit (dogrulama/koruma/format) olsa bile DIGER
+        # tedarikcilerin guncellemesi kaybolmaz, script cokup TUM listeyi
+        # eski/bos birakmaz. Hata WARN olarak yazilir, script durmaz.
+        "      if ($null -ne $puan) {\n"
+        "        try { $ws.Cells.Item($r, 22).Value2 = $puan }\n"
+        "        catch { Write-Output (\"UYARI puan yazilamadi ($ad): \" + $_.Exception.Message) }\n"
+        "      }\n"
+        "      if ($sinif) {\n"
+        "        try { $ws.Cells.Item($r, 23).Value2 = $sinif }\n"
+        "        catch { Write-Output (\"UYARI sinif yazilamadi ($ad): \" + $_.Exception.Message) }\n"
+        "      }\n"
+        "      $guncellenen++\n"
+        "    }\n"
         "  }\n"
         "  $ws.Cells.Item(6, 1).Value2 = 'Lokasyon: " + v["lokasyon_ad"]
         + "   |   Kapsam: Tip A (Otomotiv)   |   Ilgili urun: "
         + (v["kod"] + " - " + v["ad"])[:52].replace("'", " ") + "'\n"
         "  $wb.Save(); $wb.Close($false)\n"
-        "  Write-Output ('{\"kalan\":' + $kalan + '}')\n"
+        "  Write-Output ('{\"kalan\":' + $kalan + ',\"guncellenen\":' + $guncellenen + '}')\n"
         "} finally { $x.Quit(); [void][Runtime.InteropServices.Marshal]::ReleaseComObject($x) }\n")
 
+    # BETIK GECICI .ps1 DOSYASINA YAZILIR, -Command DEGIL -File ILE CALISTIRILIR.
+    # KOK SEBEP (olculdu): "-Command <buyuk metin>" ile gecirilen TURKCE
+    # karakterler (Cerkezkoy, sirket adlari) PowerShell'e YANLIS KOD
+    # SAYFASIYLA ulasiyordu. Hucre metni COM uzerinden PERFECT unicode
+    # okunurken, $lok degiskeni bozuk byte'larla geliyordu — ikisi ASLA
+    # ESLESMIYORDU, TUM SATIRLAR "lokasyon uymuyor" sayilip SILINIYORDU
+    # (kalan=0). UTF-8 BOM'lu bir .ps1 DOSYASI PowerShell 5.1 tarafindan
+    # OTOMATIK dogru kod sayfasiyla okunur; bu sinif/puan hatasiyla AYNI
+    # ANDA kesfedilen, ONCEDEN VAR OLAN, PL11'i muhtemelen HER URETIMDE
+    # bos birakan ayri bir hataydi.
+    import tempfile
+    gecici_ps1 = None
     try:
-        c = subprocess.run(["powershell", "-NoProfile", "-Command", betik],
-                           capture_output=True, text=True, timeout=300)
+        fd, gecici_ps1 = tempfile.mkstemp(suffix=".ps1")
+        os.close(fd)
+        with io.open(gecici_ps1, "w", encoding="utf-8-sig") as f:
+            f.write(betik)
+        c = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                            "-File", gecici_ps1],
+                           capture_output=True, text=True, timeout=300, encoding="utf-8")
         satir = [x for x in c.stdout.splitlines() if x.strip().startswith("{")]
         if satir:
-            return _json.loads(satir[-1]).get("kalan", 0) or 1
+            sonuc = _json.loads(satir[-1])
+            if not sonuc.get("kalan"):
+                print("   ! PL11: lokasyon filtresinden HİÇBİR tedarikçi geçmedi "
+                      "— beklenmedik, kontrol edin")
+            return sonuc.get("kalan", 0) or 1
         print("   ! PL11 süzülemedi (liste doğru formatta ama süzülmemiş):",
               (c.stderr or c.stdout).strip()[:90].replace("\n", " "))
         return 1
     except Exception as e:
         print("   ! PL11 süzülemedi:", str(e)[:80])
         return 1
+    finally:
+        if gecici_ps1 and os.path.exists(gecici_ps1):
+            try:
+                os.remove(gecici_ps1)
+            except OSError:
+                pass
 
 
 # ── FR228 Ambalaj Standardı Formu (docx) ─────────────────────────────────
