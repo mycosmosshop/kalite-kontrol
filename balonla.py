@@ -12,6 +12,7 @@ Balon numarası müşterinin kendi POS numarasıdır; ölçüsel rapor da aynı
 numarayla kontrol planından üretilir.
 """
 import io
+import math
 import os
 import re
 import sys
@@ -997,11 +998,23 @@ def balonla(tiff_yolu, hedef_png, atamalar, baslik=""):
     # ayrimi icin iki renk vardi, cizimde karisik gorunuyordu; o ayrim
     # olcusel raporun "Not" sutununda zaten yaziyor.
     RENK = {"plan": (200, 0, 0), "okundu": (200, 0, 0), "sıradan": (200, 0, 0)}
+    kondu = []            # (x, y, r) — yerlestirilmis balonlar
     for no, x, y, kaynak in atamalar:
-        cx, cy = x, y
         boya = RENK.get(kaynak, (215, 150, 0))       # bilinmiyorsa sarı
         e = str(no) if no is not None else "?"
         r = 34 if len(e) > 2 else 40
+        # UST USTE BINMESIN: olcu zincirinde iki FARKLI olcu ayni noktaya
+        # dusebiliyor (ornek: 30 ve 31 ayni R15'in yaninda). Bunlari elemek
+        # bilgi kaybi olur — balon komsuluga kaydirilir, cizgi degismez.
+        cx, cy = x, y
+        for adim in range(16):
+            if all((cx - px) ** 2 + (cy - py) ** 2 >= (1.04 * (r + pr)) ** 2
+                   for px, py, pr in kondu):
+                break
+            aci = (adim % 8) * (math.pi / 4)
+            uzak = (r + 40) * (1 + adim // 8) * 1.05
+            cx, cy = x + uzak * math.cos(aci), y + uzak * math.sin(aci)
+        kondu.append((cx, cy, r))
         ciz.ellipse([cx - r, cy - r, cx + r, cy + r], outline=boya, width=6)
         f = kucuk_no if len(e) > 3 else yazi
         k = ciz.textbbox((0, 0), e, font=f)
@@ -1225,6 +1238,10 @@ def uret(kod, tiff_yolu, klasor, kp_satirlari, sablon_kutusu=None, tam=True):
              "%d plandan atandı, %d elle girilecek"
              % (len(atama), dogru, okundu, plandan, kalan)) if tam else (
         "%d pozisyon balonu" % len(atama))
+    # Dosyanin GERCEKTEN yazildigi dogrulanir: rapor "30 balon" derken
+    # klasorde dosya olmadigi goruldu, basari yaniltici olmamali.
+    if not os.path.exists(png):
+        return 0, "balon dosyası yazılamadı: %s" % png, satirlar
     return len(atama), rapor, satirlar
 
 

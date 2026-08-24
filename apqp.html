@@ -124,6 +124,27 @@ a.sil-dugme:hover{background:#b91c1c;color:#fff;border-color:#b91c1c}
 .durumcubugu{height:8px;background:var(--iz);border-radius:4px;overflow:hidden;margin-top:4px}
 .durumcubugu i{display:block;height:100%;background:#22c55e}
 .sekme{display:flex;gap:6px;margin-bottom:12px}
+/* AI anahtar penceresi: cok sayida anahtar eklemek prompt() ile
+   yapilamiyordu (tek satir, hepsini yeniden yazmak gerekiyordu). */
+.perde{position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:60;
+  display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto}
+.pencere{background:var(--kart);border:1px solid var(--kenar);border-radius:10px;
+  width:100%;max-width:620px;padding:18px 20px;box-shadow:0 18px 48px rgba(0,0,0,.28)}
+.pencere h3{margin:0 0 4px;font-size:16px}
+.pencere .alt{font-size:12px;color:var(--soluk);margin-bottom:14px;line-height:1.6}
+.pencere label{display:block;font-size:12px;font-weight:600;margin:12px 0 4px}
+.pencere select,.pencere textarea{width:100%;box-sizing:border-box;font-size:13px;
+  padding:7px 8px;border:1px solid var(--kenar);border-radius:6px;
+  background:var(--kart);color:inherit;font-family:inherit}
+.pencere textarea{min-height:78px;resize:vertical;font-family:ui-monospace,Consolas,monospace;font-size:12px}
+.anahtar-tablo{width:100%;border-collapse:collapse;font-size:12px;margin-top:4px}
+.anahtar-tablo th{text-align:left;font-weight:600;color:var(--soluk);padding:4px 6px;
+  border-bottom:1px solid var(--kenar)}
+.anahtar-tablo td{padding:5px 6px;border-bottom:1px solid var(--kenar)}
+.anahtar-tablo td.k{font-family:ui-monospace,Consolas,monospace}
+.dm-tamam{color:var(--ok-fg)}.dm-kota{color:var(--uyari-fg)}.dm-kotu{color:var(--sil-fg)}
+.pencere .dugmeler{display:flex;gap:8px;margin-top:18px;flex-wrap:wrap}
+.pencere .dugmeler .sag{margin-left:auto}
 .uyari{background:var(--uyari-bg);border:1px solid var(--uyari-kenar);color:var(--uyari-fg);padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:12px}
 </style></head>
 <body>
@@ -135,6 +156,7 @@ a.sil-dugme:hover{background:#b91c1c;color:#fff;border-color:#b91c1c}
   <button class="bas" id="uretBtn">APQP Oluştur</button>
   <select id="projeSec" style="min-width:220px"></select>
   <button id="silBtn" title="Seçili APQP kaydını sil">Sil</button>
+  <button id="aiBtn" title="Teknik resim okuma (balonlama) için yapay zekâ anahtarı. Ürün seçmeden de girilebilir; yalnız balonlamada kullanılır.">🔑 AI anahtarı</button>
   <button id="temaBtn" title="Açık / koyu tema" style="padding:6px 10px">🌙</button>
 </div>
 
@@ -160,7 +182,6 @@ a.sil-dugme:hover{background:#b91c1c;color:#fff;border-color:#b91c1c}
       <button id="belgeBtn" title="Bu ürünün tüm APQP/PPAP belgelerini yeniden üretir: formlar, kontrol planı, FMEA Excel, MSA ve Cp/Cpk çalışmaları, müşteri PPAP dokümanları">📄 Belgeleri üret</button>
       <button id="tazeleBtn" title="Belge ürettikten sonra basın: Drive'daki yeni dokümanları adımlara bağlar ve FR91'e sonradan eklenen adımları getirir. Kayıt açılırken zaten kendiliğinden çalışır.">🔄 Yenile</button>
       <button id="zipBtn" title="Bu ürünün APQP takibini ve indirilebilir tüm kanıt dokümanlarını tek ZIP dosyasında dışarı aktarır (İndirilenler klasörüne)">⬇ ZIP indir</button>
-      <button id="aiBtn" title="Teknik resim okuma (balonlama) için yapay zekâ anahtarı. Yalnız balonlamada kullanılır.">🔑 AI anahtarı</button>
       <span style="font-size:12px;color:var(--soluk)" id="bDrive"></span>
     </div>
   </div>
@@ -1493,56 +1514,136 @@ async function zipIndir(k) {
 // (balonlama) kullanilir.
 async function aiAyarAc() {
   let mevcut = {};
-  try {
-    mevcut = await ajanJson('/aiayar');
-  } catch (e) { /* ajan kapaliysa bos formla devam */ }
-  const bilgi = mevcut.var
-    ? 'Kayıtlı: ' + (mevcut.saglayici || '—') + ' · ' + (mevcut.model || '—')
-      + ' · anahtar ' + (mevcut.anahtar || '—')
-    : 'Kayıtlı anahtar yok.';
-  const sag = prompt(
-    'TEKNİK RESİM OKUMA (BALONLAMA) — yapay zekâ ayarı\n'
-    + bilgi + '\n\n'
-    + 'Sağlayıcı: gemini | xai\n'
-    + '(Anahtar yalnız balonlamada kullanılır, başka yerde çağrılmaz.)',
-    met(mevcut.saglayici) || 'gemini');
-  if (sag === null) return;
-  const model = prompt('Model adı\n\n'
-    + 'gemini için: gemini-3.5-flash-lite (ölçüldü, ücretsiz kotası geniş)\n'
-    + 'xai için: grok-2-vision-1212',
-    met(mevcut.model) || 'gemini-3.5-flash-lite');
-  if (model === null) return;
-  const anahtar = prompt('API anahtarı\n\n'
-    + (sayi > 1 ? 'Şu an ' + sayi + ' anahtar kayıtlı ve DÖNÜŞÜMLÜ kullanılıyor.\n' : '')
-    + 'Birden fazla anahtar girmek için virgülle ayırın — kota artırmak için\n'
-    + 'dönüşümlü kullanılır (2 anahtar = 2 kat kota).\n'
-    + 'Boş bırakırsanız kayıtlı anahtar(lar) KORUNUR.\n'
-    + 'Anahtar tarayıcıda saklanmaz; bu bilgisayardaki ayar dosyasına yazılır.', '');
-  if (anahtar === null) return;
-  const govde = { saglayici: met(sag).trim() || 'gemini', model: met(model).trim() };
-  const liste = met(anahtar).split(',').map(x => x.trim()).filter(Boolean);
-  if (liste.length) {
-    // "anahtarlar" TAM LISTE olarak yazilir — eskisiyle BIRLESTIRILMEZ.
-    // Aksi halde iptal edilmis/degistirilmis bir anahtar listede kalir ve
-    // rotasyon onu kullanmaya devam eder.
-    govde.anahtarlar = liste;
-    govde.anahtar = liste[0];
+  try { mevcut = await ajanJson('/aiayar'); } catch (e) { /* ajan kapali */ }
+
+  const perde = document.createElement('div');
+  perde.className = 'perde';
+  perde.innerHTML =
+    '<div class="pencere">'
+    + '<h3>🔑 Teknik resim okuma (balonlama) — AI anahtarı</h3>'
+    + '<div class="alt">Anahtar tarayıcıda saklanmaz: yerel ajana gönderilir ve bu '
+    + 'bilgisayardaki ayar dosyasına yazılır. Yalnız balonlamada kullanılır.<br>'
+    + 'Günlük kota <b>proje + model</b> başına — aynı Google Cloud projesindeki ikinci '
+    + 'anahtar kotayı artırmaz, ayrı projede oluşturun.</div>'
+    + '<label>Sağlayıcı</label>'
+    + '<select id="aiSag"><option value="gemini">gemini</option><option value="xai">xai</option></select>'
+    + '<label>Model</label><select id="aiModel"></select>'
+    + '<label>Kayıtlı anahtarlar <span id="aiDurumBilgi" style="font-weight:400;color:var(--soluk)"></span></label>'
+    + '<div id="aiListe"></div>'
+    + '<label>Yeni anahtar ekle — her satıra bir tane (virgülle de olur)</label>'
+    + '<textarea id="aiYeni" placeholder="anahtar1&#10;anahtar2"></textarea>'
+    + '<div class="dugmeler">'
+    + '<button id="aiTest">🔍 Anahtarları test et</button>'
+    + '<button class="bas sag" id="aiKaydet">Kaydet</button>'
+    + '<button id="aiKapat">Kapat</button>'
+    + '</div></div>';
+  document.body.appendChild(perde);
+  const kapat = () => perde.remove();
+  perde.addEventListener('click', e => { if (e.target === perde) kapat(); });
+  perde.querySelector('#aiKapat').addEventListener('click', kapat);
+
+  const sagSec = perde.querySelector('#aiSag');
+  const modelSec = perde.querySelector('#aiModel');
+  sagSec.value = met(mevcut.saglayici) || 'gemini';
+
+  // Silinecek anahtarlarin INDEKSI tutulur: anahtarin kendisi tarayiciya
+  // hic gelmiyor (yalniz maske), silme sirayla yapilir.
+  let silinen = [];
+  let anahtarlar = [];
+
+  function listeCiz() {
+    const k = perde.querySelector('#aiListe');
+    if (!anahtarlar.length) {
+      k.innerHTML = '<div style="font-size:12px;color:var(--soluk);padding:6px 0">'
+        + 'Kayıtlı anahtar yok.</div>';
+      return;
+    }
+    k.innerHTML = '<table class="anahtar-tablo"><tr><th>#</th><th>Anahtar</th>'
+      + '<th>Durum</th><th></th></tr>'
+      + anahtarlar.map((a, i) => '<tr' + (silinen.includes(i) ? ' style="opacity:.4"' : '')
+          + '><td>' + (i + 1) + '</td><td class="k">' + a.anahtar + '</td><td class="'
+          + (a.durum === 'çalışıyor' ? 'dm-tamam' : a.durum === 'kota doldu' ? 'dm-kota'
+             : a.durum ? 'dm-kotu' : '') + '">' + (a.durum || '—') + '</td>'
+          + '<td><a href="#" class="sil-dugme" data-i="' + i + '">'
+          + (silinen.includes(i) ? 'geri al' : 'sil') + '</a></td></tr>').join('')
+      + '</table>';
+    k.querySelectorAll('a[data-i]').forEach(a => a.addEventListener('click', e => {
+      e.preventDefault();
+      const i = +a.dataset.i;
+      silinen = silinen.includes(i) ? silinen.filter(x => x !== i) : silinen.concat(i);
+      listeCiz();
+    }));
   }
-  // liste bossa hicbir alan gonderilmez -> ajan tarafinda dosya oldugu gibi kalir
-  if (govde.saglayici === 'xai') govde.uc = 'https://api.x.ai/v1';
-  try {
-    const bayt = new TextEncoder().encode(JSON.stringify(govde));
-    let ham = '';
-    for (let i = 0; i < bayt.length; i += 8192) ham += String.fromCharCode.apply(null, bayt.subarray(i, i + 8192));
-    const c = await fetch(AJAN + '/aiayar', { method: 'POST', body: btoa(ham) });
-    const j = await c.json();
-    if (!j.ok) throw new Error(j.hata || 'yazılamadı');
-    mesaj('AI ayarı kaydedildi — balonlamada ' + govde.saglayici + ' / '
-      + govde.model + ' kullanılacak.');
-  } catch (e) {
-    mesaj('AI ayarı kaydedilemedi: ' + e.message + ' (yerel ajan çalışıyor mu?)');
+
+  async function modelleriGetir() {
+    modelSec.innerHTML = '';
+    let ad = [];
+    if (sagSec.value === 'gemini') {
+      try {
+        const ml = await ajanJson('/aimodeller');
+        if (ml.ok && ml.modeller) ad = ml.modeller;
+      } catch (e) { /* ajan yoksa elle yazilan model korunur */ }
+    } else {
+      ad = ['grok-2-vision-1212', 'grok-4-vision'];
+    }
+    const simdi = met(mevcut.model);
+    if (simdi && !ad.includes(simdi)) ad.unshift(simdi);
+    if (!ad.length) ad = [simdi || 'gemini-3.1-flash-lite'];
+    ad.forEach(m => {
+      const o = document.createElement('option');
+      o.value = m; o.textContent = m;
+      modelSec.appendChild(o);
+    });
+    modelSec.value = simdi && ad.includes(simdi) ? simdi : ad[0];
   }
+
+  // Ilk cizim: sayidan bos satirlar, sonra test sonucu doldurur
+  anahtarlar = Array.from({ length: mevcut.anahtarSayisi || 0 },
+    (_, i) => ({ anahtar: i === 0 ? met(mevcut.anahtar) || '••••' : '••••', durum: '' }));
+  listeCiz();
+  await modelleriGetir();
+  sagSec.addEventListener('change', modelleriGetir);
+
+  perde.querySelector('#aiTest').addEventListener('click', async () => {
+    const b = perde.querySelector('#aiDurumBilgi');
+    b.textContent = '· test ediliyor…';
+    try {
+      const t = await ajanJson('/aitest');
+      if (t.ok && t.anahtarlar) {
+        anahtarlar = t.anahtarlar.map(x => ({
+          anahtar: x.anahtar,
+          durum: x.durum === 'calisiyor' ? 'çalışıyor' : x.durum }));
+        listeCiz();
+        b.textContent = '· ' + (t.model || '');
+      } else { b.textContent = '· test edilemedi'; }
+    } catch (e) { b.textContent = '· ajan yanıt vermedi'; }
+  });
+
+  perde.querySelector('#aiKaydet').addEventListener('click', async () => {
+    const ekle = perde.querySelector('#aiYeni').value
+      .split(/[\s,;]+/).map(x => x.trim()).filter(Boolean);
+    const govde = { saglayici: sagSec.value, model: modelSec.value };
+    if (sagSec.value === 'xai') govde.uc = 'https://api.x.ai/v1';
+    if (ekle.length) govde.ekle = ekle;
+    if (silinen.length) govde.sil = silinen;
+    try {
+      const bayt = new TextEncoder().encode(JSON.stringify(govde));
+      let ham = '';
+      for (let i = 0; i < bayt.length; i += 8192)
+        ham += String.fromCharCode.apply(null, bayt.subarray(i, i + 8192));
+      const c = await fetch(AJAN + '/aiayar', { method: 'POST', body: btoa(ham) });
+      const j = await c.json();
+      if (!j.ok) throw new Error(j.hata || 'yazılamadı');
+      kapat();
+      mesaj('AI ayarı kaydedildi — ' + govde.saglayici + ' / ' + govde.model
+        + (ekle.length ? ' · ' + ekle.length + ' anahtar eklendi' : '')
+        + (silinen.length ? ' · ' + silinen.length + ' anahtar silindi' : ''));
+    } catch (e) {
+      mesaj('AI ayarı kaydedilemedi: ' + e.message + ' (yerel ajan çalışıyor mu?)');
+    }
+  });
 }
+
 // MUSTERI ADI ELLE DUZELTILEBILIR. LeanSys kontrol planinda cari_adi alani
 // BOS olabiliyor (olculdu: 700.0.450'de tum satirlarda bos) — bu ad VDA_2,
 // PPA kapagi, FR243, FR215 ve QTR gibi MUSTERIYE GIDEN belgelere basiliyor,

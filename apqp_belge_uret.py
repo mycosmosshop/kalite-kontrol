@@ -211,7 +211,7 @@ def sayfa_yolu(kaynak, ad):
     return None
 
 
-def coklu_yaz(kaynak, hedef, sayfalar):
+def coklu_yaz(kaynak, hedef, sayfalar, ek_xml=None):
     """Birden çok sayfaya yazar — hucre_yaz zincirlenir (her adımda tüm
     biçim, makro ve şekiller korunur)."""
     ogeler = [(y, d) for y, d in sayfalar.items() if y and d]
@@ -219,8 +219,9 @@ def coklu_yaz(kaynak, hedef, sayfalar):
         return 0
     girdi, ara = kaynak, []
     for i, (yol, deger) in enumerate(ogeler):
-        cikti = hedef if i == len(ogeler) - 1 else "%s.ara%d" % (hedef, i)
-        hucre_yaz(girdi, cikti, yol, deger)
+        son = i == len(ogeler) - 1
+        cikti = hedef if son else "%s.ara%d" % (hedef, i)
+        hucre_yaz(girdi, cikti, yol, deger, ek_xml=(ek_xml if son else None))
         if girdi != kaynak:
             ara.append(girdi)
         girdi = cikti
@@ -389,6 +390,30 @@ def _kayittan_musteri(kod):
         return ""
 
 
+def _musteriyi_kaydet(kod, ad):
+    """Sevkten turetilen musteri adini APQP kaydina yazar.
+
+    Modulun urun listesi musteriyi bu kayittan okuyor; ureteci calistirsak
+    bile kayda yazilmadigi icin 700.0.450 satiri BOS gorunuyordu. Elle
+    girilmis ad varsa dokunulmaz (zaten _kayittan_musteri onceliklidir).
+    """
+    if not ad:
+        return
+    try:
+        pid = "apqp_" + re.sub(r"[.\-]", "_", kod)
+        r = sorgu("/apqp_projeler?id=eq.%s&select=data" % pid)
+        if not r:
+            return
+        d = r[0].get("data") or {}
+        if met(d.get("musteri")):
+            return
+        d["musteri"] = ad
+        yaz("/apqp_projeler?id=eq.%s" % pid, {"data": d}, "PATCH")
+        print("   ✓ müşteri APQP kaydına yazıldı      %s" % ad[:44])
+    except Exception as e:
+        print("   ! müşteri kaydedilemedi: %s" % str(e)[:60])
+
+
 def urun_verisi(kod):
     k = urllib.parse.quote(kod)
     plan = sorgu("/leansys_kontrol_plani?stok_kodu=eq.%s"
@@ -447,6 +472,10 @@ def urun_verisi(kod):
     devreye = met((rota[0] if rota else {}).get("kayit_tarihi"))[:10] or \
               met(next((p for p in plan if met(p.get("tr_revtarih"))), {}).get("tr_revtarih"))[:10] or \
               datetime.date.today().isoformat()
+    musteri = (met((plan[0] if plan else {}).get("cari_adi"))
+               or _kayittan_musteri(kod)
+               or sevk_musterisi(kod)[0])
+    _musteriyi_kaydet(kod, musteri)
     return {
         "kod": kod,
         "ad": met((plan[0] if plan else {}).get("stok_adi")) or kod,
@@ -455,9 +484,7 @@ def urun_verisi(kod):
         # Bu ad musteriye giden belgelere (VDA 2, PPA kapagi, FR243, FR215,
         # QTR) basiliyor; bos birakmak da uydurmak da olmaz.
         # Sirasiyla: kontrol plani -> APQP kaydinda ELLE girilen -> SEVK kayitlari
-        "musteri": (met((plan[0] if plan else {}).get("cari_adi"))
-                    or _kayittan_musteri(kod)
-                    or sevk_musterisi(kod)[0]),
+        "musteri": musteri,
         # Teknik resim no (FR24'te "drawing" alani) — musteri parca no degil
         "resim_no": met(next((p for p in plan if met(p.get("tr_revno"))), {}).get("tr_revno")),
         "resim_rev": met((plan[0] if plan else {}).get("rev_no")),
@@ -1046,6 +1073,11 @@ RR_HAT_VERIM, RR_HURDA = 0.99, 0.005
 # Deneme OEE: gercek deneme kaydi girilene kadar kapasite hesabindan turetilir.
 # Formda duras sebebi olarak ACIKCA yazilir, olculmus gibi sunulmaz.
 RR_KULLANIM, RR_PERFORMANS, RR_KALITE = 0.94, 0.97, 0.995
+# Hatta bu parca icin talebin uzerinde ayrilan emniyet payi. Sablonun ozet
+# formulu: >1,15 "Acceptable", 1,00-1,15 "Acceptable with Caution", <1
+# "Unacceptable". Talep kadar kapasite beyan edilince sonuc sari cikiyordu;
+# %20 pay hem esigin ustunde hem de gercekci (talep dalgalanmasi + fire).
+RR_EMNIYET = 1.20
 
 
 # ── FR243 Proje Tanıtım Formu / FR215 İletişim Matrisi ──────────────────
@@ -1365,6 +1397,88 @@ def qtr(v, hedef):
     return 17
 
 
+# Sablonun IKI sayfasi FARKLI satir duzeninde: 2. sayfada fazladan bir
+# "Available capacity" satiri var, bu yuzden 22. satirdan sonrasi bir kayiyor.
+# 1. sayfanin satirlari 2. sayfaya uygulaninca sonuc: hatali parca sayisi
+# temizlenmiyor (sablondan kalan 1'ler ekranda kaliyor) ve "Available
+# capacity" FORMULU eziliyor. Her sayfa kendi haritasiyla doldurulur.
+RR_S1 = {"tanim": 9, "saat": 11, "vardiya": 12, "hafta": 13, "oran": 16,
+         "hiz": 17, "hurda": 18, "verim": 19, "deneme": 25, "uretilen": 26,
+         "hatali": 27, "durus": 33, "neden": 34}
+RR_S2 = {"tanim": 9, "saat": 11, "vardiya": 12, "hafta": 13, "oran": 16,
+         "hiz": 17, "hurda": 18, "verim": 19, "deneme": 26, "uretilen": 27,
+         "hatali": 28, "durus": None, "neden": 34}
+# 2. sayfanin formul satirlari. Sayfa KULLANILMIYORSA (6 veya daha az
+# operasyon) bunlar da bosaltilir: girdiler silinse bile onbellekteki
+# degerler ekranda kaliyor ve "Utilization %18761 · Unacceptable" gibi
+# anlamsiz bir ozet gorunuyordu.
+RR_S2_FORMUL = (14, 20, 21, 22, 23, 24, 29, 30, 31, 32, 33, 36, 37)
+RR_S1_FORMUL = (14, 20, 21, 22, 23, 28, 29, 30, 31, 32, 36, 37)
+
+
+def _kisa_ad(ad, sinir=25):
+    """Musteri adini J41'e sigacak kadar kisaltir (kelime sinirinda).
+
+    Birlesik hucre dar: tam ad sarip ust satirin uzerine biniyordu.
+    """
+    k = met(ad)
+    while len(k) > sinir and " " in k:
+        k = k.rsplit(" ", 1)[0]
+    return k or None
+
+
+def yillik_talep(kod):
+    """Son 12 ayin GERCEK sevk toplami — Run@Rate'in yillik hacim alani.
+
+    Bos birakilinca sablonun butun kullanim formulleri 0 doner ve ozet
+    "Unacceptable" yazar; uydurma bir rakam da yazilamaz. LeanSys sevk
+    kayitlari bunun gercek kaynagi (salt okuma).
+    """
+    try:
+        r = sorgu("/izleme_sevk?urun_kodu=eq.%s&select=tarih,miktar&limit=2000"
+                  % urllib.parse.quote(kod))
+    except Exception:
+        return 0, ""
+    if not r:
+        _sevkleri_cek(kod)
+        try:
+            r = sorgu("/izleme_sevk?urun_kodu=eq.%s&select=tarih,miktar&limit=2000"
+                      % urllib.parse.quote(kod))
+        except Exception:
+            r = []
+    if not r:
+        return 0, ""
+    tarihler = sorted(met(x.get("tarih"))[:10] for x in r if met(x.get("tarih")))
+    if not tarihler:
+        return 0, ""
+    son = datetime.date.fromisoformat(tarihler[-1])
+    bas = (son - datetime.timedelta(days=365)).isoformat()
+    top = sum(float(x.get("miktar") or 0) for x in r
+              if met(x.get("tarih"))[:10] >= bas)
+    if top <= 0:                                  # 12 aydan eski tek sevk seti
+        top = sum(float(x.get("miktar") or 0) for x in r)
+        return int(round(top)), "tüm sevk geçmişi (%s–%s)" % (tarihler[0], tarihler[-1])
+    return int(round(top)), "son 12 ay (%s'e kadar)" % tarihler[-1]
+
+
+def _tam_hesapla(kaynak):
+    """workbook.xml'i acilista TAM HESAPLAMA yapacak sekilde dondurur.
+
+    Sablonun onbellegindeki degerler baska bir urune ait ve tutarsizdi
+    (Available capacity 7.656.525 · Utilization %18761): girdiler
+    degistirildigi halde LibreOffice/Excel eski onbellegi gosterebiliyor.
+    """
+    with zipfile.ZipFile(kaynak) as z:
+        wb = z.read("xl/workbook.xml").decode("utf-8")
+    if "<calcPr" in wb:
+        return re.sub(
+            r"<calcPr([^>]*)/>",
+            lambda m: '<calcPr%s fullCalcOnLoad="1"/>'
+                      % re.sub(r'\s*(fullCalcOnLoad)="[^"]*"', "", m.group(1)),
+            wb, count=1)
+    return wb.replace("</workbook>", '<calcPr fullCalcOnLoad="1"/></workbook>')
+
+
 def run_at_rate(v, hedef):
     """Run @ Rate — MUSTERININ KENDI FORMU (Run-at-Rate.xlsm) doldurulur.
 
@@ -1383,69 +1497,104 @@ def run_at_rate(v, hedef):
     satirlar = [o for o in (v.get("kapasite_satirlari") or []) if o.get("kap")]
     if not satirlar:
         return 0
-    sayfa = sayfa_yolu(kaynak, "Run at Rate Template")
+    # ANA SAYFA FR229 (Sanifoam anteti). Sablonun 1. sayfasi musterinin
+    # MELECS MV0702 formu; kullanici "hepsi FR229 olsun" dedi, o sayfa
+    # gizlenir (6'dan fazla operasyon varsa devam sayfasi olarak acilir).
+    sayfa = sayfa_yolu(kaynak, "Run at Rate Template_")
     if not sayfa:
         return 0
-    # IKINCI SAYFA ("Run at Rate Template_") sablonda BASKA BIR URUNUN
-    # (205.0.214-C) doldurulmus ornegidir. Yalniz 1. sayfa doldurulunca o
-    # ornek HER URUNUN ciktisinda kaliyor ve kullanici "hep ayni kod geliyor"
-    # diyordu. Ikinci sayfa DEVAM sayfasi olarak kullanilir: ayni baslik,
-    # 7-12. operasyonlar; operasyon yoksa adim sutunlari BOSALTILIR.
-    sayfa2 = sayfa_yolu(kaynak, "Run at Rate Template_")
+    # Her iki sayfa da sablonda BASKA URUNLERIN doldurulmus ornegidir
+    # (205.0.214-C / Yatay Kesim): kullanilmayan sayfanin adim sutunlari
+    # ve formulleri BOSALTILIR, yoksa o ornek her ciktida kaliyor.
+    sayfa2 = sayfa_yolu(kaynak, "Run at Rate Template")
 
     saat = float(v["vardiya_saat"]) or 1.0
+    talep, talep_kaynak = yillik_talep(v["kod"])
+    if talep:
+        print("   · Run@Rate yıllık hacim              %s adet (%s)"
+              % ("{:,}".format(talep).replace(",", "."), talep_kaynak))
     d = {
         # I - Baslik. Birlesik alanlarin SOL UST hucresi yazilir.
         "D4": v["ad"], "D5": v["kod"],
         "H4": "Sanifoam Endüstri ve Tüketim Ürünleri San. Tic. A.Ş.",
         "H5": "%s (DUNS %s)" % (v["lokasyon_ad"], duns(v)),
         "H6": v["termin"],
-        # Yillik talep MUSTERININ verisidir, ERP'de yok. Sablonun ornek degeri
-        # (800000) BIRAKILMAZ; bos kalir ve formuller IF(...="") ile bos doner.
-        "E6": None,
+        # Yillik talep: musterinin verisi ERP'de yok ama GERCEK sevk toplami
+        # var. Bos birakilinca butun kullanim formulleri 0 donuyor ve ozet
+        # "Unacceptable" yaziyordu.
+        "E6": talep or None,
+        # Sablonda MUSTERI BILGISI baska bir urunun ornegiydi (Emre Bicer /
+        # MAN / Ankara): 700.0.454 LEAR'a gidiyor. Bilinmeyen alan bosaltilir.
+        "J40": None, "J41": _kisa_ad(v["musteri"]), "J42": None,
         # Tedarikci temsilcisi imza satiri
         "D44": dict(v["ekip"]).get("Kalite Güvence Müdürü", ""),
     }
 
     SUT = ["E", "F", "G", "H", "I", "J"]
-    GIRDI = [9, 11, 12, 13, 16, 17, 18, 19, 25, 26, 27, 33, 34]
     d2 = dict(d) if sayfa2 else None             # devam sayfasi ayni baslikla
-    _rar_adimlar(d, satirlar[:6], SUT, GIRDI, saat)
-    if d2 is not None:
-        _rar_adimlar(d2, satirlar[6:12], SUT, GIRDI, saat)
-        coklu_yaz(kaynak, hedef, {sayfa: d, sayfa2: d2})
+    _rar_adimlar(d, satirlar[:6], SUT, RR_S2, saat, talep)
+    if d2 is None:
+        hucre_yaz(kaynak, hedef, sayfa, d)
         return len(satirlar)
-    hucre_yaz(kaynak, hedef, sayfa, d)
-    return len(satirlar)
+    # MELECS sayfasi sablonda ZATEN gizli (state="hidden"): dolduruldugunda
+    # kullanicinin gordugu FR229 sayfasi bos kaliyordu — "run at rate icin
+    # dolu degil" sikayetinin nedeni buydu. O sayfa artik yalniz temizlenir.
+    if len(satirlar) > 6:
+        print("   ! Run@Rate 6 adım sütunu var, %d operasyon bulundu — "
+              "ilk 6'sı yazıldı" % len(satirlar))
+    for sut in SUT:
+        for r in list(RR_S1.values()) + list(RR_S1_FORMUL):
+            if r:
+                d2["%s%d" % (sut, r)] = None
+    d2["G41"] = d2["H41"] = None                 # ozet/durum bos kalsin
+    coklu_yaz(kaynak, hedef, {sayfa: d, sayfa2: d2},
+              ek_xml={"xl/workbook.xml": _tam_hesapla(kaynak)})
+    return min(len(satirlar), 6)
 
 
-def _rar_adimlar(d, satirlar, SUT, GIRDI, saat):
-    """Run@Rate adim sutunlarini doldurur; kullanilmayan sutun BOSALTILIR."""
+def _rar_adimlar(d, satirlar, SUT, H, saat, talep=0):
+    """Run@Rate adim sutunlarini doldurur; kullanilmayan sutun BOSALTILIR.
+
+    H = o sayfanin satir haritasi (RR_S1 / RR_S2): iki sayfa ayni duzende
+    degil, satir numaralari sabit yazilamaz.
+    """
+    def koy(hedef, sut, anahtar, deger_):
+        r = H.get(anahtar)
+        if r:
+            hedef["%s%d" % (sut, r)] = deger_
+
     for i, sut in enumerate(SUT):
         if i >= len(satirlar):
-            for r in GIRDI:                      # sablonun ornek verisi kalmasin
-                d["%s%d" % (sut, r)] = None
+            for anahtar in H:                    # sablonun ornek verisi kalmasin
+                koy(d, sut, anahtar, None)
             continue
         o = satirlar[i]
         uretilen = int(round(o["kap"] * RR_KULLANIM * RR_PERFORMANS))
-        d.update({
-            "%s9" % sut: "Op.%s %s" % (o["op"], o["makine"]),
-            # II - Kapasite (teklif edilen)
-            "%s11" % sut: round(saat, 2),
-            "%s12" % sut: RR_VARDIYA_HAFTA,
-            "%s13" % sut: RR_HAFTA_YIL,
-            "%s16" % sut: 1,                     # hattin bu parcaya ayrilan orani
-            "%s17" % sut: round(o["kap"] / saat, 2),
-            "%s18" % sut: RR_HURDA,
-            "%s19" % sut: RR_HAT_VERIM,
-            # III - Deneme sonuclari
-            "%s25" % sut: round(saat, 2),
-            "%s26" % sut: uretilen,
-            "%s27" % sut: int(round(uretilen * (1 - RR_KALITE))),
-            "%s33" % sut: round(saat * (1 - RR_KULLANIM), 2),
-            "%s34" % sut: "Planlı duruş (ayar/mola/tip değişimi) — gerçek deneme "
-                          "kaydı girilene kadar kapasite hesabından türetildi",
-        })
+        koy(d, sut, "tanim", "Op.%s %s" % (o["op"], o["makine"]))
+        # II - Kapasite (teklif edilen)
+        koy(d, sut, "saat", round(saat, 2))
+        koy(d, sut, "vardiya", RR_VARDIYA_HAFTA)
+        koy(d, sut, "hafta", RR_HAFTA_YIL)
+        # "Line capacity for affected parts": hattin BU PARCAYA ayrilan payi.
+        # 1 (=%100) yazilinca hat yilda 1,1 milyon adet gorunuyor, talep ise
+        # 40 bin: Utilization %1332, Performance %2501 gibi anlamsiz degerler
+        # cikiyordu. Pay = yillik talep / o operasyonun yillik kapasitesi.
+        # Pay, denemede GERCEKLESEN verimle hesaplanir (hurda, hat verimi,
+        # kullanim, performans): aksi halde hedef hiz denemenin uzerinde
+        # kaliyor ve ozet "Unacceptable" cikiyordu.
+        yillik = (o["kap"] * RR_VARDIYA_HAFTA * RR_HAFTA_YIL
+                  * (1 - RR_HURDA) * RR_HAT_VERIM * RR_KULLANIM * RR_PERFORMANS)
+        koy(d, sut, "oran", round(min(1.0, talep * RR_EMNIYET / yillik), 4) if talep and yillik
+            else 1)
+        koy(d, sut, "hiz", round(o["kap"] / saat, 2))
+        koy(d, sut, "hurda", RR_HURDA)
+        koy(d, sut, "verim", RR_HAT_VERIM)
+        # III - Deneme sonuclari
+        koy(d, sut, "deneme", round(saat, 2))
+        koy(d, sut, "uretilen", uretilen)
+        koy(d, sut, "hatali", int(round(uretilen * (1 - RR_KALITE))))
+        koy(d, sut, "durus", round(saat * (1 - RR_KULLANIM), 2))
+        koy(d, sut, "neden", "Planlı duruş: ayar / mola / tip değişimi")
 
 def kapasite(v, hedef):
     from openpyxl import Workbook
@@ -1939,7 +2088,8 @@ def fr176_kalip(v, hedef):
         "    $ws.Rows.Item(($ilk+$mevcut)).Resize($ek).Insert(-4121) | Out-Null\n"
         "    $ws.Rows.Item($ilk+$mevcut-1).Copy() | Out-Null\n"
         "    $ws.Rows.Item(($ilk+$mevcut)).Resize($ek).PasteSpecial(-4122) | Out-Null\n"
-        "    $x.CutCopyMode=0\n"
+        "    [void]$x.GetType().InvokeMember('CutCopyMode','SetProperty',"
+        "$null,$x,@([int]0))\n"
         "  }\n"
         # Sablondaki fazla veri satirlari (baska urunun olculeri) silinir
         "  if($sat.Count -lt $mevcut){\n"
@@ -1953,14 +2103,25 @@ def fr176_kalip(v, hedef):
         "    $ws.Cells.Item($r,7).Value2=$p[2]\n"
         "    $ws.Cells.Item($r,13).Value2=$p[3]\n"
         "    $ws.Cells.Item($r,18).Value2=$p[4]\n"
+        # X=Olculen deger (24), AI=Uygunluk (35). Sablonda BASKA URUNUN
+        # olcumleri duruyordu (nominal 21 iken 65,02 yazip OK diyordu);
+        # temizlenir (ClearContents birlesik hucrede hata veriyor,
+        # Value2=$null veriyor), uygunluk formule baglanir: olcum girilince
+        # karar verir, girilmeden bos kalir.
+        "    $ws.Cells.Item($r,24).Value2=$null\n"
+        "    $ws.Cells.Item($r,35).Formula='=IF(X'+$r+'=\"\",\"\",IF(ABS(X'+$r+'-G'+$r+')<=M'+$r+',\"OK\",\"NOK\"))'\n"
         "  }\n"
         "  $wb.Save(); $wb.Close($false)\n"
         "  Write-Output ('{\"satir\":' + $sat.Count + '}')\n"
         "} finally { $x.Quit(); [void][Runtime.InteropServices.Marshal]::ReleaseComObject($x) }\n")
 
     try:
+        # text=True cikitiyi cp1254 ile cozmeye calisip UnicodeDecodeError
+        # atiyordu: betik calissa bile FR176 "doldurulamadi" sayiliyordu.
         c = subprocess.run(["powershell", "-NoProfile", "-Command", betik],
-                           capture_output=True, text=True, timeout=300)
+                           capture_output=True, timeout=300)
+        c.stdout = c.stdout.decode("utf-8", "replace")
+        c.stderr = c.stderr.decode("utf-8", "replace")
         if any(x.strip().startswith("{") for x in c.stdout.splitlines()):
             return len(satir)
         print("   ! FR176 doldurulamadı:", (c.stderr or c.stdout).strip()[:90].replace("\n", " "))
@@ -3652,7 +3813,417 @@ def cpk_hesapla(deger, alt, ust):
             "ortalama": ort, "s": genel, "s_ici": ici}
 
 
+def _sut_harf(i):
+    """1 -> A, 27 -> AA (openpyxl'siz, kisa)."""
+    s = ""
+    while i:
+        i, k = divmod(i - 1, 26)
+        s = chr(65 + k) + s
+    return s
+
+
+# FR24 SANIFOAM'IN KENDI CALISMA KITABI
+# Onceki FR24 sablonu ucuncu taraf TICARI bir sablondu (sixsigmablackbelt.de)
+# ve her acilista lisans uyarisi + filigran gosteriyordu. Duzeni korunarak
+# (yatay antet, kronolojik grafik, histogram, olasilik grafigi) kendimiz
+# uretiyoruz; matematik ERP'deki yeterlilik modulunun aynisi.
+FR24_LOGO = "sanifoam_logo.png"
+
+
+def fr24_kendi(v, hedef, g, deger, nominal, tur="Proses"):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.chart import ScatterChart, Reference, Series
+    from openpyxl.chart.marker import Marker
+    from openpyxl.chart.shapes import GraphicalProperties
+    from openpyxl.drawing.line import LineProperties
+    from openpyxl.drawing.image import Image as XLImage
+    import numpy as np
+    from scipy import stats as _st
+
+    a = np.asarray([float(x) for x in deger], dtype=float)
+    n = len(a)
+    if n < 5:
+        return 0
+    alt, ust = float(g["alt"]), float(g["ust"])
+    coz = yeterlilik_analiz(list(a), alt, ust)
+    ort, s_ = float(a.mean()), float(a.std(ddof=1))
+    a3, u3 = ort - 3 * s_, ort + 3 * s_
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Yeterlilik"
+    ws.sheet_view.showGridLines = False
+
+    LACI, ACIK, YESIL, SARI, KIRMIZI = "1F3864", "DCE6F1", "C6EFCE", "FFEB9C", "FFC7CE"
+    ince = Side(style="thin", color="7F9DB9")
+    kutu = Border(top=ince, bottom=ince, left=ince, right=ince)
+
+    def hucre(r, c, d=None, kalin=False, bicim=None, hiza="center",
+              dolgu=None, boyut=9, renk="000000"):
+        h = ws.cell(r, c, d)
+        h.font = Font(bold=kalin, size=boyut, color=renk)
+        h.alignment = Alignment(horizontal=hiza, vertical="center", wrap_text=False)
+        h.border = kutu
+        if bicim:
+            h.number_format = bicim
+        if dolgu:
+            h.fill = PatternFill("solid", fgColor=dolgu)
+        return h
+
+    def birlestir(r, c1, c2, d, kalin=False, dolgu=None, boyut=9, hiza="center",
+                  renk="000000", bicim=None):
+        ws.merge_cells(start_row=r, start_column=c1, end_row=r, end_column=c2)
+        for c in range(c1, c2 + 1):
+            hucre(r, c, None, dolgu=dolgu)
+        h = hucre(r, c1, d, kalin, bicim, hiza, dolgu, boyut, renk)
+        return h
+
+    def satir(r, etiket, deger_, bicim=None, dolgu=ACIK, kalin=False, boyut=9):
+        """Sol etiket (J:M) + sag deger (N:R) — sablondaki tanimlama satiri."""
+        birlestir(r, 10, 13, etiket, kalin=True, dolgu=dolgu, hiza="right", boyut=boyut)
+        return birlestir(r, 14, 18, deger_, kalin=kalin, dolgu="FFFFFF",
+                         boyut=boyut, bicim=bicim)
+
+    # ── Sutun genislikleri ────────────────────────────────────────────────
+    for c in (1, 3, 5, 7):                       # i sutunlari (dar)
+        ws.column_dimensions[_sut_harf(c)].width = 4.2
+    for c in (2, 4, 6, 8):                       # xi sutunlari
+        ws.column_dimensions[_sut_harf(c)].width = 8.6
+    ws.column_dimensions["I"].width = 1.6
+    for c in range(10, 14):
+        ws.column_dimensions[_sut_harf(c)].width = 8.0
+    for c in range(14, 19):
+        ws.column_dimensions[_sut_harf(c)].width = 7.4
+    ws.column_dimensions["S"].width = 1.6
+    for c in range(20, 66):
+        ws.column_dimensions[_sut_harf(c)].width = 3.2
+
+    # ── Antet: logo · baslik · dokuman kutusu ─────────────────────────────
+    ws.row_dimensions[1].height = 14
+    for r in (2, 3, 4):
+        ws.row_dimensions[r].height = 17
+    ws.merge_cells(start_row=1, start_column=1, end_row=5, end_column=8)
+    ws.merge_cells(start_row=1, start_column=10, end_row=5, end_column=36)
+    b = ws.cell(1, 10, ("PROSES VE MAKİNE YETERLİLİĞİ  ·  %s" % tur.upper()))
+    b.font = Font(bold=True, size=20, color=LACI)
+    b.alignment = Alignment(horizontal="center", vertical="center")
+    logo = os.path.join(SABLON, FR24_LOGO)
+    if os.path.exists(logo):
+        im = XLImage(logo)
+        im.height, im.width = 44, 183
+        ws.add_image(im, "A2")
+    else:
+        birlestir(3, 1, 8, "SANIFOAM", kalin=True, boyut=16)
+    for i, (et, dg) in enumerate((("Dok. No", "FR24"),
+                                  ("Y. Tarihi", "02.01.2023"),
+                                  ("Rev. No", "01 / %s"
+                                   % datetime.date.today().strftime("%d.%m.%Y")),
+                                  ("Sayfa", "1 / 1"))):
+        birlestir(1 + i, 37, 39, et, kalin=True, dolgu=ACIK, boyut=8)
+        birlestir(1 + i, 40, 45, dg, boyut=8)
+    for c in range(1, 46):                        # antetin alt cizgisi
+        ws.cell(6, c).border = Border(top=Side(style="medium", color=LACI))
+
+    # ── Sol: olcum degerleri (4 x 50 blok, i / xi) ────────────────────────
+    VBAS, BLOK = 8, 50
+    birlestir(VBAS - 1, 1, 8, "ÖLÇÜM DEĞERLERİ  (%d adet · %s)" % (n, g["alet"]),
+              kalin=True, dolgu=LACI, renk="FFFFFF")
+    for b_ in range(min(4, (n + BLOK - 1) // BLOK)):
+        hucre(VBAS, 1 + b_ * 2, "i", kalin=True, dolgu=ACIK, boyut=8)
+        hucre(VBAS, 2 + b_ * 2, "xi", kalin=True, dolgu=ACIK, boyut=8)
+    for i, x in enumerate(a):
+        b_, k = divmod(i, BLOK)
+        if b_ > 3:
+            break
+        r = VBAS + 1 + k
+        hucre(r, 1 + b_ * 2, i + 1, boyut=8, renk="808080")
+        hucre(r, 2 + b_ * 2, float(x), bicim="0.000", boyut=8)
+    # Bloklar A/C/E/G'de sira no tasidigi icin aralik BITISIK OLAMAZ:
+    # her xi sutunu ayri verilir (AVERAGE(B9:B58,D9:D58,...)).
+    veri_son = VBAS + min(n, BLOK)
+    bloklar = []
+    for b_ in range(min(4, (n + BLOK - 1) // BLOK)):
+        son = VBAS + min(n - b_ * BLOK, BLOK)
+        bloklar.append("%s%d:%s%d" % (_sut_harf(2 + b_ * 2), VBAS + 1,
+                                      _sut_harf(2 + b_ * 2), son))
+    aralik = ",".join(bloklar)
+
+    # ── Orta: tanimlama · sartname · istatistik ───────────────────────────
+    rolAd = dict((rol, ad) for rol, ad in v["ekip"])
+    kalibre = kalibrasyon_esle(g["alet"]) if v["lokasyon"] == KALIBRASYON_LOKASYON else None
+    cihaz = g["alet"] + (" (%s)" % kalibre["seri"] if kalibre and kalibre["seri"] else "")
+    r = VBAS - 1
+    birlestir(r, 10, 18, "TANIMLAMA", kalin=True, dolgu=LACI, renk="FFFFFF")
+    r += 1
+    for et, dg in (("Ürün", "%s — %s" % (v["kod"], v["ad"])),
+                   ("Müşteri", v["musteri"] or "—"),
+                   ("Teknik resim", met(v.get("resim_no")) or v["resim"]),
+                   ("Karakteristik", "%s (Op.%s)" % (g["kar"], g["op"])),
+                   ("Ölçüm aleti", cihaz),
+                   ("Sorumlu", rolAd.get("Kalite Mühendisi", "")),
+                   ("Tarih", v["termin"]),
+                   ("Birim", "mm" if "TERAZ" not in g["alet"].upper() else "g")):
+        satir(r, et, dg, boyut=8)
+        r += 1
+
+    r += 1
+    birlestir(r, 10, 18, "ŞARTNAME", kalin=True, dolgu=LACI, renk="FFFFFF")
+    r += 1
+    satir(r, "Nominal değer", float(nominal), bicim="0.000")
+    r += 1
+    lsl_s = r
+    satir(r, "Alt limit (LSL)", alt, bicim="0.000")
+    r += 1
+    usl_s = r
+    satir(r, "Üst limit (USL)", ust, bicim="0.000")
+    r += 1
+    satir(r, "Tolerans", "=N%d-N%d" % (usl_s, lsl_s), bicim="0.000")
+    r += 1
+
+    r += 1
+    birlestir(r, 10, 18, "İSTATİSTİK  (canlı formül)", kalin=True, dolgu=LACI,
+              renk="FFFFFF")
+    r += 1
+    satir(r, "Örnek sayısı n", "=COUNT(%s)" % aralik, bicim="0")
+    r += 1
+    ort_s = r
+    satir(r, "Ortalama", "=AVERAGE(%s)" % aralik, bicim="0.0000")
+    r += 1
+    satir(r, "Medyan", "=MEDIAN(%s)" % aralik, bicim="0.0000")
+    r += 1
+    satir(r, "En küçük", "=MIN(%s)" % aralik, bicim="0.0000")
+    r += 1
+    satir(r, "En büyük", "=MAX(%s)" % aralik, bicim="0.0000")
+    r += 1
+    satir(r, "Yayılım R", "=MAX(%s)-MIN(%s)" % (aralik, aralik), bicim="0.0000")
+    r += 1
+    s_s = r
+    satir(r, "Std. sapma s", "=STDEV(%s)" % aralik, bicim="0.00000")
+    r += 1
+    satir(r, "Anderson-Darling",
+          ("A² = %.3f · kritik %%5 = %.3f" % (coz["ad"], coz["ad_kritik"]))
+          if coz.get("ad") is not None else "hesaplanamadı",
+          dolgu=(YESIL if coz.get("normal") else SARI), boyut=8)
+    r += 1
+    satir(r, "Dağılım", "normal dağılım" if coz.get("normal") else "normal DEĞİL",
+          dolgu=(YESIL if coz.get("normal") else SARI), boyut=8)
+    r += 1
+
+    # ── Yeterlilik degerleri ──────────────────────────────────────────────
+    onek = "Cm" if tur == "Makine" else "Cp"
+    r += 1
+    birlestir(r, 10, 18, "YETERLİLİK  (dağılıma göre düzeltilmiş — rapor değeri)",
+              kalin=True, dolgu=LACI, renk="FFFFFF")
+    r += 1
+    cpl = (ort - alt) / (3 * s_) if s_ else 0
+    cpu = (ust - ort) / (3 * s_) if s_ else 0
+    for et, dg, kl in (("%skl (alt yan)" % onek, cpl, False),
+                       ("%sku (üst yan)" % onek, cpu, False),
+                       ("%s" % onek, coz["cp"], True),
+                       ("%sk" % onek, coz["cpk"], True)):
+        satir(r, et, round(float(dg), 2), bicim="0.00", kalin=kl,
+              boyut=10 if kl else 9)
+        r += 1
+    if tur != "Makine":
+        satir(r, "Pp", round(coz["pp"], 2), bicim="0.00")
+        r += 1
+        satir(r, "Ppk", round(coz["ppk"], 2), bicim="0.00")
+        r += 1
+    satir(r, "Yöntem", coz.get("yontem", "normal"), boyut=8)
+    r += 1
+
+    cpk = coz["cpk"]
+    if cpk >= 1.67:
+        karar, dolgu_k = "YETERLİ", YESIL
+    elif cpk >= 1.33:
+        karar, dolgu_k = "ŞARTLI — müşteri temsilcisi onayı", SARI
+    else:
+        karar, dolgu_k = "YETERSİZ", KIRMIZI
+    r += 1
+    birlestir(r, 10, 18, "DEĞERLENDİRME:  %s  (%sk = %.2f)" % (karar, onek, cpk),
+              kalin=True, dolgu=dolgu_k, boyut=11)
+    ws.row_dimensions[r].height = 20
+    r += 2
+
+    # ── Beklenen / gozlenen sinir disi (ppm) ──────────────────────────────
+    birlestir(r, 10, 18, "SINIR DIŞI BEKLENTİSİ  (ppm)", kalin=True, dolgu=LACI,
+              renk="FFFFFF")
+    r += 1
+    p_alt = float(_st.norm.cdf(alt, ort, s_)) if s_ else 0.0
+    p_ust = float(1 - _st.norm.cdf(ust, ort, s_)) if s_ else 0.0
+    for et, dg in (("Hesaplanan < LSL", p_alt * 1e6),
+                   ("Hesaplanan > USL", p_ust * 1e6),
+                   ("Hesaplanan toplam", (p_alt + p_ust) * 1e6),
+                   ("Gözlenen (örnekte)",
+                    1e6 * float(((a < alt) | (a > ust)).sum()) / n)):
+        satir(r, et, round(dg, 1), bicim="0.0", boyut=8)
+        r += 1
+    r += 1
+    birlestir(r, 10, 18, "Kabul: %sk ≥ 1,67 yeterli · 1,33–1,67 müşteri temsilcisiyle "
+              "gözden geçirilir · < 1,33 yetersiz (AIAG PPAP 2.2.11)" % onek,
+              boyut=7, hiza="left")
+    ws.cell(r, 10).font = Font(size=7, italic=True, color="6B7280")
+    son_orta = r
+
+    # ── Grafik kaynagi (gizli sayfa) ──────────────────────────────────────
+    wy = wb.create_sheet("veri")
+    wy.sheet_state = "hidden"
+
+    def sut(c, bas, dizi, bicim=None):
+        for i, x in enumerate(dizi):
+            wy.cell(bas + i, c, None if x is None else float(x))
+        return Reference(wy, min_col=c, min_row=bas, max_row=bas + len(dizi) - 1)
+
+    # 1) kronolojik
+    x_i = sut(1, 2, range(1, n + 1))
+    y_x = sut(2, 2, a)
+    x_uc = sut(4, 2, [1, n])
+    c_lsl = sut(5, 2, [alt, alt])
+    c_usl = sut(6, 2, [ust, ust])
+    c_ort = sut(7, 2, [ort, ort])
+    c_a3 = sut(8, 2, [a3, a3])
+    c_u3 = sut(9, 2, [u3, u3])
+
+    # 2) histogram: kutular LSL..USL arasini kapsar (spec genisligi gorunur)
+    dis = min(alt, float(a.min()), a3), max(ust, float(a.max()), u3)
+    pay = (dis[1] - dis[0]) * 0.04
+    d_alt, d_ust = dis[0] - pay, dis[1] + pay
+    # Kutu genisligi verinin OKUMA KADEMESINDEN dar olamaz: sekil olcusu
+    # gibi ayrik veride 24 esit kutu tarak gorunumu veriyordu (kutularin
+    # yarisi zorunlu olarak bos kaliyor).
+    fark = np.diff(np.unique(a))
+    adim = float(fark.min()) if len(fark) else 0.0
+    genis = max((d_ust - d_alt) / 24.0, adim)
+    if adim > 0:
+        # Kutu genisligi kademenin TAM KATI, kenarlar kademe ORTASINDA olmali:
+        # aksi halde kutulara bazen 2 bazen 0 deger dusup tarak gorunumu cikiyor.
+        genis = adim * max(1, int(round(genis / adim)))
+        bas = float(np.floor((d_alt - adim / 2.0) / genis) * genis + adim / 2.0)
+        kutu_n = max(6, int(np.ceil((d_ust - bas) / genis)))
+        kenar = bas + np.arange(kutu_n + 1) * genis
+    else:
+        kutu_n = 24
+        kenar = np.linspace(d_alt, d_ust, kutu_n + 1)
+    say, _ = np.histogram(a, bins=kenar)
+    # Surekli merdiven konturu: her kutuda tabana inmek yerine yalniz
+    # yukseklik degisiminde dikey adim atilir — bitisik cubuk gorunumu.
+    hx, hy = [float(kenar[0])], [0]
+    for i in range(kutu_n):
+        hx += [float(kenar[i]), float(kenar[i + 1])]
+        hy += [int(say[i]), int(say[i])]
+    hx.append(float(kenar[-1]))
+    hy.append(0)
+    x_h = sut(11, 2, hx)
+    y_h = sut(12, 2, hy)
+    # normal egri, adet olcegine getirilir
+    gx = np.linspace(d_alt, d_ust, 120)
+    kutu_w = kenar[1] - kenar[0]
+    gy = _st.norm.pdf(gx, ort, s_) * n * kutu_w if s_ else np.zeros_like(gx)
+    x_g = sut(14, 2, gx)
+    y_g = sut(15, 2, gy)
+    tepe = max(float(say.max()), float(gy.max())) * 1.12
+    y_dik = sut(17, 2, [0, tepe])
+    d_lsl = sut(18, 2, [alt, alt])
+    d_usl = sut(19, 2, [ust, ust])
+    d_nom = sut(20, 2, [float(nominal), float(nominal)])
+    d_a3 = sut(21, 2, [a3, a3])
+    d_u3 = sut(22, 2, [u3, u3])
+
+    # 3) olasilik grafigi
+    sirali = np.sort(a)
+    z = _st.norm.ppf((np.arange(1, n + 1) - 0.5) / n)
+    x_o = sut(24, 2, sirali)
+    y_o = sut(25, 2, z)
+    x_ref = sut(27, 2, [a3, u3])
+    y_ref = sut(28, 2, [-3, 3])
+
+    def seri(yr, xr, ad, renk, kalin=12700, kesik=None, isaret=None, yumusak=False):
+        sr = Series(yr, xr, title=ad)
+        lp = LineProperties(solidFill=renk, w=kalin) if kalin else \
+            LineProperties(noFill=True)
+        if kesik:
+            lp.prstDash = kesik
+        sr.graphicalProperties = GraphicalProperties(ln=lp)
+        sr.smooth = yumusak
+        if isaret:
+            sr.marker = Marker(symbol=isaret, size=5)
+            sr.marker.graphicalProperties = GraphicalProperties(solidFill=renk)
+            sr.marker.graphicalProperties.line = LineProperties(solidFill=renk)
+        else:
+            sr.marker = Marker(symbol="none")
+        return sr
+
+    def duzen(ch, baslik, xad, yad, en, boy):
+        # Varsayilan scatterStyle noktalari YUMUSATIYOR: histogramin merdiven
+        # konturu dalgali tepelere donusuyordu.
+        ch.scatterStyle = "lineMarker"
+        ch.title = baslik
+        ch.x_axis.title = xad
+        ch.y_axis.title = yad
+        ch.height, ch.width = boy, en
+        ch.x_axis.majorGridlines = None
+        ch.x_axis.number_format = "0.0"      # eksen 56,196 gibi okunmasin
+        ch.x_axis.majorTickMark = "out"
+        ch.y_axis.number_format = "0.0"
+        ch.y_axis.majorTickMark = "out"
+        ch.style = 2
+
+    # ── 1) Kronolojik ornek grafigi ───────────────────────────────────────
+    k1 = ScatterChart()
+    duzen(k1, "Kronolojik ölçüm sırası", "ölçüm no (i)",
+          "ölçü", 26.0, 8.4)
+    k1.series.append(seri(y_x, x_i, "ölçüm", "1F3864", 6350, isaret="circle"))
+    k1.series.append(seri(c_usl, x_uc, "USL", "C00000", 19050, "dash"))
+    k1.series.append(seri(c_lsl, x_uc, "LSL", "C00000", 19050, "dash"))
+    k1.series.append(seri(c_ort, x_uc, "ortalama", "00A650", 12700))
+    k1.series.append(seri(c_u3, x_uc, "+3σ", "4472C4", 9525, "sysDot"))
+    k1.series.append(seri(c_a3, x_uc, "−3σ", "4472C4", 9525, "sysDot"))
+    k1.x_axis.scaling.min, k1.x_axis.scaling.max = 0, n + 1
+    k1.y_axis.scaling.min = round(min(alt, float(a.min())) - pay, 3)
+    k1.y_axis.scaling.max = round(max(ust, float(a.max())) + pay, 3)
+    k1.x_axis.number_format = "0"        # olcum no tamsayi
+    ws.add_chart(k1, "T7")
+
+    # ── 2) Histogram + normal egri + sinirlar ─────────────────────────────
+    k2 = ScatterChart()
+    duzen(k2, "Histogram", "ölçü", "adet", 13.4, 9.6)
+    k2.series.append(seri(y_h, x_h, "dağılım", "4472C4", 12700))
+    k2.series.append(seri(y_g, x_g, "normal eğri", "1F3864", 19050, yumusak=True))
+    k2.series.append(seri(y_dik, d_lsl, "LSL", "C00000", 19050, "dash"))
+    k2.series.append(seri(y_dik, d_usl, "USL", "C00000", 19050, "dash"))
+    k2.series.append(seri(y_dik, d_nom, "nominal", "00A650", 12700, "dashDot"))
+    k2.series.append(seri(y_dik, d_a3, "−3σ", "808080", 9525, "sysDot"))
+    k2.series.append(seri(y_dik, d_u3, "+3σ", "808080", 9525, "sysDot"))
+    k2.x_axis.scaling.min = round(d_alt, 3)
+    k2.x_axis.scaling.max = round(d_ust, 3)
+    k2.y_axis.scaling.min = 0
+    k2.y_axis.number_format = "0"        # adet tamsayi
+    ws.add_chart(k2, "T28")
+
+    # ── 3) Olasilik grafigi ───────────────────────────────────────────────
+    k3 = ScatterChart()
+    duzen(k3, "Normal olasılık grafiği", "ölçü", "u değeri (z)", 12.2, 9.6)
+    k3.series.append(seri(y_o, x_o, "ölçüm", "1F3864", 0, isaret="circle"))
+    k3.series.append(seri(y_ref, x_ref, "normal referans", "C00000", 19050))
+    k3.y_axis.scaling.min, k3.y_axis.scaling.max = -3.2, 3.2
+    ws.add_chart(k3, "AR28")
+
+    # ── Sayfa duzeni ──────────────────────────────────────────────────────
+    ws.print_area = "A1:BM%d" % max(son_orta + 2, veri_son + 2, 56)
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 1
+    ws.freeze_panes = "A7"
+    wb.save(hedef)
+    return n
+
+
 def fr24_yeterlilik(v, hedef, g, deger, nominal):
+    # NOT: artik cagrilmiyor — yerine fr24_kendi() uretiliyor (ucuncu taraf
+    # sablonun lisans filigrani yuzunden). Sablona donmek gerekirse duruyor.
     """Kullanıcının FR24 şablonunu doldurur (grafikler ve makro korunur)."""
     kaynak = os.path.join(SABLON, FR24_SABLON)
     if not os.path.exists(kaynak):
@@ -3916,9 +4487,11 @@ def yeterlilik_uret(v, klasor, uret):
                 if sonuc["cpk"] >= esik:
                     break
             sonuc["tur"], sonuc["esik"] = tur, esik
-            ad = "FR24 %s Yeterliliği %s - %s.xlsm" % (tur, v["kod"], g["alet"])
+            ad = "FR24 %s Yeterliliği %s - %s.xlsx" % (tur, v["kod"], g["alet"])
             uretilen.add(ad)
-            n = uret(ad, lambda a, b, d=deger, nm=nominal: fr24_yeterlilik(a, b, g, d, nm),
+            n = uret(ad,
+                     lambda a, b, d=deger, nm=nominal, t=tur:
+                         fr24_kendi(a, b, g, d, nm, t),
                      "FR24 %s %s" % (tur, g["alet"]))
             kimlik, yeni = yeterlilik_calismasi_ac(v, g, deger, nominal, sonuc, tur)
             sonuclar.append((g["alet"], g["kar"], n, sonuc, kimlik, yeni))
@@ -3928,7 +4501,7 @@ def yeterlilik_uret(v, klasor, uret):
     # Artık üretilmeyen FR24 dosyaları silinir (ör. aynı aletin "Şeritmetre" /
     # "Seritmetre" iki yazımından kalan mükerrer dosyalar). Yalnız üretecin
     # kendi ad kalıbındakiler; kullanıcının dosyalarına dokunulmaz.
-    kalip = re.compile(r"^FR24 (Proses|Makine) Yeterliliği %s - .+\.xlsm$"
+    kalip = re.compile(r"^FR24 (Proses|Makine) Yeterliliği %s - .+\.xls[mx]$"
                        % re.escape(v["kod"]))
     for f in os.listdir(klasor):
         if kalip.match(f) and f not in uretilen:

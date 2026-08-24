@@ -99,6 +99,27 @@ ISTEM = (
     "Yalnız JSON dizisi döndür, başka hiçbir şey yazma.")
 
 
+# GUNLUK KOTA MODEL BASINA: 429 govdesindeki ihlal
+# "GenerateRequestsPerDayPerProjectPerModel-FreeTier" — yani bir modelin
+# gunluk hakki bitince AYNI anahtarla BASKA model hala calisiyor (olculdu:
+# 3.5-flash-lite doluyken 3.1-flash-lite ve flash-lite-latest calisiyordu).
+# Ayni projedeki ikinci anahtar kotayi ARTIRMAZ; model degistirmek artirir.
+YEDEK_MODELLER = ("gemini-3.1-flash-lite", "gemini-flash-lite-latest",
+                  "gemini-3-flash-preview", "gemini-3.5-flash-lite")
+_model_sirasi = [0]          # kota dolunca ilerler, surec boyunca korunur
+
+
+def _sonraki_model(ayar):
+    """Kotasi dolan modelden sonraki yedege gecer; yoksa None."""
+    simdiki = ayar.get("model") or ""
+    havuz = [m for m in YEDEK_MODELLER if m != simdiki]
+    if _model_sirasi[0] >= len(havuz):
+        return None
+    m = havuz[_model_sirasi[0]]
+    _model_sirasi[0] += 1
+    return m
+
+
 def _gemini(b64, ayar, anahtar=None):
     # flash-lite: ucretsiz katmanda kotasi belirgin daha genis, ayni
     # cizim parcasinda ayni 15 olcuyu dogru okudu.
@@ -218,6 +239,16 @@ def olculeri_oku(im, log=None):
                 except urllib.error.HTTPError as e:
                     if e.code == 429:
                         SON_DURUM = "kota"
+                        # Gunluk kota MODEL basina: yedek modele gec, tum
+                        # okumayi bir modelin bitmis hakki yuzunden birakma.
+                        yeni_model = _sonraki_model(ayar)
+                        if yeni_model:
+                            if log:
+                                log("   · AI kotası doldu, yedek modele geçildi: %s"
+                                    % yeni_model)
+                            ayar["model"] = yeni_model
+                            SON_DURUM = "tamam"
+                            continue
                         if deneme < DENEME - 1 and len(anahtarlar) > 1:
                             # Baska anahtar hemen denenir, sunucunun soyledigi
                             # sureyi BEKLEMEDEN — o anahtarin kotasi degil
