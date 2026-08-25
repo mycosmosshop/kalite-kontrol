@@ -239,7 +239,13 @@ def _olcu_disi(s, W, H, capa):
     # ciziliyor; kenar harfleri paya kil payi girmiyordu.
     if x < W * 0.032 or x > W * 0.978 or y < H * 0.022 or y > H * 0.972:
         return True
-    if x > W * 0.655 and y > H * 0.735:
+    # ANTET BOLGESI DARALTILDI. Olculdu (700.0.450, 6622x4677): eski kural
+    # x>%65,5 ve y>%73,5 idi — sag alt CEYREGIN buyuk kismi. Parcanin sag
+    # alt kosesindeki 45 / 45 derece / 75 olculeri (x~4500, y~3600) bu
+    # yuzden yazi kutusu listesine hic girmiyordu; model okusa bile
+    # eslesecek kutu yoktu, plan tabanli son guvence de bulamiyordu.
+    # Gercek antet cok daha disarida (x>%85, y>%88).
+    if x > W * 0.80 and y > H * 0.80:
         return True
     if x > W * 0.825 and H * 0.49 < y < H * 0.78:
         return True
@@ -800,6 +806,13 @@ def _ai_olculeri(im, plan_degerleri=()):
                     continue
             if secilen is None and yakinlar:
                 secilen = yakinlar[0]          # en yakın kutu
+        # COK UZAK KUTU ESLESMESI KABUL EDILMEZ. Olculdu (217.0.017):
+        # uydurma "10" okumalari kendilerinden 219-287 px uzaktaki
+        # kutulara baglaniyordu; gercek eslesmeler 10-124 px araliginda.
+        if secilen is not None:
+            _k = kutu[secilen]
+            if ((_k["x"] - mx) ** 2 + (_k["y"] - my) ** 2) ** 0.5 > 160:
+                secilen = None
         # CIZGI, YAZI KUTUSU DEGILDIR. Olculdu (700.0.450): uydurma "10"
         # okumasi 58x10 px'lik bir kutuya oturmustu — o, dikdortgenin ince
         # KENAR CIZGISI. Ayni cizimdeki gercek olcu kutulari 29-53 px
@@ -1012,46 +1025,6 @@ def _sayiya(d):
         return None
 
 
-def _yaricap_capa_mi(d):
-    """Olcu YARICAP/CAP mi? (R15, ø8 gibi)
-
-    R15 ile 15 AYRI olculerdir ama _sayiya() R onekini atiyor; yineleme
-    suzgeci plandaki "15" kotasini dogrusal olcuye harcayip R15'i
-    eliyordu (kullanici sag alt kosede balonsuz kalan R15'i gosterdi).
-    """
-    t = str(d if d is not None else "").strip().upper()
-    return t.startswith("R") or t.startswith("Ø") or t.startswith("O")
-
-
-def _fazla_yinelemeleri_ele(olcu, plan_deger):
-    """Bir deger kontrol planinda KAC KEZ geciyorsa o kadar balonlanir.
-
-    Olculdu (700.0.454, gemini-3.1-flash-lite): "10 +/- 0.3" olcusu UC kez
-    balonlanmisti (31, 32, 33) — modeli degistirince okuma sayisi 34'ten
-    45'e cikti ama fazlasi ayni olcunun tekrariydi. Plan dogruluk kaynagi:
-    plandaki adet, tavan.
-    """
-    if not plan_deger:
-        return olcu
-    sayim, kullanildi = {}, {}
-    for d in plan_deger:
-        a = "%g" % float(d)
-        sayim[a] = sayim.get(a, 0) + 1
-    kalan = []
-    for o in olcu:
-        if _yaricap_capa_mi(o[0]):
-            kalan.append(o)                   # R/ø: plan kotasini harcamaz
-            continue
-        f = _sayiya(o[0])
-        a = "%g" % f if f is not None else None
-        if a in sayim:
-            if kullanildi.get(a, 0) >= sayim[a]:
-                continue                      # plandaki adetten fazla okuma
-            kullanildi[a] = kullanildi.get(a, 0) + 1
-        kalan.append(o)
-    return kalan
-
-
 def _gabari_disi_ele(olcu, plan_deger):
     """Parca gabarisini asan okumalar elenir (plan degeriyse dokunulmaz).
 
@@ -1071,7 +1044,7 @@ def _gabari_disi_ele(olcu, plan_deger):
     return kalan
 
 
-def _tablo_sutunu_ele(olcu, plan_deger, serit=70, en_az=4):
+def _tablo_sutunu_ele(olcu, plan_deger, serit=110, en_az=4):
     """Dikey dizilmis, TAMAMI plan disi okuma obegi = TABLO, olcu degil.
 
     Olculdu (700.0.454): VW genel tolerans tablosunun sol alt kosedeki
@@ -1089,13 +1062,15 @@ def _tablo_sutunu_ele(olcu, plan_deger, serit=70, en_az=4):
         f = _sayiya(o[0])
         return f is not None and ("%g" % f) in planda
 
-    gruplar = {}
-    for i, o in enumerate(olcu):
-        gruplar.setdefault(int(o[1] // serit), []).append(i)
+    # SABIT SERIT YERINE KAYAN PENCERE. Olculdu (217.0.017): kuvvet-yol
+    # diyagraminin ekseni (200/180/160/140) tek sutunda ama kutu x'leri
+    # 6979-7002 arasindaydi; 70 px'lik sabit serit uctekini AYRI kovaya
+    # atinca grup 4'ten 3'e dusuyor ve suzgec tutmuyordu.
     atilacak = set()
-    for _, dizin in gruplar.items():
-        if len(dizin) >= en_az and not any(plan_mi(olcu[i]) for i in dizin):
-            atilacak.update(dizin)
+    for i, o in enumerate(olcu):
+        yakin = [j for j, p in enumerate(olcu) if abs(p[1] - o[1]) <= serit]
+        if len(yakin) >= en_az and not any(plan_mi(olcu[j]) for j in yakin):
+            atilacak.update(yakin)
     return [o for i, o in enumerate(olcu) if i not in atilacak]
 
 
@@ -1426,7 +1401,6 @@ def uret(kod, tiff_yolu, klasor, kp_satirlari, sablon_kutusu=None, tam=True):
                                    chr(10)))
           olcu = _asama("cakisma", olcu, _cakisanlari_ele(olcu, plan_deger))
           olcu = _asama("gabari", olcu, _gabari_disi_ele(olcu, plan_deger))
-          olcu = _asama("yineleme", olcu, _fazla_yinelemeleri_ele(olcu, plan_deger))
           olcu = _asama("tablo", olcu, _tablo_sutunu_ele(olcu, plan_deger))
           olcu = _asama("antet", olcu,
                         _antet_kosesi_ele(olcu, plan_deger, im.shape[1], im.shape[0]))
