@@ -1513,8 +1513,14 @@ async function zipIndir(k) {
 // profilindeki .apqp_ai.json dosyasina yazilir. Yalniz teknik resim okumada
 // (balonlama) kullanilir.
 async function aiAyarAc() {
-  let mevcut = {};
-  try { mevcut = await ajanJson('/aiayar'); } catch (e) { /* ajan kapali */ }
+  let mevcut = {}, ajanHata = '';
+  try {
+    mevcut = await ajanJson('/aiayar');
+  } catch (e) {
+    // Ajan kapali OLABILIR ama tarayici yerel istegi de engelleyebiliyor
+    // (https sayfadan http://127.0.0.1). Ikisi de sessiz kalmamali.
+    ajanHata = e && e.message ? e.message : 'bağlantı yok';
+  }
 
   const perde = document.createElement('div');
   perde.className = 'perde';
@@ -1529,6 +1535,13 @@ async function aiAyarAc() {
     + '<select id="aiSag"><option value="gemini">gemini</option><option value="xai">xai</option></select>'
     + '<label>Model</label><select id="aiModel"></select>'
     + '<label>Kayıtlı anahtarlar <span id="aiDurumBilgi" style="font-weight:400;color:var(--soluk)"></span></label>'
+    + (ajanHata
+        ? '<div class="uyari" style="margin:10px 0">Yerel ajana ulaşılamadı '
+          + '(' + ajanHata + ').<br>Kayıtlı anahtarlar ve model listesi bu '
+          + 'yüzden görünmüyor, <b>Kaydet</b> de çalışmaz.<br>'
+          + '• LeanSys Agent açık mı? • Tarayıcı eklentisi (reklam engelleyici) '
+          + 'localhost isteğini engelliyor olabilir — bu sayfa için kapatın.</div>'
+        : '')
     + '<div id="aiListe"></div>'
     + '<label>Yeni anahtar ekle — her satıra bir tane (virgülle de olur)</label>'
     + '<textarea id="aiYeni" placeholder="anahtar1&#10;anahtar2"></textarea>'
