@@ -124,18 +124,63 @@ ISTEM = (
 # Ayni projedeki ikinci anahtar kotayi ARTIRMAZ; model degistirmek artirir.
 YEDEK_MODELLER = ("gemini-3.1-flash-lite", "gemini-flash-lite-latest",
                   "gemini-3-flash-preview", "gemini-3.5-flash-lite")
+# Kota dolunca SIRAYLA denenecek modeller — olculmus okuma kalitesine
+# gore. Bu listede olmayan modele kendiliginden gecilmez.
+TERCIH_SIRASI = ("gemini-3.5-flash-lite", "gemini-3.1-flash-lite",
+                 "gemini-flash-lite-latest", "gemini-3-flash-preview",
+                 "gemini-3.6-flash", "gemini-3.7-flash")
 _model_sirasi = [0]          # kota dolunca ilerler, surec boyunca korunur
 
 
-def _sonraki_model(ayar):
+_havuz = [None]           # saglayicidan cekilen model listesi (bir kez)
+
+
+def _model_havuzu(ayar, anahtar):
+    """Saglayicidaki GORSEL OKUYABILEN modeller — kota model basina.
+
+    Sabit YEDEK_MODELLER listesi dardi: dordu de dolunca balonlama
+    "kota" deyip duruyordu, oysa saglayicida kotasi bos baska modeller
+    vardi (olculdu: 3.5/3.1/flash-lite-latest/3-flash-preview 429 iken
+    gemini-flash-latest, 3.6-flash ve 3.7-flash calisiyordu). Liste bir
+    kez cekilir, cekilemezse sabit listeye dusulur.
+    """
+    if _havuz[0] is not None:
+        return _havuz[0]
+    try:
+        u = ("https://generativelanguage.googleapis.com/v1beta/models"
+             "?pageSize=200&key=" + (anahtar or ayar.get("anahtar") or ""))
+        with urllib.request.urlopen(u, timeout=30) as f:
+            d = json.load(f)
+        ad = []
+        for m in d.get("models", []):
+            if "generateContent" not in m.get("supportedGenerationMethods", []):
+                continue
+            n = m["name"].split("/")[-1]
+            if re.search(r"tts|image|embedding|lyria|nano-banana|aqa", n):
+                continue
+            if not re.search(r"flash|pro", n):
+                continue
+            ad.append(n)
+        # YALNIZ OLCULMUS IYI OKUYUCULAR. Havuza her modeli koymak
+        # kotayi cozuyor ama kaliteyi bozuyordu: gecilen model 154 balon
+        # cikardi (planda 24 olcu var). Listede olmayan bir modele
+        # kendiliginden gecilmez — kullanici ERP'den secebilir.
+        _havuz[0] = [m for m in TERCIH_SIRASI if m in ad] or list(YEDEK_MODELLER)
+    except Exception:
+        _havuz[0] = list(YEDEK_MODELLER)
+    return _havuz[0]
+
+
+def _sonraki_model(ayar, anahtar=None):
     """Kotasi dolan modelden sonraki yedege gecer; yoksa None."""
     simdiki = ayar.get("model") or ""
-    havuz = [m for m in YEDEK_MODELLER if m != simdiki]
-    if _model_sirasi[0] >= len(havuz):
-        return None
-    m = havuz[_model_sirasi[0]]
-    _model_sirasi[0] += 1
-    return m
+    denenen = ayar.setdefault("_denenen", set())
+    denenen.add(simdiki)
+    for m in _model_havuzu(ayar, anahtar):
+        if m not in denenen:
+            denenen.add(m)
+            return m
+    return None
 
 
 def _gemini(b64, ayar, anahtar=None):
@@ -207,6 +252,29 @@ def _cozumle(metin):
 SON_DURUM = "tamam"
 
 
+ZORLA_MODEL = [None]      # disaridan secilen model (cop cikti sonrasi)
+
+
+def model_atla():
+    """Bir sonraki yedek modele gecer; yenisinin adini doner, yoksa None.
+
+    Kota dolunca otomatik gecis _gemini icinde yapiliyor. Bu fonksiyon
+    KALITE nedeniyle disaridan cagrilir: model kotasi dolu olmasa bile
+    cop okuma uretiyorsa (olculdu: 154 balon, planda 24 olcu) sonraki
+    modele gecilir.
+    """
+    ayar = ayar_oku()
+    if ZORLA_MODEL[0]:
+        ayar["model"] = ZORLA_MODEL[0]
+    anahtarlar = ayar.get("anahtarlar") or [ayar.get("anahtar")]
+    if ZORLA_MODEL[0]:
+        ayar["model"] = ZORLA_MODEL[0]
+    m = _sonraki_model(ayar, anahtarlar[0] if anahtarlar else None)
+    if m:
+        ZORLA_MODEL[0] = m
+    return m
+
+
 def olculeri_oku(im, log=None):
     """Çizimdeki ölçüler: [(deger_metni, x, y)] — GLOBAL piksel konumuyla.
     Anahtar yoksa ya da servis yanıt vermezse boş liste döner (çağıran taraf
@@ -259,7 +327,7 @@ def olculeri_oku(im, log=None):
                         SON_DURUM = "kota"
                         # Gunluk kota MODEL basina: yedek modele gec, tum
                         # okumayi bir modelin bitmis hakki yuzunden birakma.
-                        yeni_model = _sonraki_model(ayar)
+                        yeni_model = _sonraki_model(ayar, anahtar)
                         if yeni_model:
                             if log:
                                 log("   · AI kotası doldu, yedek modele geçildi: %s"

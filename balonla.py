@@ -1104,6 +1104,21 @@ def _antet_kosesi_ele(olcu, plan_deger, im_en, im_boy):
     return kalan
 
 
+# YEDEK MODEL COP URETEBILIR. Olculdu: kota dolunca gecilen model 154
+# balon cikardi (104'u "elle girilecek") — kontrol planinda 24 olcu var.
+# Kotayi cozup kaliteyi bozan cikti, balonsuz cizimden kotudur. Filtre
+# sonrasi okuma sayisi plan olcu sayisinin bu katini asarsa okuma
+# GUVENILMEZ sayilir ve sonraki model denenir.
+MAKUL_KAT = 2.5
+
+
+def _makul_mu(olcu, plan_deger):
+    if not plan_deger:
+        return True
+    return len(olcu) <= max(12, int(len(set("%g" % float(d) for d in plan_deger))
+                                    * MAKUL_KAT))
+
+
 def _cakisanlari_ele(olcu, plan_deger, esik=46):
     """Ayni noktaya dusen AYNI olcuden BIRI birakilir.
 
@@ -1360,42 +1375,59 @@ def uret(kod, tiff_yolu, klasor, kp_satirlari, sablon_kutusu=None, tam=True):
         # ÖNCE görme modeli: ölçüyü nottan/tablodan/referans balonundan
         # ANLAYARAK ayırır. Anahtar yoksa ya da servis yanıt vermezse
         # klasik OCR+geometri yoluna düşülür.
-        olcu = _ai_olculeri(im, plan_deger)
-        if not olcu:
-            # AI BEKLENIYORDU AMA YANIT VERMEDIYSE KLASIK OCR'A DUSULMEZ.
-            # Olculdu: kota dolunca yedek yol not blogundaki metne ("VDA 260",
-            # "-30°C bis", "50185") balon basiyor, okunamayan konumlara plan
-            # degeri atiyor ve "14 balon — 0 elle girilecek" diyerek BASARILI
-            # gorunuyor. Musteriye giden PPAP ciziminde bu, balonsuz cizimden
-            # kotudur: yanlis balon, eksik balondan zor fark edilir.
-            durum = _ai_durumu()
-            if durum in ("kota", "hata"):
-                return 0, ("AI okuma servisi yanıt vermedi (%s) — balonlama "
-                           "YAPILMADI. Kota yenilenince tekrar üretin."
-                           % ("kota doldu" if durum == "kota" else "servis hatası")), []
-            olcu = tum_olculer(im, capa, plan_deger, geometri_ele=not capa)
-        olcu = [o for o in olcu if not _olcu_disi_mi(o[0])]
-        def _asama(ad, once, sonra):
-            if not os.environ.get("BALON_TESHIS"):
-                return sonra
-            import sys as _sys
-            kalkan = [str(o[0]) for o in once if o not in sonra]
-            _sys.stderr.write("ASAMA %-14s %3d -> %3d   elenen: %s%s"
-                              % (ad, len(once), len(sonra),
-                                 ", ".join(kalkan) or "-", chr(10)))
-            return sonra
+        # Okuma DONGUYE alindi: cop cikti veren modelden sonrakine gecilip
+        # yeniden okunabilsin (asagidaki makullük kontrolu "continue" der).
+        for _tur in range(3):
+          olcu = _ai_olculeri(im, plan_deger)
+          if not olcu:
+              # AI BEKLENIYORDU AMA YANIT VERMEDIYSE KLASIK OCR'A DUSULMEZ.
+              # Olculdu: kota dolunca yedek yol not blogundaki metne ("VDA 260",
+              # "-30°C bis", "50185") balon basiyor, okunamayan konumlara plan
+              # degeri atiyor ve "14 balon — 0 elle girilecek" diyerek BASARILI
+              # gorunuyor. Musteriye giden PPAP ciziminde bu, balonsuz cizimden
+              # kotudur: yanlis balon, eksik balondan zor fark edilir.
+              durum = _ai_durumu()
+              if durum in ("kota", "hata"):
+                  return 0, ("AI okuma servisi yanıt vermedi (%s) — balonlama "
+                             "YAPILMADI. Kota yenilenince tekrar üretin."
+                             % ("kota doldu" if durum == "kota" else "servis hatası")), []
+              olcu = tum_olculer(im, capa, plan_deger, geometri_ele=not capa)
+          olcu = [o for o in olcu if not _olcu_disi_mi(o[0])]
+          def _asama(ad, once, sonra):
+              if not os.environ.get("BALON_TESHIS"):
+                  return sonra
+              import sys as _sys
+              kalkan = [str(o[0]) for o in once if o not in sonra]
+              _sys.stderr.write("ASAMA %-14s %3d -> %3d   elenen: %s%s"
+                                % (ad, len(once), len(sonra),
+                                   ", ".join(kalkan) or "-", chr(10)))
+              return sonra
 
-        if os.environ.get("BALON_TESHIS"):
-            import sys as _sys
-            _sys.stderr.write("HAM AI OKUMA (%d): %s%s"
-                              % (len(olcu), ", ".join(str(o[0]) for o in olcu),
-                                 chr(10)))
-        olcu = _asama("cakisma", olcu, _cakisanlari_ele(olcu, plan_deger))
-        olcu = _asama("gabari", olcu, _gabari_disi_ele(olcu, plan_deger))
-        olcu = _asama("yineleme", olcu, _fazla_yinelemeleri_ele(olcu, plan_deger))
-        olcu = _asama("tablo", olcu, _tablo_sutunu_ele(olcu, plan_deger))
-        olcu = _asama("antet", olcu,
-                      _antet_kosesi_ele(olcu, plan_deger, im.shape[1], im.shape[0]))
+          if os.environ.get("BALON_TESHIS"):
+              import sys as _sys
+              _sys.stderr.write("HAM AI OKUMA (%d): %s%s"
+                                % (len(olcu), ", ".join(str(o[0]) for o in olcu),
+                                   chr(10)))
+          olcu = _asama("cakisma", olcu, _cakisanlari_ele(olcu, plan_deger))
+          olcu = _asama("gabari", olcu, _gabari_disi_ele(olcu, plan_deger))
+          olcu = _asama("yineleme", olcu, _fazla_yinelemeleri_ele(olcu, plan_deger))
+          olcu = _asama("tablo", olcu, _tablo_sutunu_ele(olcu, plan_deger))
+          olcu = _asama("antet", olcu,
+                        _antet_kosesi_ele(olcu, plan_deger, im.shape[1], im.shape[0]))
+          # COP CIKTI KABUL EDILMEZ: kota dolunca gecilen model cizimdeki her
+          # seyi olcu sanabiliyor (olculdu: 154 balon, planda 24 olcu). Boyle
+          # bir okuma balonsuz cizimden kotudur — sonraki model denenir.
+          if not _makul_mu(olcu, plan_deger):
+              import ai_okuyucu as _ai
+              yeni_m = _ai.model_atla()
+              if yeni_m and _tur < 2:
+                  print("   · AI okuması güvenilmez (%d okuma) — model değişti: %s"
+                        % (len(olcu), yeni_m))
+                  continue
+              return 0, ("AI okuması güvenilmez (%d okuma, planda %d ölçü) — "
+                         "balonlama YAPILMADI. ERP'den başka model seçip "
+                         "tekrar üretin." % (len(olcu), len(set(plan_deger))), [])
+          break                            # okuma makul: dongu biter
         # Her ölçü en yakın pozisyona bağlanır, o grupta okuma sırasıyla numaralanır
         # NOKTALI NUMARA (1.1, 1.2 ...) YALNIZ POS'LU PLANLARDA.
         # Cizim uzerindeki daireler POS karakteristigi olmak zorunda degil:
