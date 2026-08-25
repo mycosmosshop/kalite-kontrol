@@ -762,6 +762,10 @@ def _ai_olculeri(im, plan_degerleri=()):
     H, W = im.shape[:2]
     kutu = _yakinlari_birlestir(
         [s for s in _yazi_kutulari(im) if not _olcu_disi(s, W, H, [])])
+    # Yazi kutulari yuksekliginin MEDYAN yuksekligi: rakam yuksekligi
+    # bir cizimde sabittir, ince cizgiler bundan cok alcaktir.
+    _boylar = sorted(b["h"] for b in kutu) if kutu else []
+    _medyan_boy = [_boylar[len(_boylar) // 2] if _boylar else 0]
     merkez = (np.array([[k["x"] + k["g"] / 2.0, k["y"] + k["h"] / 2.0] for k in kutu])
               if kutu else np.zeros((0, 2)))
     siyah = (im < 128).astype(np.uint8)
@@ -796,6 +800,14 @@ def _ai_olculeri(im, plan_degerleri=()):
                     continue
             if secilen is None and yakinlar:
                 secilen = yakinlar[0]          # en yakın kutu
+        # CIZGI, YAZI KUTUSU DEGILDIR. Olculdu (700.0.450): uydurma "10"
+        # okumasi 58x10 px'lik bir kutuya oturmustu — o, dikdortgenin ince
+        # KENAR CIZGISI. Ayni cizimdeki gercek olcu kutulari 29-53 px
+        # yuksekligindeydi. Rakam yuksekligi bir cizimde sabittir; medyanin
+        # yarisindan alcak kutu yazi degildir.
+        if secilen is not None and _medyan_boy[0]:
+            if kutu[secilen]["h"] < _medyan_boy[0] * 0.55:
+                secilen = None
         if secilen is not None:
             kullanilan.add(secilen)
             k = kutu[secilen]
