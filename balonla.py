@@ -975,7 +975,11 @@ def tum_olculer(im, capa, plan_degerleri=(), geometri_ele=False):
 # giden PPAP ciziminde yanlis balon, eksik balondan daha zor fark edilir.
 # Elenenler: olcek/oran (1:5, 1:1), sayfa orani, format kodu (A1, A3),
 # tarih (31.07.2025) ve saf yil (2025).
+# Olculdu (217.0.017): balon 2'nin degeri "0" idi. Kontrol planinda hedef
+# alani bos olan satirlar 0.0 olarak geliyor ve model de cizimdeki bir "0"
+# karakterini olcu sanabiliyor — tek basina sifir bir olcu DEGILDIR.
 OLCU_DISI = (
+    re.compile(r"^\s*[-+]?0+([.,]0+)?\s*$"),           # tek basina 0
     re.compile(r"^\s*\d+\s*[:/]\s*\d+\s*$"),          # 1:5 · 1/2 olcek
     re.compile(r"^\s*A\d\s*$", re.I),                    # A1 · A3 kagit
     re.compile(r"^\s*\d{1,2}[.,]\d{1,2}[.,]\d{2,4}\s*$"),  # 31.07.2025

@@ -100,6 +100,10 @@ ISTEM = (
     # 2,0, 1,6, 0,6, 0,3) olcu sanilip 11 balon basilmisti.
     # Olculdu: ham okumada hicbir yaricap oneki yoktu (R50 -> "50") ve
     # sag alt kosedeki egik yazilmis R15 tamamen kaciriliyordu.
+    # Olculdu (217.0.017): yan gorunusteki "592.8" 90 derece dondurulmus
+    # yazilmis ve model onu hic okumadi; yatay yazilanlari okumustu.
+    "ÖLÇÜLER 90 DERECE DÖNDÜRÜLMÜŞ (DİKEY) DE YAZILIR: yandan "
+    "görünüşlerde ve dar alanlarda sayı yan yatar. Bunları da oku, atlama.\n"
     "YARIÇAP VE ÇAP ÖLÇÜLERİNİ DE LİSTELE: R15, R50, ø8 gibi. Öneki "
     "(R ya da ø) mutlaka koru — \"R15\" yaz, \"15\" değil. Yarıçaplar "
     "genelde küçük ve EĞİK yazılır, kavis okuyla gösterilir; kösede ya da "
