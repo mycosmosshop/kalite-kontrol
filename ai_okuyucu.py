@@ -98,6 +98,12 @@ ISTEM = (
     # "1" geldigi icin kalip filtresi de yakalayamiyor — kaynagi burasi.
     # Olculdu: VW genel tolerans tablosunun satirlari (400, 120, 30, 6,
     # 2,0, 1,6, 0,6, 0,3) olcu sanilip 11 balon basilmisti.
+    # Olculdu: ham okumada hicbir yaricap oneki yoktu (R50 -> "50") ve
+    # sag alt kosedeki egik yazilmis R15 tamamen kaciriliyordu.
+    "YARIÇAP VE ÇAP ÖLÇÜLERİNİ DE LİSTELE: R15, R50, ø8 gibi. Öneki "
+    "(R ya da ø) mutlaka koru — \"R15\" yaz, \"15\" değil. Yarıçaplar "
+    "genelde küçük ve EĞİK yazılır, kavis okuyla gösterilir; kösede ya da "
+    "çizimin kenarinda kalanları da atlama.\n"
     "GENEL TOLERANS TABLOSUNU LİSTELEME: \">400 \" ile başlayan aralık-"
     "tolerans satırları ve açı toleransı ölçü DEĞİLDİR; o tablodaki 400, 120, "
     "30, 6, 2.0, 1.6, 0.6, 0.3 gibi sayıları yazma.\n"

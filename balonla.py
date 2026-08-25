@@ -996,6 +996,17 @@ def _sayiya(d):
         return None
 
 
+def _yaricap_capa_mi(d):
+    """Olcu YARICAP/CAP mi? (R15, ø8 gibi)
+
+    R15 ile 15 AYRI olculerdir ama _sayiya() R onekini atiyor; yineleme
+    suzgeci plandaki "15" kotasini dogrusal olcuye harcayip R15'i
+    eliyordu (kullanici sag alt kosede balonsuz kalan R15'i gosterdi).
+    """
+    t = str(d if d is not None else "").strip().upper()
+    return t.startswith("R") or t.startswith("Ø") or t.startswith("O")
+
+
 def _fazla_yinelemeleri_ele(olcu, plan_deger):
     """Bir deger kontrol planinda KAC KEZ geciyorsa o kadar balonlanir.
 
@@ -1012,6 +1023,9 @@ def _fazla_yinelemeleri_ele(olcu, plan_deger):
         sayim[a] = sayim.get(a, 0) + 1
     kalan = []
     for o in olcu:
+        if _yaricap_capa_mi(o[0]):
+            kalan.append(o)                   # R/ø: plan kotasini harcamaz
+            continue
         f = _sayiya(o[0])
         a = "%g" % f if f is not None else None
         if a in sayim:
@@ -1361,11 +1375,27 @@ def uret(kod, tiff_yolu, klasor, kp_satirlari, sablon_kutusu=None, tam=True):
                            % ("kota doldu" if durum == "kota" else "servis hatası")), []
             olcu = tum_olculer(im, capa, plan_deger, geometri_ele=not capa)
         olcu = [o for o in olcu if not _olcu_disi_mi(o[0])]
-        olcu = _cakisanlari_ele(olcu, plan_deger)
-        olcu = _gabari_disi_ele(olcu, plan_deger)
-        olcu = _fazla_yinelemeleri_ele(olcu, plan_deger)
-        olcu = _tablo_sutunu_ele(olcu, plan_deger)
-        olcu = _antet_kosesi_ele(olcu, plan_deger, im.shape[1], im.shape[0])
+        def _asama(ad, once, sonra):
+            if not os.environ.get("BALON_TESHIS"):
+                return sonra
+            import sys as _sys
+            kalkan = [str(o[0]) for o in once if o not in sonra]
+            _sys.stderr.write("ASAMA %-14s %3d -> %3d   elenen: %s%s"
+                              % (ad, len(once), len(sonra),
+                                 ", ".join(kalkan) or "-", chr(10)))
+            return sonra
+
+        if os.environ.get("BALON_TESHIS"):
+            import sys as _sys
+            _sys.stderr.write("HAM AI OKUMA (%d): %s%s"
+                              % (len(olcu), ", ".join(str(o[0]) for o in olcu),
+                                 chr(10)))
+        olcu = _asama("cakisma", olcu, _cakisanlari_ele(olcu, plan_deger))
+        olcu = _asama("gabari", olcu, _gabari_disi_ele(olcu, plan_deger))
+        olcu = _asama("yineleme", olcu, _fazla_yinelemeleri_ele(olcu, plan_deger))
+        olcu = _asama("tablo", olcu, _tablo_sutunu_ele(olcu, plan_deger))
+        olcu = _asama("antet", olcu,
+                      _antet_kosesi_ele(olcu, plan_deger, im.shape[1], im.shape[0]))
         # Her ölçü en yakın pozisyona bağlanır, o grupta okuma sırasıyla numaralanır
         # NOKTALI NUMARA (1.1, 1.2 ...) YALNIZ POS'LU PLANLARDA.
         # Cizim uzerindeki daireler POS karakteristigi olmak zorunda degil:
