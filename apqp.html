@@ -339,7 +339,24 @@ async function dosyaAc(yol) {
     if (!j.ok) throw new Error(j.hata || 'acilamadi');
     mesaj('');
   } catch (e) {
-    mesaj('Dosya açılamadı (' + e.message + '). LeanSys ajanı çalışıyor mu?<br>Yol: <code>' + yol + '</code>');
+    // GERCEK NEDENI SOYLE. Olculdu: Google Drive kapaninca G: sürücüsü
+    // kayboluyor ve dosya "bulunamadi" oluyordu; mesaj ise ajani suclayip
+    // kullaniciyi yanlis yone yonlendiriyordu.
+    let ek = '';
+    const h = /^([A-Za-z]):/.exec(yol);
+    if (h) {
+      try {
+        const d = await ajanJson('/surucu?d=' + h[1]);
+        if (d.ok && !d.bagli) {
+          ek = '<br><b>' + h[1] + ': sürücüsü bağlı değil</b> — Google Drive '
+             + 'uygulaması kapalı olabilir, başlatınca dosyalar geri gelir.';
+        }
+      } catch (e2) {
+        ek = '<br>Yerel ajana da ulaşılamıyor — LeanSys Agent açık mı?';
+      }
+    }
+    mesaj('Dosya açılamadı (' + e.message + ').' + ek
+      + '<br>Yol: <code>' + yol + '</code>');
   }
 }
 
