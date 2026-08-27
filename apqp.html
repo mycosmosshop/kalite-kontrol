@@ -308,6 +308,22 @@ const MODUL = [
   [/numaralandırılmış|numaralandirilmis|balonla/i,
                                   'https://mycosmosshop.github.io/teknik-resim/',          'Teknik Resim Balonlama modulu'],
 ];
+// Adimin "Form" sutunundaki dokuman adi -> indirilebilir BOS FORMAT.
+// ERP modul baglantisinin YERINE degil, YANINA cikar: canli modul
+// calismaya devam eder, bu yalnizca elle doldurulacak bos sablondur.
+const SABLON = [
+  [/fr88|süreç yeterlilik|surec yeterlilik|proses yeterlilik|cp ?, ?cpk|cpk|süreç potansiyeli|surec potansiyeli|varyasyonun azalt/i,
+   'sablonlar/FR24-Proses-Yeterliligi-BOS-FORMAT.xlsx',
+   'FR24 Proses Yeterliliği — boş format'],
+];
+function sablonBaglantisi(form, ad) {
+  const metin = met(form) + ' ' + met(ad);
+  for (const [kalip, dosya, etiket] of SABLON) {
+    if (kalip.test(metin)) return { adres: dosya, ad: etiket };
+  }
+  return null;
+}
+
 function modulBaglantisi(form, kod) {
   const f = met(form);
   for (const [kalip, adres, ad] of MODUL) {
@@ -715,6 +731,8 @@ async function apqpUret(giris) {
           ? mod.adres + '?proje=' + encodeURIComponent(k.fmeaId) : mod.adres;
         kanitlar.push({ tur: 'erp', ad: mod.ad, adres });
       }
+      const sab = sablonBaglantisi(a.form, a.ad);
+      if (sab) kanitlar.push({ tur: 'sablon', ad: sab.ad, adres: sab.adres });
       // ERP calismalari dogru adima: MSA adimina olcum sistemi analizleri,
       // yeterlilik adimina Cp/Cpk ve Cm/Cmk calismalari.
       const metin = met(a.form) + ' ' + met(a.ad);
@@ -934,6 +952,7 @@ function cizListe() {
       const parca = ['<span class="form-ad">' + (a.form || '—') + '</span>'];
       (a.kanitlar || []).forEach(x => {
         if (x.tur === 'erp') parca.push('<a class="dosya" href="' + x.adres + '" target="_blank" title="ERP modülü">🔗 ' + x.ad + '</a>');
+        else if (x.tur === 'sablon') parca.push('<a class="dosya" href="' + x.adres + '" download title="Boş format — indirip doldurun">⬇ ' + x.ad + '</a>');
         else {
           const ac = '<a class="dosya" href="#" data-ac="' + encodeURIComponent(x.yol) + '" title="'
             + (x.tur === 'drive' ? 'Aç ve düzenle — Excel/Word’de açılır, kaydedince Drive’a gider'
