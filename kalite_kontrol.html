@@ -862,6 +862,20 @@ async function renderBekleyen(){
 // 📦 Mal Kabul — üst sekme (salt görünüm; LeanSys mal kabul verisi). Kontrol girişi Girilecek Kontroller'de.
 let _mkDeb=null;
 let _mkLastRows=[];   // Mal Kabul'da o an listelenen satırlar (toplu otomatik giriş kontrol üretimi bunları kapsar)
+let _mkDepolar=null;  // mal_kabul'daki depo adları — bir kez okunur (sekme her açıldığında tekrar sorgulanmaz)
+// Depo listesi TÜM tablodan sayfalı okunur: tek sorgu sunucunun satır sınırına (1000) takılıp
+// seyrek depoları (Adana, Gümrük…) listeden düşürüyordu.
+async function mkDepoListesi(){
+  if(_mkDepolar) return _mkDepolar;
+  const s=new Set();
+  for(let from=0;;from+=1000){
+    const {data,error}=await sb.from('mal_kabul').select('depo').not('depo','is',null).order('rec_id').range(from,from+999);
+    if(error) break;
+    (data||[]).forEach(r=>{ if(r.depo) s.add(r.depo); });
+    if(!data||data.length<1000) break;
+  }
+  return (_mkDepolar=[...s].sort((a,b)=>a.localeCompare(b,'tr')));
+}
 async function renderMalKabul(){
   const root=$('#tab-malkabul'); root.innerHTML='';
   root.append(el('div',{class:'card'},
@@ -871,6 +885,8 @@ async function renderMalKabul(){
   const fFrom=el('input',{type:'date',class:'inp',onchange:load});
   const fTo=el('input',{type:'date',class:'inp',onchange:load});
   const fTur=el('select',{class:'inp',onchange:load}); [['0','Mal Kabul'],['1','İade'],['','Hepsi']].forEach(([v,t])=>fTur.append(el('option',{value:v},t)));
+  const fDepo=el('select',{class:'inp',style:'min-width:190px',onchange:load},el('option',{value:''},'Tüm depolar'));
+  mkDepoListesi().then(ds=>ds.forEach(d=>fDepo.append(el('option',{value:d},d))));
   const cnt=el('div',{class:'stat'},el('b',{id:'mkCount'},'—'),el('span',{},'kayıt'));
   // Mal kabul araçları (▾): Otomatik Kontrol Üret + Seçilenlerin Giriş Kayıtlarını Sil + (admin) SADECE Supabase mal_kabul silme (LeanSys'e ASLA dokunmaz)
   const _canAuto=can('auto')||(PROFILE&&PROFILE.is_admin), _isAdmin=PROFILE&&PROFILE.is_admin, _canClean=can('delete')||(PROFILE&&PROFILE.is_admin);
@@ -885,9 +901,10 @@ async function renderMalKabul(){
   root.append(el('div',{class:'card'},el('div',{class:'toolbar'},
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Ara'),fSearch),
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Tür'),fTur),
+    el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Depo'),fDepo),
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'İrsaliye Tarihi — Başlangıç'),fFrom),
     el('div',{class:'field',style:'flex:0'},el('label',{class:'lab'},'Bitiş'),fTo),
-    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{fSearch.value='';fFrom.value='';fTo.value='';fTur.value='0';load();}},'Temizle'),
+    el('button',{class:'btn sm sec',style:'flex:0',onclick:()=>{fSearch.value='';fFrom.value='';fTo.value='';fTur.value='0';fDepo.value='';load();}},'Temizle'),
     el('button',{class:'btn sm',style:'flex:0',title:'LeanSys mal kabul aktarım penceresini açar (stok kodu / tarih seç → AKTAR). İlk seferde tarayıcı “Aç” diye sorabilir. Aktarım bitince 🔄 Yenile ile listeyi tazele.',onclick:()=>{fetch('http://127.0.0.1:17777/open?app=malkabul',{mode:'cors'}).then(()=>toast('Mal Kabul aktarım penceresi açılıyor… Aktarım bitince 🔄 Yenile’ye bas.','ok')).catch(()=>toast('LeanSys ajanı kapalı. Önce LeanSys_Agent çalışmalı (Startup).','err'));}},'📥 LeanSys’ten Aktar'),
     el('button',{class:'btn sm sec',style:'flex:0',title:'Listeyi yeniden yükle (aktarımdan sonra yeni kayıtları getir) — filtreler korunur',onclick:()=>load()},'🔄 Yenile'),
     el('div',{class:'grow'}), mkTools, cnt)));
@@ -895,13 +912,14 @@ async function renderMalKabul(){
   let _mkSeq=0;
   async function load(){
     const my=++_mkSeq;   // yarış koruması: yalnız EN SON çağrı render eder (eski filtresiz tablo kalmasın)
-    if(MK_FOCUS){ fSearch.value=MK_FOCUS.stok||''; if(MK_FOCUS.tarih){fFrom.value=MK_FOCUS.tarih;fTo.value=MK_FOCUS.tarih;} fTur.value=''; MK_FOCUS=null; }  // izlenebilirlikten odak
+    if(MK_FOCUS){ fSearch.value=MK_FOCUS.stok||''; if(MK_FOCUS.tarih){fFrom.value=MK_FOCUS.tarih;fTo.value=MK_FOCUS.tarih;} fTur.value=''; fDepo.value=''; MK_FOCUS=null; }  // izlenebilirlikten odak
     out.innerHTML='<div class="card"><div class="empty">Yükleniyor…</div></div>';
     let q=sb.from('mal_kabul').select('*').order('tarih',{ascending:false}).limit(500);
     const t=(fSearch.value||'').trim(); if(t){ const s=t.replace(/[,()%]/g,' ').trim(); q=q.or(`stok_kodu.ilike.%${s}%,stok_adi.ilike.%${s}%,cari_adi.ilike.%${s}%`); }
     if(fFrom.value) q=q.gte('tarih',fFrom.value);
     if(fTo.value) q=q.lte('tarih',fTo.value);
     if(fTur.value!=='') q=q.eq('iade',Number(fTur.value));
+    if(fDepo.value) q=q.eq('depo',fDepo.value);
     const {data,error}=await q;
     if(my!==_mkSeq) return;   // bu çağrı bayatladı → render etme
     if(error){ out.innerHTML='<div class="card"><div class="msg err">'+esc(error.message)+'</div></div>'; return; }
@@ -911,8 +929,9 @@ async function renderMalKabul(){
       const hitTerm=!term||[m.stok_kodu,m.stok_adi,m.cari_adi].some(x=>(x||'').toLowerCase().includes(term));
       const hitFrom=!fFrom.value||(m.tarih&&m.tarih>=fFrom.value), hitTo=!fTo.value||(m.tarih&&m.tarih<=fTo.value);
       const hitTur=fTur.value===''||Number(fTur.value)===0;
+      const hitDepo=!fDepo.value||m.depo===fDepo.value;
       const dup=rows.some(r=>r.stok_kodu===m.stok_kodu && (r.seri||'')===(m.seri||'') && (String(r.sira||''))===(String(m.sira||'')));
-      if(hitTerm&&hitFrom&&hitTo&&hitTur&&!dup) rows=[m,...rows];
+      if(hitTerm&&hitFrom&&hitTo&&hitTur&&hitDepo&&!dup) rows=[m,...rows];
     }
     const codes=[...new Set(rows.map(r=>r.stok_kodu).filter(Boolean))];
     const planSet=new Set(); if(codes.length){ const {data:pp}=await sb.from('control_plan_items').select('stock_code').in('stock_code',codes).eq('giris_kalite',true).eq('active',true); (pp||[]).forEach(p=>planSet.add(p.stock_code)); }
