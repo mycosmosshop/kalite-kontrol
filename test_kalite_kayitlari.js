@@ -39,6 +39,11 @@ s = F('giris', {}, {}).satir(g);
 assert.strictEqual(s.cari, 'AVS AMBALAJ'); assert.strictEqual(s.evrak, 'AIR26AV / 898'); assert.strictEqual(s.miktar, '3770'); assert.strictEqual(s.ok, false);
 assert.strictEqual(s.kontrolNo, '4415829', 'Kontrol = mal kabul kayıt no'); assert.strictEqual(s.bas, '', 'girişte başlama/bitiş yok');
 
+// Kalite Durum filtresi LeanSys ile aynı: Tümü / Bekleyenler / Ret Olanlar / Onaylananlar; durum = overall_result (null → bekleyen)
+assert(html.includes('<select id="fRes"><option value="">Tümü</option><option value="BEK">Bekleyenler</option><option value="RET">Ret Olanlar</option><option value="OK">Onaylananlar</option></select>'), 'Kalite Durum seçenekleri');
+assert.strictEqual(F('giris', {}, {}).satir({ ...g, overall_result: null }).durum, '', 'sonuçsuz kayıt bekleyen');
+assert.strictEqual(s.durum, 'RET'); assert(js.includes("res==='BEK'?!s.durum:s.durum===res"), 'filtre durum alanına göre');
+
 // 4) LeanSys sütun düzeni birebir (KOLON tek kaynak) + Ölçümler sırası + yalnız "Kayıt yok"
 const KOLON = new Function(js.slice(js.indexOf('const KOLON='), js.indexOf('const kolonlar=')) + 'return KOLON;')();
 assert.deepStrictEqual(KOLON.giris.map(k => k[0]), ['Evrak No', 'Tarih', 'Stok Kodu', 'Stok Adı', 'Cari', 'Miktar', 'Birim', 'Kontrol']);

@@ -162,7 +162,7 @@ tbody tr.sel a,tbody tr.sel .lnk{color:#fff}
       <div class="fbar">
         <div class="f">📅 İlk Tarih : <input type="date" id="fFrom"></div>
         <div class="f">Son Tarih : <input type="date" id="fTo"></div>
-        <div class="f">✔ Kalite Durum : <select id="fRes"><option value="">Tümü</option><option value="OK">Uygun</option><option value="RET">Uygun Değil</option></select></div>
+        <div class="f">✔ Kalite Durum : <select id="fRes"><option value="">Tümü</option><option value="BEK">Bekleyenler</option><option value="RET">Ret Olanlar</option><option value="OK">Onaylananlar</option></select></div>
         <button class="go" id="btnGo">▶ Görüntüle</button>
       </div>
       <div class="tools">
@@ -275,7 +275,7 @@ function satir(r){
   const p=PROD[r.production_id]||{};
   const giris=stage==='giris';
   return {
-    id:r.id, ok:r.overall_result!=='RET', tarih:fmtDate(r.checked_at), vardiya:r.shift??p.shift??'',
+    id:r.id, ok:r.overall_result!=='RET', durum:r.overall_result||'', tarih:fmtDate(r.checked_at), vardiya:r.shift??p.shift??'',
     cari:giris?(r.giris_cari||''):(p.customer||''), stok:r.stock_code||p.stock_code||'', ad:r.stock_name||p.stock_name||'',
     bolum:giris?'':bolum(p), makine:giris?'':(p.machine_name||p.machine_code||''),
     bas:giris?'':fmtTimeWall(p.start_time), bit:giris?'':fmtTimeWall(p.end_time),
@@ -296,7 +296,7 @@ function render(){
   const K=kolonlar();
   $('#thead').innerHTML=K.map(k=>'<th>'+(k[0]==='⚑'?'<i class="fa fa-flag"></i>':esc(k[0]))+'</th>').join('');
   const loc=$('#fLoc').value, res=$('#fRes').value, q=deTr($('#fQ').value.trim());
-  view=rows.map(satir).filter(s=>(!loc||s.bolum===loc)&&(!res||(res==='OK'?s.ok:!s.ok))&&(!q||deTr([s.cari,s.stok,s.ad,s.makine,s.bolum,s.evrak,s.isemri,s.op,s.kontrolNo].join(' ')).includes(q)));
+  view=rows.map(satir).filter(s=>(!loc||s.bolum===loc)&&(!res||(res==='BEK'?!s.durum:s.durum===res))&&(!q||deTr([s.cari,s.stok,s.ad,s.makine,s.bolum,s.evrak,s.isemri,s.op,s.kontrolNo].join(' ')).includes(q)));
   const len=Number($('#pLen').value)||50, pages=Math.max(1,Math.ceil(view.length/len)); if(page>pages)page=pages;
   const tb=$('#tbody'); tb.innerHTML='';
   if(!view.length){ tb.innerHTML='<tr><td colspan="'+K.length+'" class="loading">Kayıt yok</td></tr>'; }
@@ -332,7 +332,7 @@ function olcumler(s){
 // ── Excel'e Aktar (görünen liste, ekrandaki sütunlar; CSV — Excel doğrudan açar) ──────
 function exportXls(){
   const K=kolonlar().map(([b,k])=>[k==='bayrak'?'Sonuç':b,k]);
-  const L=view.map(s=>K.map(([_,k])=>k==='bayrak'?(s.ok?'UYGUN':'UYGUN DEĞİL'):k==='evrak'?((s.ok?'':'UYGUN DEĞİL · ')+s.evrak):s[k]));
+  const L=view.map(s=>K.map(([_,k])=>k==='bayrak'?(s.durum?(s.ok?'UYGUN':'UYGUN DEĞİL'):'BEKLİYOR'):k==='evrak'?((s.durum?(s.ok?'':'UYGUN DEĞİL · '):'BEKLİYOR · ')+s.evrak):s[k]));
   const csv='﻿'+[K.map(x=>x[0]),...L].map(r=>r.map(c=>'"'+String(c??'').replace(/"/g,'""')+'"').join(';')).join('\r\n');
   const a=el('a',{href:URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})),download:`kalite_kayitlari_${stage}_${$('#fFrom').value}_${$('#fTo').value}.csv`}); document.body.append(a); a.click(); a.remove();
 }
