@@ -54,4 +54,5 @@ const portal = fs.readFileSync('D:/Yazılım/erp-portal/erp_portal.html', 'utf8'
 const i0 = portal.indexOf('const DEFAULT_MODULES = ['), i1 = portal.indexOf("id:'kalitekayitlari'"), i2 = portal.indexOf("id:'bakim'");
 assert(i0 > 0 && i1 > i0 && i1 < i2, 'Kalite Kayıtları kartı listenin başında değil');
 assert(portal.includes("kaynak:'https://mycosmosshop.github.io/kalite-kontrol/kalite_kayitlari.html'"));
+assert(portal.includes("ad:'Kalite Kontrol Kayıtları'") && html.includes('<title>Kalite Kontrol Kayıtları</title>'), 'modül adı: Kalite Kontrol Kayıtları');
 console.log('✔ kalite_kayitlari: salt okunur, LeanSys sütun düzeni birebir, portal kartı ilk sırada');
