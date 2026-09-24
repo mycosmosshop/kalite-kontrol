@@ -11,9 +11,12 @@ const bas = html.indexOf('// VARDİYA PENCERESİ:');
 const son = html.indexOf('// seri başı / giriş kontrolü üretim başından', bas);
 assert(bas > 0 && son > bas, 'vardiya penceresi bloğu bulunamadı');
 const blok = html.slice(bas, son);
+// vardiya saatleri yardımcıları (shiftHoursDef/shiftHours/shiftWindowMin/shiftForTime) gerçek gövdeyle
+const yard = html.slice(html.indexOf('function shiftHoursDef('), html.indexOf('// -- vardiya saatleri sonu'));
+assert(yard.length > 100, 'vardiya saatleri bloğu bulunamadı');
 function pencere(shiftMode, startIso, endIso, durMin) {
   let start = new Date(startIso), end = endIso ? new Date(endIso) : null;
-  return new Function('shiftMode', 'start', 'end', 'durMin', blok + '\nreturn {start,end,durMin};')(shiftMode, start, end, durMin);
+  return new Function('shiftMode', 'start', 'end', 'durMin', yard + '\n' + blok + '\nreturn {start,end,durMin};')(shiftMode, start, end, durMin);
 }
 const hh = d => d.getHours() + d.getMinutes() / 60;
 
@@ -38,9 +41,36 @@ assert.strictEqual(hh(r.start), 20, 'gece: 20:00’den önce olmaz');
 r = pencere('', '2026-09-24T20:36:00', '2026-09-24T23:10:00', 154);
 assert.strictEqual(hh(r.start), 20 + 36 / 60);
 
-// shiftForTime ile tutarlılık: tek vardiya penceresindeki her saat → vardiya 1
-const sft = new Function(html.slice(html.indexOf('function shiftForTime('), html.indexOf('}', html.indexOf('function shiftForTime(')) + 1) + '\nreturn shiftForTime;')();
+// 3. vardiya (varsayılan 00:00–08:00): 14:00–16:00 üretim → 00:00'dan başlar, 08:00'i geçmez
+r = pencere('3', '2026-09-24T14:00:00', '2026-09-24T16:00:00', 120);
+assert(hh(r.start) >= 0 && hh(r.end) <= 8 && r.durMin >= 6, '3. vardiya 00:00–08:00 dışına taştı: ' + r.start + ' ' + r.end);
+r = pencere('3', '2026-09-24T03:00:00', '2026-09-24T05:00:00', 120);
+assert.strictEqual(hh(r.start), 3, '3. vardiya içindeki üretim değişmez'); assert.strictEqual(hh(r.end), 5);
+
+// shiftForTime: varsayılan saatlerle eski davranış korunur (08–18 → 1, 21:00 → 2, 03:00 → 2)
+let sft = new Function(yard + '\nreturn shiftForTime;')();
 assert.strictEqual(sft(new Date('2026-09-24T08:00:00')), 1); assert.strictEqual(sft(new Date('2026-09-24T17:59:00')), 1);
+assert.strictEqual(sft(new Date('2026-09-24T21:00:00')), 2); assert.strictEqual(sft(new Date('2026-09-24T03:00:00')), 2);
+
+// KULLANICI TANIMLI saatler (kk_shift_hours): 1: 08–16, 2: 16–24, 3: 00–08 → pencere ve vardiya no buna göre
+global.localStorage = { getItem: k => k === 'kk_shift_hours' ? JSON.stringify({ 1: ['08:00', '16:00'], 2: ['16:00', '00:00'], 3: ['00:00', '08:00'] }) : null, setItem() { } };
+r = pencere('1', '2026-09-24T06:00:00', '2026-09-24T20:00:00', 840);
+assert.strictEqual(hh(r.start), 8); assert.strictEqual(hh(r.end), 16, '1. vardiya kullanıcı saatine (16:00) kırpılır');
+r = pencere('2', '2026-09-24T10:00:00', '2026-09-24T11:00:00', 60);
+assert.strictEqual(hh(r.start), 16, '2. vardiya 16:00’dan başlar');
+sft = new Function(yard + '\nreturn shiftForTime;')();
+assert.strictEqual(sft(new Date('2026-09-24T17:00:00')), 2, '17:00 tanımlı 2. vardiyaya düşer');
+assert.strictEqual(sft(new Date('2026-09-24T03:00:00')), 3, '03:00 tanımlı 3. vardiyaya düşer');
+delete global.localStorage;
+// bozuk kayıt → varsayılana düşer
+global.localStorage = { getItem: () => '{"1":["x","y"]}', setItem() { } };
+assert.strictEqual(hh(pencere('1', '2026-09-24T06:00:00', '2026-09-24T12:00:00', 360).start), 8, 'bozuk saat kaydı varsayılana düşmeli');
+delete global.localStorage;
+
+// seçilen vardiya kayda yazılır; düzenlemede 3. vardiya seçilebilir; saat kutuları var
+assert(html.includes("if(shiftMode) recs.forEach(r=>{ r.shift=Number(shiftMode); });"), 'seçilen vardiya kayda yazılmıyor');
+assert(html.includes("['3','3. vardiya']"), 'düzenlemede 3. vardiya yok');
+assert(html.includes("localStorage.setItem('kk_shift_hours',JSON.stringify(cur))") && html.includes("n+'. vardiya çalışma saati'"), 'vardiya saat kutuları yok');
 
 // --- 2) düzenleme modalı: alan her aşamada + vardiya seçici + saveEdit vardiyayı yazıyor
 assert(!/if\(r\.stage==='giris' && canEdit\)\{\s*m\.append\(el\('div',\{class:'field'/.test(html), 'saat alanı hâlâ yalnız giriş aşamasında');
