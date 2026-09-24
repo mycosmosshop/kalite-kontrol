@@ -50,7 +50,7 @@ assert.deepStrictEqual(KOLON.giris.map(k => k[0]), ['Evrak No', 'Tarih', 'Stok K
 assert.deepStrictEqual(KOLON.giris.filter(k => k[2]).map(k => k[1]), ['evrak', 'tarih', 'stok', 'birim', 'kontrolNo'], 'girişte mavi sütunlar LeanSys gibi');
 assert.deepStrictEqual(KOLON.uretim.filter(k => k[2]).map(k => k[1]), ['vardiya', 'birim'], 'üretimde yalnız Vardiya ve Birim mavi');
 assert.deepStrictEqual(KOLON.uretim.map(k => k[0]), ['⚑', 'Tarih', 'Vardiya', 'Cari', 'Stok Kodu', 'Stok Adı', 'Bölüm', 'Makine', 'Başlama', 'Bitiş', 'Üretim Miktarı', 'Birim']);
-const OB = new Function(js.slice(js.indexOf('const OLCUM_BASLIK='), js.indexOf('function olcumler(')) + 'return OLCUM_BASLIK;')();
+const OB = new Function(js.slice(js.indexOf('const OLCUM_BASLIK='), js.indexOf('async function olcumler(')) + 'return OLCUM_BASLIK;')();
 assert.deepStrictEqual(OB, ['Ölçülecek Değer', 'Alt Limit', 'Hedef', 'Üst Limit', 'Ölçüm', 'Uygunluk', 'Sonuç', 'Açıklama', 'Nitel Hedef', 'Örnekleme', 'Sıklık', 'Kontrol Eden']);
 assert(js.includes('class="loading">Kayıt yok</td>') && !/Kayıt yok\./.test(js) && !js.includes('Otomatik Kontrol Üret'), 'boş listede yalnız "Kayıt yok" yazmalı');
 assert(js.includes("'✖ Kapat'") && html.includes('.btn-r{background:#dd4b39'), 'Ölçümler altında kırmızı ✖ Kapat');
@@ -66,6 +66,16 @@ const hepsi = new Function('return async ' + cek('hepsi'))();
   hepsi(mk).then(out => { assert.strictEqual(out.length, N, 'sayfalı çekme eksik: ' + out.length); assert.strictEqual(istek, 3); assert.strictEqual(out[N - 1].id, N); });
 }
 assert(!/\.limit\(/.test(js), 'limit() 1000 tavanını aşamaz — range ile sayfalı çekilmeli');
+// count geliyorsa kalan sayfalar paralel: 2.350 satır → 3 istek, sıra korunur
+{ const N = 2350, tablo = Array.from({ length: N }, (_, i) => ({ id: i + 1 })); let istek = 0;
+  const mk = () => ({ range: async (a, b) => { istek++; return { data: tablo.slice(a, b + 1), error: null, count: N }; } });
+  hepsi(mk).then(out => { assert.strictEqual(out.length, N); assert.strictEqual(istek, 3); assert.strictEqual(out[1000].id, 1001); assert.strictEqual(out[N - 1].id, N); });
+}
+// yavaşlık: listede vals çekilmez (yalnız Ölçümler'de tek kayıt), productions paralel, satır seçimi tam render yapmaz
+assert(!js.includes("from('control_records').select('*')") && js.includes("select(COLS,{count:'exact'})"), 'liste vals ile şişmemeli');
+assert(js.includes("from('control_records').select('vals').eq('id',r.id)"), 'Ölçümler vals\'i tek kayıt için çekmeli');
+assert(js.includes("(await Promise.all(parca))"), 'productions parçaları paralel çekilmeli');
+assert(!js.includes("onclick:()=>{selId=s.id;render();}"), 'satır seçimi tam render yapmamalı');
 assert(js.includes("hepsi(mk)") && js.includes(".order('checked_at',{ascending:true}).order('id',{ascending:true})"), 'kayıtlar sayfalı ve kararlı sırayla çekilmeli');
 
 // portal kartı: DEFAULT_MODULES'un İLK öğesi

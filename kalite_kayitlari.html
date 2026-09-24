@@ -225,11 +225,23 @@ $('#btnKK').onclick=()=>{ location.href='kalite_kontrol.html'; };
 // ── durum ────────────────────────────────────────────────────────────────
 let stage='seri_basi', rows=[], view=[], page=1, selId=null;
 const PROD={};   // production_id → productions satırı
+let SAT=[];      // rows.map(satir) önbelleği — filtre/sayfa/seçim değişiminde yeniden hesaplanmaz
+// Listede gereken sütunlar. vals (ölçüm JSON'u) satır başına KB'larca: binlerce kayıtta MB'lar → yalnız Ölçümler açılınca, tek kayıt için çekilir.
+const COLS='id,production_id,stock_code,stock_name,stage,shift,checked_at,overall_result,operator,mal_kabul_rec_id,giris_cari,giris_irsaliye,giris_miktar,giris_birim';
+const PCOLS='id,customer,stock_code,stock_name,machine_code,machine_name,start_time,end_time,quantity,unit,shift,work_order';
 
 // Supabase tek yanıtta en çok 1000 satır verir (PostgREST max-rows) — limit(3000) yazılsa da 1000'de keser;
 // tarih artan sıralı listede EN YENİ kayıtlar düşer (700.0.570-A vakası: yeni üretilenler görünmedi).
 // Bu yüzden 1000'lik sayfalar hâlinde çekilir. mk: her sayfa için YENİ sorgu üreten fonksiyon (order şart).
-async function hepsi(mk,adim=1000,azami=50000){ const out=[]; for(let i=0;i<azami;i+=adim){ const {data,error}=await mk().range(i,i+adim-1); if(error) throw error; out.push(...(data||[])); if((data||[]).length<adim) break; } return out; }
+// İlk sayfa count ile gelirse kalan sayfalar PARALEL çekilir (5 sayfa: ~1 istek süresi); count yoksa sırayla.
+async function hepsi(mk,adim=1000,azami=50000){
+  const ilk=await mk().range(0,adim-1); if(ilk.error) throw ilk.error;
+  const out=[...(ilk.data||[])]; if(out.length<adim) return out;
+  const n=(typeof ilk.count==='number')?ilk.count:null;
+  if(n!=null){ const ps=[]; for(let i=adim;i<Math.min(n,azami);i+=adim) ps.push(mk().range(i,i+adim-1));
+    for(const r of await Promise.all(ps)){ if(r.error) throw r.error; out.push(...(r.data||[])); } return out; }
+  for(let i=adim;i<azami;i+=adim){ const {data,error}=await mk().range(i,i+adim-1); if(error) throw error; out.push(...(data||[])); if((data||[]).length<adim) break; }
+  return out; }
 
 async function init(){
   const d=new Date(); $('#today').textContent=fmtDate(d.toISOString().slice(0,10));
@@ -254,7 +266,7 @@ async function load(){
   $('#crumb').textContent=STAGES[stage];
   $('#tbody').innerHTML='<tr><td class="loading" colspan="14">Yükleniyor…</td></tr>';
   const from=$('#fFrom').value, to=$('#fTo').value;
-  const mk=()=>{ let q=sb.from('control_records').select('*').eq('stage',stage).order('checked_at',{ascending:true}).order('id',{ascending:true});
+  const mk=()=>{ let q=sb.from('control_records').select(COLS,{count:'exact'}).eq('stage',stage).order('checked_at',{ascending:true}).order('id',{ascending:true});
     if(from) q=q.gte('checked_at',from+'T00:00:00');
     if(to)   q=q.lte('checked_at',to+'T23:59:59');
     return q; };
@@ -263,7 +275,9 @@ async function load(){
   rows=data;
   // üretim satırları (cari / makine / başlama-bitiş / miktar)
   const ids=[...new Set(rows.map(r=>r.production_id).filter(x=>x!=null))].filter(id=>!PROD[id]);
-  for(let i=0;i<ids.length;i+=200){ const {data:ps}=await sb.from('productions').select('*').in('id',ids.slice(i,i+200)); (ps||[]).forEach(p=>PROD[p.id]=p); }
+  const parca=[]; for(let i=0;i<ids.length;i+=300) parca.push(sb.from('productions').select(PCOLS).in('id',ids.slice(i,i+300)));
+  (await Promise.all(parca)).forEach(({data:ps})=>(ps||[]).forEach(p=>PROD[p.id]=p));
+  SAT=rows.map(satir);
   page=1; selId=null; render();
 }
 
@@ -302,12 +316,12 @@ function render(){
   const K=kolonlar();
   $('#thead').innerHTML=K.map(k=>'<th>'+(k[0]==='⚑'?'<i class="fa fa-flag"></i>':esc(k[0]))+'</th>').join('');
   const loc=$('#fLoc').value, res=$('#fRes').value, q=deTr($('#fQ').value.trim());
-  view=rows.map(satir).filter(s=>(!loc||s.bolum===loc)&&(!res||(res==='BEK'?!s.durum:s.durum===res))&&(!q||deTr([s.cari,s.stok,s.ad,s.makine,s.bolum,s.evrak,s.isemri,s.op,s.kontrolNo].join(' ')).includes(q)));
+  view=SAT.filter(s=>(!loc||s.bolum===loc)&&(!res||(res==='BEK'?!s.durum:s.durum===res))&&(!q||deTr([s.cari,s.stok,s.ad,s.makine,s.bolum,s.evrak,s.isemri,s.op,s.kontrolNo].join(' ')).includes(q)));
   const len=Number($('#pLen').value)||50, pages=Math.max(1,Math.ceil(view.length/len)); if(page>pages)page=pages;
   const tb=$('#tbody'); tb.innerHTML='';
   if(!view.length){ tb.innerHTML='<tr><td colspan="'+K.length+'" class="loading">Kayıt yok</td></tr>'; }
   view.slice((page-1)*len,page*len).forEach(s=>{
-    const tr=el('tr',{class:s.id===selId?'sel':'',onclick:()=>{selId=s.id;render();},ondblclick:()=>olcumler(s)},
+    const tr=el('tr',{class:s.id===selId?'sel':'',onclick:()=>{ selId=s.id; tb.querySelectorAll('tr.sel').forEach(x=>x.classList.remove('sel')); tr.classList.add('sel'); },ondblclick:()=>olcumler(s)},
       ...K.map(([_,key,mavi])=>el('td',{class:mavi?'lnk':''},hucre(s,key))));
     tb.append(tr);
   });
@@ -320,8 +334,10 @@ function render(){
 
 // ── Ölçümler penceresi — LeanSys sütun sırası; sağ altta kırmızı "✖ Kapat" ──────────
 const OLCUM_BASLIK=['Ölçülecek Değer','Alt Limit','Hedef','Üst Limit','Ölçüm','Uygunluk','Sonuç','Açıklama','Nitel Hedef','Örnekleme','Sıklık','Kontrol Eden'];
-function olcumler(s){
-  const r=s.rec, vals=Array.isArray(r.vals)?r.vals:[];
+async function olcumler(s){
+  const r=s.rec;
+  if(!Array.isArray(r.vals)){ const {data,error}=await sb.from('control_records').select('vals').eq('id',r.id).maybeSingle(); r.vals=(!error&&data&&Array.isArray(data.vals))?data.vals:[]; }
+  const vals=r.vals;
   const rowsHtml=[];
   vals.forEach(v=>{ const smps=(v.samples&&v.samples.length)?v.samples:[{value:null,ok:null}];
     smps.forEach(sm=>{ const qual=!!v.is_qualitative; const uy=sm.ok===false?'ret':'ok';
