@@ -34,13 +34,24 @@ assert.strictEqual(s.miktar, '2232'); assert.strictEqual(s.birim, 'Ad'); assert.
 s = F('seri_basi', { 7: { ...prod, machine_code: 'X', machine_name: 'ESKISEHIR AMBALAJLAMA ISÇILIGI' } }, {}).satir(rec);
 assert.strictEqual(s.bolum, 'ESKISEHIR SUBESI', 'yedek etiket operasyon kartı grup adıyla aynı yazımda');
 // giriş kalite: tedarikçi / irsaliye / gelen miktar kayıttan
-const g = { id: 2, production_id: null, stage: 'giris', checked_at: '2026-09-11T09:15:00', overall_result: 'RET', giris_cari: 'AVS AMBALAJ', giris_irsaliye: 'AIR26AV / 898', giris_miktar: 3770, giris_birim: 'm2', stock_code: '952.4.010', operator: 'Volkan' };
+const g = { id: 2, production_id: null, stage: 'giris', checked_at: '2026-09-11T09:15:00', overall_result: 'RET', giris_cari: 'AVS AMBALAJ', giris_irsaliye: 'AIR26AV / 898', giris_miktar: 3770, giris_birim: 'm2', stock_code: '952.4.010', operator: 'Volkan', mal_kabul_rec_id: 4415829 };
 s = F('giris', {}, {}).satir(g);
-assert.strictEqual(s.cari, 'AVS AMBALAJ'); assert.strictEqual(s.irsaliye, 'AIR26AV / 898'); assert.strictEqual(s.miktar, '3770'); assert.strictEqual(s.ok, false);
+assert.strictEqual(s.cari, 'AVS AMBALAJ'); assert.strictEqual(s.evrak, 'AIR26AV / 898'); assert.strictEqual(s.miktar, '3770'); assert.strictEqual(s.ok, false);
+assert.strictEqual(s.kontrolNo, '4415829', 'Kontrol = mal kabul kayıt no'); assert.strictEqual(s.bas, '', 'girişte başlama/bitiş yok');
+
+// 4) LeanSys sütun düzeni birebir (KOLON tek kaynak) + Ölçümler sırası + yalnız "Kayıt yok"
+const KOLON = new Function(js.slice(js.indexOf('const KOLON='), js.indexOf('const kolonlar=')) + 'return KOLON;')();
+assert.deepStrictEqual(KOLON.giris.map(k => k[0]), ['Evrak No', 'Tarih', 'Stok Kodu', 'Stok Adı', 'Cari', 'Miktar', 'Birim', 'Kontrol']);
+assert.deepStrictEqual(KOLON.uretim.map(k => k[0]), ['⚑', 'Tarih', 'Vardiya', 'Cari', 'Stok Kodu', 'Stok Adı', 'Bölüm', 'Makine', 'Başlama', 'Bitiş', 'Üretim Miktarı', 'Birim']);
+const OB = new Function(js.slice(js.indexOf('const OLCUM_BASLIK='), js.indexOf('function olcumler(')) + 'return OLCUM_BASLIK;')();
+assert.deepStrictEqual(OB, ['Ölçülecek Değer', 'Alt Limit', 'Hedef', 'Üst Limit', 'Ölçüm', 'Uygunluk', 'Sonuç', 'Açıklama', 'Nitel Hedef', 'Örnekleme', 'Sıklık', 'Kontrol Eden']);
+assert(js.includes('class="loading">Kayıt yok</td>') && !/Kayıt yok\./.test(js) && !js.includes('Otomatik Kontrol Üret'), 'boş listede yalnız "Kayıt yok" yazmalı');
+assert(js.includes("'✖ Kapat'") && html.includes('.btn-r{background:#dd4b39'), 'Ölçümler altında kırmızı ✖ Kapat');
+assert(html.includes("body{font-family:'Source Sans 3'") && html.includes('fonts.googleapis.com/css2?family=Source+Sans+3'), 'LeanSys yazı tipi');
 
 // portal kartı: DEFAULT_MODULES'un İLK öğesi
 const portal = fs.readFileSync('D:/Yazılım/erp-portal/erp_portal.html', 'utf8');
 const i0 = portal.indexOf('const DEFAULT_MODULES = ['), i1 = portal.indexOf("id:'kalitekayitlari'"), i2 = portal.indexOf("id:'bakim'");
 assert(i0 > 0 && i1 > i0 && i1 < i2, 'Kalite Kayıtları kartı listenin başında değil');
 assert(portal.includes("kaynak:'https://mycosmosshop.github.io/kalite-kontrol/kalite_kayitlari.html'"));
-console.log('✔ kalite_kayitlari: salt okunur, sütun eşlemesi doğru, portal kartı ilk sırada');
+console.log('✔ kalite_kayitlari: salt okunur, LeanSys sütun düzeni birebir, portal kartı ilk sırada');

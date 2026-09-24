@@ -7,6 +7,8 @@
 <meta name="description" content="ERP'de otomatik üretilen kalite kontrol kayıtlarını LeanSys görünümünde gösteren salt-okunur pencere.">
 <link rel="icon" href="favicon.png">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@300;400;600;700&display=swap" rel="stylesheet">
 <style>
 /* ── LeanSys Kalite görünümü: lacivert menü, mavi başlık, gri tablo başlığı, Source Sans ── */
 :root{
@@ -18,7 +20,7 @@
 @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --ls-bg:#ecf0f5; } }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
-body{font-family:'Source Sans Pro','Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:var(--ls-txt);background:var(--ls-bg);line-height:1.42857}
+body{font-family:'Source Sans 3','Source Sans Pro','Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:var(--ls-txt);background:var(--ls-bg);line-height:1.42857}
 a{color:var(--ls-link);text-decoration:none}
 .hidden{display:none!important}
 /* üst şerit */
@@ -86,6 +88,9 @@ tbody tr.sel a,tbody tr.sel .lnk{color:#fff}
 .modal .mh button{background:none;border:0;color:#fff;font-size:22px;cursor:pointer;opacity:.6;line-height:1}
 .modal .mh button:hover{opacity:1}
 .modal .mb{padding:15px}
+.modal .mf{display:flex;justify-content:flex-end;padding:0 15px 15px}
+.btn-r{background:#dd4b39;color:#fff;border:1px solid #d73925;border-radius:3px;padding:6px 12px;font:inherit;font-size:14px;cursor:pointer}
+.btn-r:hover{background:#d73925}
 .modal table th{position:static}
 .modal td.ok::before{content:'☑';font-size:15px}
 .modal td.ret::before{content:'☒';color:var(--ls-ret);font-size:15px}
@@ -250,6 +255,15 @@ async function load(){
   page=1; selId=null; render();
 }
 
+// LeanSys sütun düzeni — TEK KAYNAK: başlıklar, hücreler ve Excel buradan.
+// giris: "Giriş Kalite Kontrol Kayıtları" ekranı (bayrak Evrak No hücresinde)
+// uretim: "Seri Başı Onayı Kontrol Kayıtları" ekranı (seri başı / proses / son aynı düzen)
+const KOLON={
+  giris:[['Evrak No','evrak'],['Tarih','tarih'],['Stok Kodu','stok'],['Stok Adı','ad'],['Cari','cari'],['Miktar','miktar'],['Birim','birim'],['Kontrol','kontrolNo']],
+  uretim:[['⚑','bayrak'],['Tarih','tarih'],['Vardiya','vardiya'],['Cari','cari'],['Stok Kodu','stok'],['Stok Adı','ad'],['Bölüm','bolum'],['Makine','makine'],['Başlama','bas'],['Bitiş','bit'],['Üretim Miktarı','miktar'],['Birim','birim']]
+};
+const kolonlar=()=>KOLON[stage==='giris'?'giris':'uretim'];
+
 function satir(r){
   const p=PROD[r.production_id]||{};
   const giris=stage==='giris';
@@ -257,59 +271,63 @@ function satir(r){
     id:r.id, ok:r.overall_result!=='RET', tarih:fmtDate(r.checked_at), vardiya:r.shift??p.shift??'',
     cari:giris?(r.giris_cari||''):(p.customer||''), stok:r.stock_code||p.stock_code||'', ad:r.stock_name||p.stock_name||'',
     bolum:giris?'':bolum(p), makine:giris?'':(p.machine_name||p.machine_code||''),
-    bas:giris?fmtTime(r.checked_at):fmtTimeWall(p.start_time), bit:giris?'':fmtTimeWall(p.end_time),
+    bas:giris?'':fmtTimeWall(p.start_time), bit:giris?'':fmtTimeWall(p.end_time),
     miktar:giris?commaFmt(r.giris_miktar):commaFmt(p.quantity), birim:giris?(r.giris_birim||''):(p.unit||''),
-    irsaliye:giris?(r.giris_irsaliye||''):'', isemri:p.work_order||'', kontrol:fmtTime(r.checked_at), op:r.operator||'', rec:r
+    evrak:giris?(r.giris_irsaliye||''):'', kontrolNo:giris?String(r.mal_kabul_rec_id??''):'',
+    isemri:p.work_order||'', kontrol:fmtTime(r.checked_at), op:r.operator||'', rec:r
   };
 }
 
+function hucre(s,key){
+  const bayrak=()=>el('span',{class:'flag'+(s.ok?'':' ret'),title:s.ok?'Uygun':'Uygun değil'},'⚑');
+  if(key==='bayrak') return bayrak();
+  if(key==='evrak')  return el('span',{},bayrak(),' '+s.evrak);
+  return s[key];
+}
+
 function render(){
-  const giris=stage==='giris';
-  const H=giris?['⚑','Tarih','Vardiya','Tedarikçi','Stok Kodu','Stok Adı','İrsaliye No','Kontrol Saati','Gelen Miktar','Birim','Kontrol Eden']
-               :['⚑','Tarih','Vardiya','Cari','Stok Kodu','Stok Adı','Bölüm','Makine','Başlama','Bitiş','Kontrol Saati','Üretim Miktarı','Birim'];
-  $('#thead').innerHTML=H.map(h=>'<th>'+esc(h)+'</th>').join('');
+  const K=kolonlar();
+  $('#thead').innerHTML=K.map(k=>'<th>'+esc(k[0])+'</th>').join('');
   const loc=$('#fLoc').value, res=$('#fRes').value, q=deTr($('#fQ').value.trim());
-  view=rows.map(satir).filter(s=>(!loc||s.bolum===loc)&&(!res||(res==='OK'?s.ok:!s.ok))&&(!q||deTr([s.cari,s.stok,s.ad,s.makine,s.bolum,s.irsaliye,s.isemri,s.op].join(' ')).includes(q)));
+  view=rows.map(satir).filter(s=>(!loc||s.bolum===loc)&&(!res||(res==='OK'?s.ok:!s.ok))&&(!q||deTr([s.cari,s.stok,s.ad,s.makine,s.bolum,s.evrak,s.isemri,s.op,s.kontrolNo].join(' ')).includes(q)));
   const len=Number($('#pLen').value)||50, pages=Math.max(1,Math.ceil(view.length/len)); if(page>pages)page=pages;
   const tb=$('#tbody'); tb.innerHTML='';
-  if(!view.length){ tb.innerHTML='<tr><td colspan="14" class="loading">Kayıt yok. (Kayıtlar ERP Kalite Kontrol → Otomatik Kontrol Üret ile oluşur.)</td></tr>'; }
+  if(!view.length){ tb.innerHTML='<tr><td colspan="'+K.length+'" class="loading">Kayıt yok</td></tr>'; }
+  const LNK=new Set(['evrak','tarih','stok','cari','makine','bas','bit','birim','kontrolNo']);   // LeanSys'te mavi görünen sütunlar
   view.slice((page-1)*len,page*len).forEach(s=>{
-    const cells=giris?[s.tarih,s.vardiya,s.cari,s.stok,s.ad,s.irsaliye,s.kontrol,s.miktar,s.birim,s.op]
-                     :[s.tarih,s.vardiya,s.cari,s.stok,s.ad,s.bolum,s.makine,s.bas,s.bit,s.kontrol,s.miktar,s.birim];
     const tr=el('tr',{class:s.id===selId?'sel':'',onclick:()=>{selId=s.id;render();},ondblclick:()=>olcumler(s)},
-      el('td',{},el('span',{class:'flag'+(s.ok?'':' ret'),title:s.ok?'Uygun':'Uygun değil'},'⚑')),
-      ...cells.map((c,i)=>el('td',{class:(i===2||i===4||i===6)?'lnk':''},c)));
+      ...K.map(([_,key])=>el('td',{class:LNK.has(key)?'lnk':''},hucre(s,key))));
     tb.append(tr);
   });
-  $('#info').textContent=view.length?`${view.length} kayıttan ${(page-1)*len+1} - ${Math.min(page*len,view.length)} arası gösteriliyor · satıra çift tıkla → Ölçümler`:'';
+  $('#info').textContent=view.length?`${view.length} kayıttan ${(page-1)*len+1} - ${Math.min(page*len,view.length)} arasındaki kayıtlar gösteriliyor`:'';
   const pg=$('#pg'); pg.innerHTML='';
   pg.append(el('button',{disabled:page<=1||undefined,onclick:()=>{page--;render();}},'Önceki'));
   for(let i=1;i<=pages&&i<=12;i++) pg.append(el('button',{class:i===page?'cur':'',onclick:()=>{page=i;render();}},String(i)));
   pg.append(el('button',{disabled:page>=pages||undefined,onclick:()=>{page++;render();}},'Sonraki'));
 }
 
-// ── Ölçümler penceresi (LeanSys görünümü) ────────────────────────────────
+// ── Ölçümler penceresi — LeanSys sütun sırası; sağ altta kırmızı "✖ Kapat" ──────────
+const OLCUM_BASLIK=['Ölçülecek Değer','Alt Limit','Hedef','Üst Limit','Ölçüm','Uygunluk','Sonuç','Açıklama','Nitel Hedef','Örnekleme','Sıklık','Kontrol Eden'];
 function olcumler(s){
   const r=s.rec, vals=Array.isArray(r.vals)?r.vals:[];
   const rowsHtml=[];
   vals.forEach(v=>{ const smps=(v.samples&&v.samples.length)?v.samples:[{value:null,ok:null}];
     smps.forEach(sm=>{ const qual=!!v.is_qualitative; const uy=sm.ok===false?'ret':'ok';
-      rowsHtml.push(`<tr><td>${esc(v.measure_name)}</td><td>${esc(commaFmt(v.lower_limit))}</td><td>${esc(commaFmt(v.upper_limit))}</td><td>${esc(commaFmt(v.target))}</td><td>${esc(qual?(v.nitel_hedef||''):(v.unit||''))}</td><td>${esc(v.method||'')}</td><td>${esc(v.sample_size??smps.length)}</td><td>${esc(v.sampling_frequency||'')}</td><td>${esc(sm.value==null?(qual?'0':''):commaFmt(sm.value))}</td><td class="${uy}"></td><td>${esc(sm.note||'')}</td><td>${esc(sm.by||r.operator||'')}</td></tr>`); }); });
+      // Sonuç: LeanSys'te ayrı sütun; ERP kaydında karşılığı yok → boş
+      rowsHtml.push(`<tr><td>${esc(v.measure_name)}</td><td>${esc(commaFmt(v.lower_limit))}</td><td>${esc(commaFmt(v.target))}</td><td>${esc(commaFmt(v.upper_limit))}</td><td>${esc(sm.value==null?'0':commaFmt(sm.value))}</td><td class="${uy}"></td><td></td><td>${esc(sm.note||'')}</td><td>${esc(qual?(v.nitel_hedef||''):'')}</td><td>${esc(v.sample_size??smps.length)}</td><td>${esc(v.sampling_frequency||'')}</td><td>${esc(sm.by||r.operator||'')}</td></tr>`); }); });
   const bg=el('div',{class:'mbg',onclick:e=>{ if(e.target===bg) bg.remove(); }});
   const m=el('div',{class:'modal'});
   m.append(el('div',{class:'mh'},el('span',{},'Ölçümler'),el('button',{title:'Kapat',onclick:()=>bg.remove()},'×')));
-  m.append(el('div',{class:'mb',html:`<div style="color:#777;font-size:12px;margin:0 0 8px">${esc(s.stok)} · ${esc(s.ad)} · ${esc(s.tarih)} ${esc(s.kontrol)} · ${esc(s.cari)} · sonuç: <b style="color:${s.ok?'#00a65a':'#dd4b39'}">${s.ok?'UYGUN':'UYGUN DEĞİL'}</b></div>
-    <div class="tbl-wrap"><table><thead><tr><th>Ölçülecek Değer</th><th>Alt Limit</th><th>Üst Limit</th><th>Hedef</th><th>Nitel Hedef</th><th>Yöntem</th><th>Örnekleme</th><th>Sıklık</th><th>Ölçüm Nicel</th><th>Uygunluk</th><th>Açıklama</th><th>Ölçüm Yapan</th></tr></thead><tbody>${rowsHtml.join('')||'<tr><td colspan="12" class="loading">Ölçüm yok</td></tr>'}</tbody></table></div>`}));
+  m.append(el('div',{class:'mb',html:`<div class="tbl-wrap"><table><thead><tr>${OLCUM_BASLIK.map(h=>'<th>'+esc(h)+'</th>').join('')}</tr></thead><tbody>${rowsHtml.join('')||'<tr><td colspan="12" class="loading">Ölçüm yok</td></tr>'}</tbody></table></div>`}));
+  m.append(el('div',{class:'mf'},el('button',{class:'btn-r',onclick:()=>bg.remove()},'✖ Kapat')));
   bg.append(m); $('#mroot').innerHTML=''; $('#mroot').append(bg);
 }
 
-// ── Excel'e Aktar (görünen liste, CSV; Excel doğrudan açar) ──────────────
+// ── Excel'e Aktar (görünen liste, ekrandaki sütunlar; CSV — Excel doğrudan açar) ──────
 function exportXls(){
-  const giris=stage==='giris';
-  const H=giris?['Sonuç','Tarih','Vardiya','Tedarikçi','Stok Kodu','Stok Adı','İrsaliye No','Kontrol Saati','Gelen Miktar','Birim','Kontrol Eden']
-               :['Sonuç','Tarih','Vardiya','Cari','Stok Kodu','Stok Adı','Bölüm','Makine','Başlama','Bitiş','Kontrol Saati','Üretim Miktarı','Birim'];
-  const L=view.map(s=>[s.ok?'UYGUN':'UYGUN DEĞİL',...(giris?[s.tarih,s.vardiya,s.cari,s.stok,s.ad,s.irsaliye,s.kontrol,s.miktar,s.birim,s.op]:[s.tarih,s.vardiya,s.cari,s.stok,s.ad,s.bolum,s.makine,s.bas,s.bit,s.kontrol,s.miktar,s.birim])]);
-  const csv='﻿'+[H,...L].map(r=>r.map(c=>'"'+String(c??'').replace(/"/g,'""')+'"').join(';')).join('\r\n');
+  const K=kolonlar().map(([b,k])=>[k==='bayrak'?'Sonuç':b,k]);
+  const L=view.map(s=>K.map(([_,k])=>k==='bayrak'?(s.ok?'UYGUN':'UYGUN DEĞİL'):k==='evrak'?((s.ok?'':'UYGUN DEĞİL · ')+s.evrak):s[k]));
+  const csv='﻿'+[K.map(x=>x[0]),...L].map(r=>r.map(c=>'"'+String(c??'').replace(/"/g,'""')+'"').join(';')).join('\r\n');
   const a=el('a',{href:URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})),download:`kalite_kayitlari_${stage}_${$('#fFrom').value}_${$('#fTo').value}.csv`}); document.body.append(a); a.click(); a.remove();
 }
 </script>
