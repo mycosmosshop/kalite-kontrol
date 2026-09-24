@@ -9,6 +9,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@300;400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
 <style>
 /* ── LeanSys Kalite görünümü: lacivert menü, mavi başlık, gri tablo başlığı, Source Sans ── */
 :root{
@@ -51,7 +52,9 @@ a{color:var(--ls-link);text-decoration:none}
 .menu .sub a::before{content:'○';margin-right:8px;font-size:12px}
 .menu .sub a.act::before{content:'●'}
 /* içerik */
-.main{margin-left:230px;padding-top:50px;min-height:100%}
+.main{margin-left:230px;padding-top:50px;min-height:100vh;display:flex;flex-direction:column}
+.lsfoot{margin-top:auto;background:#fff;border-top:1px solid #d2d6de;padding:12px;text-align:center}
+.lsfoot img{height:46px;vertical-align:middle}
 .crumb{background:var(--ls-bg);padding:15px 15px 10px;font-size:24px;font-weight:400}
 .crumb::before{content:'» ';color:#333}
 .box{background:var(--ls-panel);border-top:3px solid var(--ls-top);margin:0 15px 20px;box-shadow:0 1px 1px rgba(0,0,0,.1)}
@@ -70,11 +73,12 @@ a{color:var(--ls-link);text-decoration:none}
 table{border-collapse:collapse;width:100%;font-size:13px}
 th{background:var(--ls-th);border:1px solid var(--ls-line);padding:12px 8px;text-align:left;font-weight:700;color:#333;white-space:nowrap;position:sticky;top:0}
 td{border:1px solid var(--ls-line);padding:12px 8px;vertical-align:middle}
+td:nth-child(-n+2){white-space:nowrap}
 tbody tr{cursor:pointer}
 tbody tr:hover{background:#f5f5f5}
 tbody tr.sel{background:var(--ls-sel);color:#fff}
 tbody tr.sel a,tbody tr.sel .lnk{color:#fff}
-.flag{color:var(--ls-ok);font-size:14px}
+.flag{color:var(--ls-ok);font-size:13px}
 .flag.ret{color:var(--ls-ret)}
 .lnk{color:var(--ls-link)}
 .foot{display:flex;justify-content:space-between;align-items:center;padding:10px;color:var(--ls-muted);font-size:13px;flex-wrap:wrap;gap:8px}
@@ -168,6 +172,7 @@ tbody tr.sel a,tbody tr.sel .lnk{color:#fff}
       <div class="tbl-wrap"><table id="tbl"><thead><tr id="thead"></tr></thead><tbody id="tbody"><tr><td class="loading" colspan="14">Yükleniyor…</td></tr></tbody></table></div>
       <div class="foot"><div id="info"></div><div class="pg" id="pg"></div></div>
     </div>
+    <div class="lsfoot"><img src="leansys_logo.png" alt="LeanSys ERP+"></div>
   </div>
 </div>
 
@@ -279,7 +284,7 @@ function satir(r){
 }
 
 function hucre(s,key){
-  const bayrak=()=>el('span',{class:'flag'+(s.ok?'':' ret'),title:s.ok?'Uygun':'Uygun değil'},'⚑');
+  const bayrak=()=>el('i',{class:'fa fa-flag flag'+(s.ok?'':' ret'),title:s.ok?'Uygun':'Uygun değil'});
   if(key==='bayrak') return bayrak();
   if(key==='evrak')  return el('span',{},bayrak(),' '+s.evrak);
   return s[key];
@@ -287,7 +292,7 @@ function hucre(s,key){
 
 function render(){
   const K=kolonlar();
-  $('#thead').innerHTML=K.map(k=>'<th>'+esc(k[0])+'</th>').join('');
+  $('#thead').innerHTML=K.map(k=>'<th>'+(k[0]==='⚑'?'<i class="fa fa-flag"></i>':esc(k[0]))+'</th>').join('');
   const loc=$('#fLoc').value, res=$('#fRes').value, q=deTr($('#fQ').value.trim());
   view=rows.map(satir).filter(s=>(!loc||s.bolum===loc)&&(!res||(res==='OK'?s.ok:!s.ok))&&(!q||deTr([s.cari,s.stok,s.ad,s.makine,s.bolum,s.evrak,s.isemri,s.op,s.kontrolNo].join(' ')).includes(q)));
   const len=Number($('#pLen').value)||50, pages=Math.max(1,Math.ceil(view.length/len)); if(page>pages)page=pages;

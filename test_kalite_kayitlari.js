@@ -47,6 +47,8 @@ const OB = new Function(js.slice(js.indexOf('const OLCUM_BASLIK='), js.indexOf('
 assert.deepStrictEqual(OB, ['Ölçülecek Değer', 'Alt Limit', 'Hedef', 'Üst Limit', 'Ölçüm', 'Uygunluk', 'Sonuç', 'Açıklama', 'Nitel Hedef', 'Örnekleme', 'Sıklık', 'Kontrol Eden']);
 assert(js.includes('class="loading">Kayıt yok</td>') && !/Kayıt yok\./.test(js) && !js.includes('Otomatik Kontrol Üret'), 'boş listede yalnız "Kayıt yok" yazmalı');
 assert(js.includes("'✖ Kapat'") && html.includes('.btn-r{background:#dd4b39'), 'Ölçümler altında kırmızı ✖ Kapat');
+assert(html.includes('font-awesome/4.7.0') && js.includes("'fa fa-flag flag'") && !js.includes("'⚑');"), 'bayrak LeanSys ile aynı glif (FA4 fa-flag)');
+assert(html.includes('<div class="lsfoot"><img src="leansys_logo.png"') && fs.existsSync(__dirname + '/leansys_logo.png'), 'alt LeanSys logosu');
 assert(html.includes("body{font-family:'Source Sans 3'") && html.includes('fonts.googleapis.com/css2?family=Source+Sans+3'), 'LeanSys yazı tipi');
 
 // portal kartı: DEFAULT_MODULES'un İLK öğesi
