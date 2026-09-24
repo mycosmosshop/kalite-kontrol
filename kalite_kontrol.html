@@ -3573,9 +3573,14 @@ async function openBulkAuto(){
   QC_BY_LOC.forEach(x=>locSel.append(el('option',{value:x.label},x.label)));
   const qcInp=el('input',{class:'inp',placeholder:'Kaliteci ad(lar)ı — virgülle ayır',value:''});
   locSel.onchange=()=>{ const x=QC_BY_LOC.find(y=>y.label===locSel.value); qcInp.value=x?x.people.join(', '):''; };
+  // VARDİYA: "Tek vardiya" → kontrol saatleri 08:00–18:00 arasına sıkıştırılır, vardiya=1 yazılır.
+  // (Üretim saati bu aralığın dışındaysa kontroller yine 08:00–18:00'e taşınır.)
+  const shiftSel=el('select',{class:'inp'});
+  [['','Üretim saatinden (08–20 → 1, 20–08 → 2)'],['1','Tek vardiya · 08:00–18:00'],['2','2. vardiya · 20:00–08:00']].forEach(([v,t])=>shiftSel.append(el('option',{value:v},t)));
   m.append(el('div',{class:'row',style:'margin:4px 0 2px'},
     el('div',{class:'field',style:'flex:0;min-width:190px'},el('label',{class:'lab'},'Lokasyon'),locSel),
-    el('div',{class:'field grow'},el('label',{class:'lab'},'Kaliteci(ler)'),qcInp)));
+    el('div',{class:'field grow'},el('label',{class:'lab'},'Kaliteci(ler)'),qcInp),
+    el('div',{class:'field',style:'flex:0;min-width:250px'},el('label',{class:'lab'},'Vardiya / kontrol saati aralığı'),shiftSel)));
   m.append(el('div',{style:'font-size:11px;color:var(--muted);margin:0 0 10px'},'Lokasyon seçersen yalnız o lokasyonun üretimleri işlenir ve kayıtlara bu kaliteciler yazılır. Birden çok isim yazarsan üretimlere dağıtılır. Boş bırakırsan makineye göre otomatik atanır.'));
   const regenCb=el('input',{type:'checkbox'});
   m.append(el('label',{style:'display:flex;align-items:center;gap:6px;margin:6px 0 6px;cursor:pointer'},regenCb,'Var olan kayıtları silip yeniden üret (kapalıysa sadece eksik aşamalar tamamlanır)'));
@@ -3644,7 +3649,7 @@ async function openBulkAuto(){
         +'\n\nİptal edip yukarıdaki tabloya çevrim süresini elle yazabilirsin. Yine de devam edilsin mi?';
       if(!confirm(msg)) return;
     }
-    runBulkAuto(scope,plan,cyc,regenCb.checked,fillEmptyCb.checked,status,go,who,allOpsCb.checked,opMap,virtCb.checked);
+    runBulkAuto(scope,plan,cyc,regenCb.checked,fillEmptyCb.checked,status,go,who,allOpsCb.checked,opMap,virtCb.checked,shiftSel.value);
   }},'🎲 Üret');
   m.append(el('div',{},go),status);
   bg.append(m); root.innerHTML=''; root.append(bg);   // yükleniyor placeholder'ını temizle
@@ -3663,7 +3668,8 @@ async function openBulkAuto(){
       : '✔ Çevrim süreleri LeanSys op kartından dolduruldu (dk×60 = sn).';
   }
 }
-async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOps,opMap,addVirtual){
+// shiftMode: '' üretim saatinden · '1' tek vardiya (kontroller 08:00–18:00) · '2' gece (20:00–08:00)
+async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOps,opMap,addVirtual,shiftMode){
   // çevrim girilmediyse: mevcut başlama–bitiş sürelerine göre üret (proses dahil)
   if(!Object.values(cyc).some(v=>v>0)){
     if(!confirm('Hiç çevrim süresi girmedin.\n\nMevcut başlama–bitiş sürelerine göre eksik kontroller (Seri Başı / Proses / Son) üretilsin mi?\n(Bitmemiş = DEVAM EDEN üretimlerde kontrol ÜRETİLMEZ; üretim bitince tekrar çalıştır.)')) { return; }
@@ -3924,7 +3930,7 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
   for(const p of prods){
     pgSet(++doneN,' · '+made+' kayıt');
     if(!p.start_time){skipped++;continue;}   // başlama şart
-    let cs=cyc[(p.machine_code||'?')+'||'+(p.stock_code||'?')]; const start=new Date(p.start_time);
+    let cs=cyc[(p.machine_code||'?')+'||'+(p.stock_code||'?')]; let start=new Date(p.start_time);   // let: vardiya penceresi start/end'i kırpar
     // SANAL (◇) satır türetilmiştir, gerçek saati yoktur: çevrim tablosu boşsa LeanSys op kartı
     // std. zamanına düş. Böylece bitişi bazdan kopyalanmış ESKİ sanal kayıtlar da düzelir.
     if(!(cs>0) && /\|V$/.test(p.fingerprint||'')) cs=(szBy[(p.stock_code||'')+'|'+(p.machine_code||'')]||0)*60;
@@ -3982,6 +3988,19 @@ async function runBulkAuto(prods,plan,cyc,regen,fillEmpty,status,go,who,useAllOp
       cur.delete('proses'); recMap[p.id]['proses']=[]; cleaned++;
     }
     const recs=[];
+    // VARDİYA PENCERESİ: tek vardiya seçildiyse kontrol saatleri üretim gününün 08:00–18:00'ine
+    // sıkıştırılır (üretim saati dışarıdaysa da). Gece: 20:00–08:00(+1). Boş: üretim saati olduğu gibi.
+    if(shiftMode==='1'||shiftMode==='2'){
+      const d0=new Date(start); d0.setHours(0,0,0,0);
+      const [wS,wE]= shiftMode==='1' ? [8*60,18*60] : [20*60,32*60];
+      const wsMs=d0.getTime()+wS*60000, weMs=d0.getTime()+wE*60000;
+      const cl=t=>Math.min(Math.max(t,wsMs),weMs);
+      let s2=cl(start.getTime()), e2=cl(end?end.getTime():start.getTime()+durMin*60000);
+      // en az 6 dk pencere: üretim TAMAMEN dışarıdaysa (ikisi de aynı uca kırpıldı) pencere
+      // sınırının İÇİNE doğru aç — 18:00'i 18:06 yapıp aralık dışına taşmasın
+      if(e2-s2<6*60000){ if(e2+6*60000<=weMs) e2=s2+6*60000; else s2=e2-6*60000; }
+      start=new Date(s2); end=new Date(e2); durMin=Math.round((e2-s2)/60000);
+    }
     // seri başı / giriş kontrolü üretim başından 1–5 dk SONRA (başlangıçla aynı olmasın); bitişi geçmesin
     const endMs=(end&&end.getTime()>start.getTime())?end.getTime():(start.getTime()+6*60000);
     const offWhen=()=>new Date(Math.min(start.getTime()+Math.round((1+Math.random()*4)*60000), endMs-30000));
@@ -5997,10 +6016,16 @@ async function editRecord(r,prod){
     m.append(el('div',{class:'row',style:'margin-bottom:14px'},
       el('div',{class:'field grow'},el('label',{class:'lab'},'Operatör'),el('input',{class:'inp',id:'er_oper',value:oper,disabled:canEdit?undefined:true,oninput:e=>oper=e.target.value}))
     ));
-    if(r.stage==='giris' && canEdit){
-      m.append(el('div',{class:'field',style:'margin:0 0 14px;max-width:320px'},
-        el('label',{class:'lab'},'Kontrol Saati (elle ayarla · boş = değişmez)'),
-        el('input',{class:'inp',type:'datetime-local',id:'er_checkedat',value:toLocalInput(r.checked_at)})));
+    // Kontrol saati + vardiya her aşamada düzenlenebilir (yalnız giriş'teydi; seri başı/proses/son
+    // kontrolde saat salt-okunur kalıyordu). Vardiya boş = saatten türetilir (shiftForTime).
+    if(canEdit){
+      const vsel=el('select',{class:'inp',id:'er_shift'});
+      [['','Saatten türet'],['1','1. vardiya'],['2','2. vardiya']].forEach(([v,t])=>vsel.append(el('option',{value:v,selected:(String(r.shift??'')===v)||undefined},t)));
+      m.append(el('div',{class:'row',style:'margin:0 0 14px;gap:12px;flex-wrap:wrap'},
+        el('div',{class:'field',style:'max-width:320px'},
+          el('label',{class:'lab'},'Kontrol Saati (elle ayarla · boş = değişmez)'),
+          el('input',{class:'inp',type:'datetime-local',id:'er_checkedat',value:toLocalInput(r.checked_at)})),
+        el('div',{class:'field',style:'max-width:200px'},el('label',{class:'lab'},'Vardiya'),vsel)));
     }
     if(!canEdit) m.append(el('div',{class:'msg info',style:'margin-bottom:12px'},'🔒 Salt görünüm — bu kaydı yalnızca <b>admin</b> düzenleyebilir. Düzeltmek için kaydı <b>silip yeniden girebilirsin</b>.'));
     // her madde, örnekleme kadar satır
@@ -6066,6 +6091,8 @@ async function editRecord(r,prod){
     const patch={vals,stage,operator:$('#er_oper').value.trim()||null,note:$('#er_note').value.trim()||null,overall_result:overall};
     const ca=document.getElementById('er_checkedat');
     if(ca && ca.value){ const iso=new Date(ca.value).toISOString(); patch.checked_at=iso; patch.shift=shiftForTime(new Date(iso)); r.checked_at=iso; }   // boş = değişmez
+    const vs=document.getElementById('er_shift');
+    if(vs && vs.value) patch.shift=Number(vs.value);   // elle seçilen vardiya saatten türeyeni EZER
     const {error}=await sb.from('control_records').update(patch).eq('id',r.id);
     if(error){toast(esc(error.message),'err');return;}
     if(overall==='RET') await autoOpenNCR({id:r.id,overall_result:overall,vals,stock_code:r.stock_code,stock_name:r.stock_name,checked_at:r.checked_at,production_id:r.production_id,giris_cari:r.giris_cari}, prod);   // RET → otomatik uygunsuzluk

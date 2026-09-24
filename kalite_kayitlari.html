@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kalite Kayıtları</title>
+<meta name="description" content="ERP'de otomatik üretilen kalite kontrol kayıtlarını LeanSys görünümünde gösteren salt-okunur pencere.">
+<link rel="icon" href="favicon.png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+/* ── LeanSys Kalite görünümü: lacivert menü, mavi başlık, gri tablo başlığı, Source Sans ── */
+:root{
+  --ls-nav:#1f2d3d; --ls-nav2:#1a2634; --ls-nav-txt:#b8c7ce; --ls-nav-act:#fff;
+  --ls-top:#3c8dbc; --ls-top2:#367fa9; --ls-bg:#ecf0f5; --ls-panel:#fff; --ls-line:#ddd;
+  --ls-th:#f9f9f9; --ls-txt:#333; --ls-muted:#777; --ls-link:#3c8dbc; --ls-sel:#3c8dbc; --ls-ok:#00a65a; --ls-ret:#dd4b39;
+}
+:root:not([data-theme="light"]){ }
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --ls-bg:#ecf0f5; } }
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{font-family:'Source Sans Pro','Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:var(--ls-txt);background:var(--ls-bg);line-height:1.42857}
+a{color:var(--ls-link);text-decoration:none}
+.hidden{display:none!important}
+/* üst şerit */
+.top{position:fixed;left:0;right:0;top:0;height:50px;background:var(--ls-top);color:#fff;z-index:20;display:flex;align-items:stretch}
+.brand{width:230px;background:var(--ls-top2);display:flex;align-items:center;padding:0 15px;font-size:20px;font-weight:300;white-space:nowrap}
+.brand b{font-weight:700;margin-right:6px}
+.top .bars{width:44px;display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer}
+.top .bars:hover{background:rgba(0,0,0,.1)}
+.top .right{margin-left:auto;display:flex;align-items:center;gap:0}
+.top .right > *{padding:0 15px;display:flex;align-items:center;height:50px;font-size:14px}
+.top select{height:30px;border:1px solid #ccc;border-radius:2px;background:#fff;color:#333;padding:0 8px;font:inherit;font-size:13px;min-width:130px}
+.top .right button{background:none;border:0;color:#fff;font:inherit;cursor:pointer}
+.top .right button:hover{background:rgba(0,0,0,.1)}
+/* sol menü */
+.side{position:fixed;top:50px;left:0;bottom:0;width:230px;background:var(--ls-nav);color:var(--ls-nav-txt);overflow-y:auto;z-index:19}
+.user{display:flex;align-items:center;gap:12px;padding:10px 15px;height:60px}
+.user .ava{width:45px;height:45px;border-radius:50%;background:#8aa;display:flex;align-items:center;justify-content:center;color:#fff;font-size:22px}
+.user .nm{color:#fff;font-weight:700;font-size:14px;line-height:1.2}
+.user .st{font-size:12px;color:var(--ls-nav-txt)}
+.user .st::before{content:'';display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ls-ok);margin-right:5px}
+.menu-h{padding:10px 15px 8px;font-size:12px;color:#4b646f;background:var(--ls-nav2)}
+.menu a{display:block;padding:12px 15px;color:var(--ls-nav-txt);border-left:3px solid transparent;font-size:14px}
+.menu a:hover,.menu a.act{color:var(--ls-nav-act);background:#1e282c;border-left-color:var(--ls-top)}
+.menu a .ic{display:inline-block;width:20px;margin-right:6px;text-align:center}
+.menu .grp{padding:12px 15px;color:var(--ls-nav-txt);display:flex;justify-content:space-between;cursor:pointer}
+.menu .grp .ic{display:inline-block;width:20px;margin-right:6px;text-align:center}
+.menu .sub a{padding-left:35px;font-size:14px}
+.menu .sub a::before{content:'○';margin-right:8px;font-size:12px}
+.menu .sub a.act::before{content:'●'}
+/* içerik */
+.main{margin-left:230px;padding-top:50px;min-height:100%}
+.crumb{background:var(--ls-bg);padding:15px 15px 10px;font-size:24px;font-weight:400}
+.crumb::before{content:'» ';color:#333}
+.box{background:var(--ls-panel);border-top:3px solid var(--ls-top);margin:0 15px 20px;box-shadow:0 1px 1px rgba(0,0,0,.1)}
+.fbar{display:flex;flex-wrap:wrap;align-items:center;border-bottom:1px solid #f4f4f4}
+.fbar .f{display:flex;align-items:center;gap:6px;padding:8px 10px;border-right:1px solid #eee;font-weight:700}
+.fbar input[type=date],.fbar select{height:28px;border:1px solid #ccc;border-radius:2px;padding:0 6px;font:inherit;font-size:13px;font-weight:400}
+.fbar .go{padding:8px 14px;cursor:pointer;color:#333;background:none;border:0;font:inherit;font-weight:700}
+.fbar .go:hover{background:#f4f4f4}
+.tools{display:flex;align-items:center;justify-content:space-between;padding:12px 10px 8px;gap:12px;flex-wrap:wrap}
+.tools .len select{height:28px;border:1px solid #ccc;border-radius:2px;margin:0 6px;font:inherit;font-size:13px}
+.tools .srch{display:flex;align-items:center;gap:8px}
+.tools .srch input{height:46px;width:240px;border:1px solid #ccc;border-radius:3px;padding:0 10px;font:inherit}
+.btn-l{border:1px solid #ccc;background:#fff;border-radius:2px;padding:7px 12px;font:inherit;font-size:13px;cursor:pointer;color:#333}
+.btn-l:hover{background:#f4f4f4}
+.tbl-wrap{overflow:auto}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th{background:var(--ls-th);border:1px solid var(--ls-line);padding:12px 8px;text-align:left;font-weight:700;color:#333;white-space:nowrap;position:sticky;top:0}
+td{border:1px solid var(--ls-line);padding:12px 8px;vertical-align:middle}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:#f5f5f5}
+tbody tr.sel{background:var(--ls-sel);color:#fff}
+tbody tr.sel a,tbody tr.sel .lnk{color:#fff}
+.flag{color:var(--ls-ok);font-size:14px}
+.flag.ret{color:var(--ls-ret)}
+.lnk{color:var(--ls-link)}
+.foot{display:flex;justify-content:space-between;align-items:center;padding:10px;color:var(--ls-muted);font-size:13px;flex-wrap:wrap;gap:8px}
+.pg button{border:1px solid #ddd;background:#fff;padding:5px 10px;margin-left:-1px;cursor:pointer;font:inherit;color:var(--ls-link)}
+.pg button.cur{background:var(--ls-top);color:#fff;border-color:var(--ls-top)}
+.pg button:disabled{color:#aaa;cursor:default}
+/* modal — LeanSys "Ölçümler" */
+.mbg{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:50;display:flex;align-items:flex-start;justify-content:center;padding:30px 20px;overflow:auto}
+.modal{background:#fff;width:100%;max-width:1860px;border-radius:0;box-shadow:0 5px 15px rgba(0,0,0,.5)}
+.modal .mh{background:var(--ls-top);color:#fff;padding:14px 15px;font-size:16px;display:flex;justify-content:space-between;align-items:center}
+.modal .mh button{background:none;border:0;color:#fff;font-size:22px;cursor:pointer;opacity:.6;line-height:1}
+.modal .mh button:hover{opacity:1}
+.modal .mb{padding:15px}
+.modal table th{position:static}
+.modal td.ok::before{content:'☑';font-size:15px}
+.modal td.ret::before{content:'☒';color:var(--ls-ret);font-size:15px}
+.msg{padding:14px;margin:12px 15px;background:#fff3cd;border:1px solid #ffeeba;color:#856404}
+.msg.err{background:#f8d7da;border-color:#f5c6cb;color:#721c24}
+.loading{padding:30px;text-align:center;color:var(--ls-muted)}
+/* giriş */
+#auth{position:fixed;inset:0;background:var(--ls-bg);display:flex;align-items:center;justify-content:center;z-index:100}
+.auth-card{background:#fff;padding:24px;width:360px;max-width:92vw;box-shadow:0 1px 4px rgba(0,0,0,.15)}
+.auth-card h1{font-size:20px;font-weight:400;margin:0 0 4px}
+.auth-card .sub{color:var(--ls-muted);font-size:13px;margin:0 0 14px}
+.auth-card label{display:block;font-size:13px;margin:8px 0 3px}
+.auth-card input{width:100%;height:34px;border:1px solid #ccc;border-radius:2px;padding:0 10px;font:inherit}
+.auth-card .btn{width:100%;margin-top:14px;height:36px;background:var(--ls-top);color:#fff;border:0;border-radius:3px;font:inherit;font-weight:700;cursor:pointer}
+.ro{background:#d9edf7;color:#31708f;border:1px solid #bce8f1;padding:6px 10px;font-size:12px;margin:0 15px 10px;border-radius:3px}
+@media (max-width:900px){
+  .side{display:none}.main{margin-left:0}.brand{width:auto}
+  .top .right > *:not(:last-child){display:none}
+  .tools .srch input{width:150px}
+}
+</style>
+</head>
+<body>
+
+<div id="auth" class="hidden">
+  <div class="auth-card">
+    <h1>Kalite Kayıtları</h1>
+    <p class="sub">ERP kalite kontrol kayıtları — salt görünüm</p>
+    <div id="authMsg"></div>
+    <label>E-posta</label><input id="email" type="email" autocomplete="email">
+    <label>Şifre</label><input id="password" type="password" autocomplete="current-password">
+    <button class="btn" id="loginBtn">Giriş Yap</button>
+  </div>
+</div>
+
+<div id="app" class="hidden">
+  <div class="top">
+    <div class="brand"><b>LeanSys</b> Kalite</div>
+    <div class="bars" title="Menü">≡</div>
+    <div class="right">
+      <div><select id="fLoc"><option value="">TÜM ŞUBELER</option></select></div>
+      <div id="today"></div>
+      <div><button id="btnKK" title="Kalite Kontrol uygulamasına geç">Kalite Kontrol</button></div>
+      <div><button id="btnOut">Çıkış</button></div>
+    </div>
+  </div>
+
+  <div class="side">
+    <div class="user"><div class="ava">👤</div><div><div class="nm" id="whoName">—</div><div class="st">Online</div></div></div>
+    <div class="menu-h">Menü</div>
+    <div class="menu" id="menu">
+      <div class="grp"><span><span class="ic">📚</span>Kalite Kontrol Kayıtları</span><span>⌄</span></div>
+      <div class="sub">
+        <a href="#giris" data-stage="giris">Giriş Kontrol Kayıtları</a>
+        <a href="#seri_basi" data-stage="seri_basi">Seri Başı Onay Kayıtları</a>
+        <a href="#proses" data-stage="proses">Proses Kontrol Kayıtları</a>
+        <a href="#son" data-stage="son">Son Kontrol Kayıtları</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="crumb" id="crumb">Seri Başı Onayı Kontrol Kayıtları</div>
+    <div class="ro">🔒 Salt görünüm — kayıtlar ERP Kalite Kontrol'de üretilir; burada değiştirilmez. LeanSys'e yazılmaz.</div>
+    <div class="box">
+      <div class="fbar">
+        <div class="f">📅 İlk Tarih : <input type="date" id="fFrom"></div>
+        <div class="f">Son Tarih : <input type="date" id="fTo"></div>
+        <div class="f">✔ Kalite Durum : <select id="fRes"><option value="">Tümü</option><option value="OK">Uygun</option><option value="RET">Uygun Değil</option></select></div>
+        <button class="go" id="btnGo">▶ Görüntüle</button>
+      </div>
+      <div class="tools">
+        <div class="len">Sayfada <select id="pLen"><option>25</option><option selected>50</option><option>100</option><option>250</option></select> kayıt göster</div>
+        <div class="srch"><span>Ara:</span><input id="fQ" type="search"></div>
+      </div>
+      <div class="tools" style="padding-top:0;justify-content:flex-end"><div><button class="btn-l" id="btnXls">Excel'e Aktar</button> <button class="btn-l" id="btnPrint">Yazdır</button></div></div>
+      <div class="tbl-wrap"><table id="tbl"><thead><tr id="thead"></tr></thead><tbody id="tbody"><tr><td class="loading" colspan="14">Yükleniyor…</td></tr></tbody></table></div>
+      <div class="foot"><div id="info"></div><div class="pg" id="pg"></div></div>
+    </div>
+  </div>
+</div>
+
+<div id="mroot"></div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════════════════
+//  SALT OKUNUR: Bu sayfa yalnız Supabase'ten SELECT yapar. control_records /
+//  productions / operasyon_kartlari tablolarına insert/update/delete YOKTUR.
+//  LeanSys'e hiçbir yazma yapılmaz; kayıtlar ERP Kalite Kontrol'de üretilir.
+// ══════════════════════════════════════════════════════════════════════════════
+const SUPABASE_URL  = 'https://nnubrxbpthmkitueixbh.supabase.co';
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5udWJyeGJwdGhta2l0dWVpeGJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1NjI2MDIsImV4cCI6MjA5NjEzODYwMn0.CHZUOylf_q8kPTJ8y6AkOaEuFGVQlixefMTYaU9mSvI';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);   // kalite_kontrol.html ile aynı oturum (localStorage)
+
+const STAGES = {giris:'Giriş Kalite Kontrol Kayıtları', seri_basi:'Seri Başı Onayı Kontrol Kayıtları', proses:'Proses Kalite Kontrol Kayıtları', son:'Son Kalite Kontrol Kayıtları'};
+const $ = s => document.querySelector(s);
+const el = (t,a={},...ch)=>{ const e=document.createElement(t); for(const k in a){ if(k==='html')e.innerHTML=a[k]; else if(k==='class')e.className=a[k]; else if(k.startsWith('on'))e[k]=a[k]; else e.setAttribute(k,a[k]); } ch.flat().forEach(c=>{ if(c!=null) e.append(c.nodeType?c:document.createTextNode(String(c))); }); return e; };
+const esc = s => String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtDate = d => { if(!d) return ''; const m=String(d).match(/^(\d{4})-(\d{2})-(\d{2})/); return m?`${m[3]}.${m[2]}.${m[1]}`:new Date(d).toLocaleDateString('tr-TR'); };
+const fmtTime = d => d? new Date(d).toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'}):'';
+// LeanSys üretim saatleri Supabase'e saat-dilimsiz yazılıp UTC sanılıyor → UTC olarak oku = orijinal duvar saati
+const fmtTimeWall = d => d? new Date(d).toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit',timeZone:'UTC'}):'';
+const commaFmt = v => (v==null||v==='')?'':String(v).replace('.',',');
+const deTr = s => String(s==null?'':s).replace(/[İıI]/g,'i').replace(/[Çç]/g,'c').replace(/[Ğğ]/g,'g').replace(/[Öö]/g,'o').replace(/[Şş]/g,'s').replace(/[Üü]/g,'u').toLowerCase();
+// Yedek: makine grup haritasında yoksa makine adındaki şube izi → operasyon kartındaki grup adlarıyla AYNI yazım
+const SUBE_ETIKET={eskisehir:'ESKISEHIR SUBESI',ankara:'ANKARA SUBESI',velikoy:'VELIKÖY SUBESI',bursa:'BURSA NON WOVEN PROSESI',adana:'ADANA SUBESI',cerkezkoy:'ÇERKEZKÖY TEKNIK'};
+// Bölüm: makine kodu → makine_grup (ERP operasyon kartı: üretim yeri makine_grup sütunundadır)
+let GROUP = {};
+function bolum(p){ if(!p) return ''; const g=GROUP[String(p.machine_code||'').trim()]; if(g) return g; const m=deTr(p.machine_name).match(/eskisehir|ankara|velikoy|bursa|adana|cerkezkoy/); return m?SUBE_ETIKET[m[0]]:''; }
+
+// ── oturum ───────────────────────────────────────────────────────────────
+let ME=null, BOOTED=false;
+function boot(session){
+  if(BOOTED) return;
+  if(!session?.user){ $('#auth').classList.remove('hidden'); return; }
+  BOOTED=true; ME={id:session.user.id,email:session.user.email};
+  $('#auth').classList.add('hidden'); $('#app').classList.remove('hidden');
+  $('#whoName').textContent = (ME.email||'').split('@')[0].toLocaleUpperCase('tr').replace(/[._]/g,' ');
+  setTimeout(init,0);
+}
+sb.auth.onAuthStateChange((_e,s)=>boot(s));
+(async()=>{ const {data}=await sb.auth.getSession(); boot(data.session); })();
+$('#loginBtn').onclick=async()=>{ const {error}=await sb.auth.signInWithPassword({email:$('#email').value.trim(),password:$('#password').value}); if(error) $('#authMsg').innerHTML='<div class="msg err">'+esc(error.message)+'</div>'; };
+$('#password').onkeydown=e=>{ if(e.key==='Enter') $('#loginBtn').click(); };
+$('#btnOut').onclick=async()=>{ await sb.auth.signOut(); location.reload(); };
+$('#btnKK').onclick=()=>{ location.href='kalite_kontrol.html'; };
+
+// ── durum ────────────────────────────────────────────────────────────────
+let stage='seri_basi', rows=[], view=[], page=1, selId=null;
+const PROD={};   // production_id → productions satırı
+
+async function init(){
+  const d=new Date(); $('#today').textContent=fmtDate(d.toISOString().slice(0,10));
+  const t=new Date(d); t.setDate(t.getDate()-7);
+  $('#fFrom').value=t.toISOString().slice(0,10); $('#fTo').value=d.toISOString().slice(0,10);
+  // Bölüm haritası (operasyon kartı: makine_kodu → makine_grup) — salt okuma, bir kez
+  try{ const {data}=await sb.from('operasyon_kartlari').select('makine_kodu,makine_grup').not('makine_grup','is',null).limit(5000);
+    (data||[]).forEach(o=>{ if(o.makine_kodu && !GROUP[o.makine_kodu]) GROUP[o.makine_kodu]=o.makine_grup; });
+    const locs=[...new Set(Object.values(GROUP))].sort((a,b)=>a.localeCompare(b,'tr'));
+    locs.forEach(l=>$('#fLoc').append(el('option',{value:l},l)));
+  }catch(e){ console.warn('makine grup:',e); }
+  const h=(location.hash||'').replace('#',''); if(STAGES[h]) stage=h;
+  document.querySelectorAll('#menu a[data-stage]').forEach(a=>a.onclick=e=>{ e.preventDefault(); stage=a.dataset.stage; location.hash=stage; load(); });
+  $('#btnGo').onclick=load; $('#fLoc').onchange=render; $('#fRes').onchange=render; $('#pLen').onchange=()=>{page=1;render();};
+  let deb; $('#fQ').oninput=()=>{ clearTimeout(deb); deb=setTimeout(()=>{page=1;render();},250); };
+  $('#btnXls').onclick=exportXls; $('#btnPrint').onclick=()=>window.print();
+  load();
+}
+
+async function load(){
+  document.querySelectorAll('#menu a[data-stage]').forEach(a=>a.classList.toggle('act',a.dataset.stage===stage));
+  $('#crumb').textContent=STAGES[stage];
+  $('#tbody').innerHTML='<tr><td class="loading" colspan="14">Yükleniyor…</td></tr>';
+  const from=$('#fFrom').value, to=$('#fTo').value;
+  let q=sb.from('control_records').select('*').eq('stage',stage).order('checked_at',{ascending:true}).limit(3000);
+  if(from) q=q.gte('checked_at',from+'T00:00:00');
+  if(to)   q=q.lte('checked_at',to+'T23:59:59');
+  const {data,error}=await q;
+  if(error){ $('#tbody').innerHTML='<tr><td colspan="14"><div class="msg err">'+esc(error.message)+'</div></td></tr>'; return; }
+  rows=data||[];
+  // üretim satırları (cari / makine / başlama-bitiş / miktar)
+  const ids=[...new Set(rows.map(r=>r.production_id).filter(x=>x!=null))].filter(id=>!PROD[id]);
+  for(let i=0;i<ids.length;i+=200){ const {data:ps}=await sb.from('productions').select('*').in('id',ids.slice(i,i+200)); (ps||[]).forEach(p=>PROD[p.id]=p); }
+  page=1; selId=null; render();
+}
+
+function satir(r){
+  const p=PROD[r.production_id]||{};
+  const giris=stage==='giris';
+  return {
+    id:r.id, ok:r.overall_result!=='RET', tarih:fmtDate(r.checked_at), vardiya:r.shift??p.shift??'',
+    cari:giris?(r.giris_cari||''):(p.customer||''), stok:r.stock_code||p.stock_code||'', ad:r.stock_name||p.stock_name||'',
+    bolum:giris?'':bolum(p), makine:giris?'':(p.machine_name||p.machine_code||''),
+    bas:giris?fmtTime(r.checked_at):fmtTimeWall(p.start_time), bit:giris?'':fmtTimeWall(p.end_time),
+    miktar:giris?commaFmt(r.giris_miktar):commaFmt(p.quantity), birim:giris?(r.giris_birim||''):(p.unit||''),
+    irsaliye:giris?(r.giris_irsaliye||''):'', isemri:p.work_order||'', kontrol:fmtTime(r.checked_at), op:r.operator||'', rec:r
+  };
+}
+
+function render(){
+  const giris=stage==='giris';
+  const H=giris?['⚑','Tarih','Vardiya','Tedarikçi','Stok Kodu','Stok Adı','İrsaliye No','Kontrol Saati','Gelen Miktar','Birim','Kontrol Eden']
+               :['⚑','Tarih','Vardiya','Cari','Stok Kodu','Stok Adı','Bölüm','Makine','Başlama','Bitiş','Kontrol Saati','Üretim Miktarı','Birim'];
+  $('#thead').innerHTML=H.map(h=>'<th>'+esc(h)+'</th>').join('');
+  const loc=$('#fLoc').value, res=$('#fRes').value, q=deTr($('#fQ').value.trim());
+  view=rows.map(satir).filter(s=>(!loc||s.bolum===loc)&&(!res||(res==='OK'?s.ok:!s.ok))&&(!q||deTr([s.cari,s.stok,s.ad,s.makine,s.bolum,s.irsaliye,s.isemri,s.op].join(' ')).includes(q)));
+  const len=Number($('#pLen').value)||50, pages=Math.max(1,Math.ceil(view.length/len)); if(page>pages)page=pages;
+  const tb=$('#tbody'); tb.innerHTML='';
+  if(!view.length){ tb.innerHTML='<tr><td colspan="14" class="loading">Kayıt yok. (Kayıtlar ERP Kalite Kontrol → Otomatik Kontrol Üret ile oluşur.)</td></tr>'; }
+  view.slice((page-1)*len,page*len).forEach(s=>{
+    const cells=giris?[s.tarih,s.vardiya,s.cari,s.stok,s.ad,s.irsaliye,s.kontrol,s.miktar,s.birim,s.op]
+                     :[s.tarih,s.vardiya,s.cari,s.stok,s.ad,s.bolum,s.makine,s.bas,s.bit,s.kontrol,s.miktar,s.birim];
+    const tr=el('tr',{class:s.id===selId?'sel':'',onclick:()=>{selId=s.id;render();},ondblclick:()=>olcumler(s)},
+      el('td',{},el('span',{class:'flag'+(s.ok?'':' ret'),title:s.ok?'Uygun':'Uygun değil'},'⚑')),
+      ...cells.map((c,i)=>el('td',{class:(i===2||i===4||i===6)?'lnk':''},c)));
+    tb.append(tr);
+  });
+  $('#info').textContent=view.length?`${view.length} kayıttan ${(page-1)*len+1} - ${Math.min(page*len,view.length)} arası gösteriliyor · satıra çift tıkla → Ölçümler`:'';
+  const pg=$('#pg'); pg.innerHTML='';
+  pg.append(el('button',{disabled:page<=1||undefined,onclick:()=>{page--;render();}},'Önceki'));
+  for(let i=1;i<=pages&&i<=12;i++) pg.append(el('button',{class:i===page?'cur':'',onclick:()=>{page=i;render();}},String(i)));
+  pg.append(el('button',{disabled:page>=pages||undefined,onclick:()=>{page++;render();}},'Sonraki'));
+}
+
+// ── Ölçümler penceresi (LeanSys görünümü) ────────────────────────────────
+function olcumler(s){
+  const r=s.rec, vals=Array.isArray(r.vals)?r.vals:[];
+  const rowsHtml=[];
+  vals.forEach(v=>{ const smps=(v.samples&&v.samples.length)?v.samples:[{value:null,ok:null}];
+    smps.forEach(sm=>{ const qual=!!v.is_qualitative; const uy=sm.ok===false?'ret':'ok';
+      rowsHtml.push(`<tr><td>${esc(v.measure_name)}</td><td>${esc(commaFmt(v.lower_limit))}</td><td>${esc(commaFmt(v.upper_limit))}</td><td>${esc(commaFmt(v.target))}</td><td>${esc(qual?(v.nitel_hedef||''):(v.unit||''))}</td><td>${esc(v.method||'')}</td><td>${esc(v.sample_size??smps.length)}</td><td>${esc(v.sampling_frequency||'')}</td><td>${esc(sm.value==null?(qual?'0':''):commaFmt(sm.value))}</td><td class="${uy}"></td><td>${esc(sm.note||'')}</td><td>${esc(sm.by||r.operator||'')}</td></tr>`); }); });
+  const bg=el('div',{class:'mbg',onclick:e=>{ if(e.target===bg) bg.remove(); }});
+  const m=el('div',{class:'modal'});
+  m.append(el('div',{class:'mh'},el('span',{},'Ölçümler'),el('button',{title:'Kapat',onclick:()=>bg.remove()},'×')));
+  m.append(el('div',{class:'mb',html:`<div style="color:#777;font-size:12px;margin:0 0 8px">${esc(s.stok)} · ${esc(s.ad)} · ${esc(s.tarih)} ${esc(s.kontrol)} · ${esc(s.cari)} · sonuç: <b style="color:${s.ok?'#00a65a':'#dd4b39'}">${s.ok?'UYGUN':'UYGUN DEĞİL'}</b></div>
+    <div class="tbl-wrap"><table><thead><tr><th>Ölçülecek Değer</th><th>Alt Limit</th><th>Üst Limit</th><th>Hedef</th><th>Nitel Hedef</th><th>Yöntem</th><th>Örnekleme</th><th>Sıklık</th><th>Ölçüm Nicel</th><th>Uygunluk</th><th>Açıklama</th><th>Ölçüm Yapan</th></tr></thead><tbody>${rowsHtml.join('')||'<tr><td colspan="12" class="loading">Ölçüm yok</td></tr>'}</tbody></table></div>`}));
+  bg.append(m); $('#mroot').innerHTML=''; $('#mroot').append(bg);
+}
+
+// ── Excel'e Aktar (görünen liste, CSV; Excel doğrudan açar) ──────────────
+function exportXls(){
+  const giris=stage==='giris';
+  const H=giris?['Sonuç','Tarih','Vardiya','Tedarikçi','Stok Kodu','Stok Adı','İrsaliye No','Kontrol Saati','Gelen Miktar','Birim','Kontrol Eden']
+               :['Sonuç','Tarih','Vardiya','Cari','Stok Kodu','Stok Adı','Bölüm','Makine','Başlama','Bitiş','Kontrol Saati','Üretim Miktarı','Birim'];
+  const L=view.map(s=>[s.ok?'UYGUN':'UYGUN DEĞİL',...(giris?[s.tarih,s.vardiya,s.cari,s.stok,s.ad,s.irsaliye,s.kontrol,s.miktar,s.birim,s.op]:[s.tarih,s.vardiya,s.cari,s.stok,s.ad,s.bolum,s.makine,s.bas,s.bit,s.kontrol,s.miktar,s.birim])]);
+  const csv='﻿'+[H,...L].map(r=>r.map(c=>'"'+String(c??'').replace(/"/g,'""')+'"').join(';')).join('\r\n');
+  const a=el('a',{href:URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})),download:`kalite_kayitlari_${stage}_${$('#fFrom').value}_${$('#fTo').value}.csv`}); document.body.append(a); a.click(); a.remove();
+}
+</script>
+</body>
+</html>
