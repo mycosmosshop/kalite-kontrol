@@ -59,6 +59,15 @@ assert(html.includes('<div class="lsfoot"><img src="leansys_logo.png"') && fs.ex
 assert(html.includes('tbody tr:nth-child(odd){background:#f9f9f9}') && html.includes('--ls-th:#efefef'), 'LeanSys satır tonları (zebra) + başlık tonu');
 assert(html.includes("body{font-family:'Source Sans 3'") && html.includes('fonts.googleapis.com/css2?family=Source+Sans+3'), 'LeanSys yazı tipi');
 
+// 5) 1000 satır tavanı: hepsi() sayfalı çeker — 2.350 satırlık sahte tabloda 3 istek, hepsi gelir; sorgu limit() kullanmaz
+const hepsi = new Function('return async ' + cek('hepsi'))();
+{ const N = 2350, tablo = Array.from({ length: N }, (_, i) => ({ id: i + 1 })); let istek = 0;
+  const mk = () => ({ range: async (a, b) => { istek++; return { data: tablo.slice(a, b + 1), error: null }; } });
+  hepsi(mk).then(out => { assert.strictEqual(out.length, N, 'sayfalı çekme eksik: ' + out.length); assert.strictEqual(istek, 3); assert.strictEqual(out[N - 1].id, N); });
+}
+assert(!/\.limit\(/.test(js), 'limit() 1000 tavanını aşamaz — range ile sayfalı çekilmeli');
+assert(js.includes("hepsi(mk)") && js.includes(".order('checked_at',{ascending:true}).order('id',{ascending:true})"), 'kayıtlar sayfalı ve kararlı sırayla çekilmeli');
+
 // portal kartı: DEFAULT_MODULES'un İLK öğesi
 const portal = fs.readFileSync('D:/Yazılım/erp-portal/erp_portal.html', 'utf8');
 const i0 = portal.indexOf('const DEFAULT_MODULES = ['), i1 = portal.indexOf("id:'kalitekayitlari'"), i2 = portal.indexOf("id:'bakim'");

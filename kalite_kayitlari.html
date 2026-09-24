@@ -226,12 +226,17 @@ $('#btnKK').onclick=()=>{ location.href='kalite_kontrol.html'; };
 let stage='seri_basi', rows=[], view=[], page=1, selId=null;
 const PROD={};   // production_id → productions satırı
 
+// Supabase tek yanıtta en çok 1000 satır verir (PostgREST max-rows) — limit(3000) yazılsa da 1000'de keser;
+// tarih artan sıralı listede EN YENİ kayıtlar düşer (700.0.570-A vakası: yeni üretilenler görünmedi).
+// Bu yüzden 1000'lik sayfalar hâlinde çekilir. mk: her sayfa için YENİ sorgu üreten fonksiyon (order şart).
+async function hepsi(mk,adim=1000,azami=50000){ const out=[]; for(let i=0;i<azami;i+=adim){ const {data,error}=await mk().range(i,i+adim-1); if(error) throw error; out.push(...(data||[])); if((data||[]).length<adim) break; } return out; }
+
 async function init(){
   const d=new Date(); $('#today').textContent=fmtDate(d.toISOString().slice(0,10));
   const t=new Date(d); t.setDate(t.getDate()-7);
   $('#fFrom').value=t.toISOString().slice(0,10); $('#fTo').value=d.toISOString().slice(0,10);
   // Bölüm haritası (operasyon kartı: makine_kodu → makine_grup) — salt okuma, bir kez
-  try{ const {data}=await sb.from('operasyon_kartlari').select('makine_kodu,makine_grup').not('makine_grup','is',null).limit(5000);
+  try{ const data=await hepsi(()=>sb.from('operasyon_kartlari').select('makine_kodu,makine_grup').not('makine_grup','is',null).order('makine_kodu').order('header_id').order('op_no'));
     (data||[]).forEach(o=>{ if(o.makine_kodu && !GROUP[o.makine_kodu]) GROUP[o.makine_kodu]=o.makine_grup; });
     const locs=[...new Set(Object.values(GROUP))].sort((a,b)=>a.localeCompare(b,'tr'));
     locs.forEach(l=>$('#fLoc').append(el('option',{value:l},l)));
@@ -249,12 +254,13 @@ async function load(){
   $('#crumb').textContent=STAGES[stage];
   $('#tbody').innerHTML='<tr><td class="loading" colspan="14">Yükleniyor…</td></tr>';
   const from=$('#fFrom').value, to=$('#fTo').value;
-  let q=sb.from('control_records').select('*').eq('stage',stage).order('checked_at',{ascending:true}).limit(3000);
-  if(from) q=q.gte('checked_at',from+'T00:00:00');
-  if(to)   q=q.lte('checked_at',to+'T23:59:59');
-  const {data,error}=await q;
-  if(error){ $('#tbody').innerHTML='<tr><td colspan="14"><div class="msg err">'+esc(error.message)+'</div></td></tr>'; return; }
-  rows=data||[];
+  const mk=()=>{ let q=sb.from('control_records').select('*').eq('stage',stage).order('checked_at',{ascending:true}).order('id',{ascending:true});
+    if(from) q=q.gte('checked_at',from+'T00:00:00');
+    if(to)   q=q.lte('checked_at',to+'T23:59:59');
+    return q; };
+  let data; try{ data=await hepsi(mk); }
+  catch(error){ $('#tbody').innerHTML='<tr><td colspan="14"><div class="msg err">'+esc(error.message)+'</div></td></tr>'; return; }
+  rows=data;
   // üretim satırları (cari / makine / başlama-bitiş / miktar)
   const ids=[...new Set(rows.map(r=>r.production_id).filter(x=>x!=null))].filter(id=>!PROD[id]);
   for(let i=0;i<ids.length;i+=200){ const {data:ps}=await sb.from('productions').select('*').in('id',ids.slice(i,i+200)); (ps||[]).forEach(p=>PROD[p.id]=p); }
