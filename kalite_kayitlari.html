@@ -15,7 +15,7 @@
 :root{
   --ls-nav:#1f2d3d; --ls-nav2:#1a2634; --ls-nav-txt:#b8c7ce; --ls-nav-act:#fff;
   --ls-top:#3c8dbc; --ls-top2:#367fa9; --ls-bg:#ecf0f5; --ls-panel:#fff; --ls-line:#ddd;
-  --ls-th:#f9f9f9; --ls-txt:#333; --ls-muted:#777; --ls-link:#3c8dbc; --ls-sel:#3c8dbc; --ls-ok:#00a65a; --ls-ret:#dd4b39;
+  --ls-th:#efefef; --ls-txt:#333; --ls-muted:#777; --ls-link:#3c8dbc; --ls-sel:#3c8dbc; --ls-ok:#00a65a; --ls-ret:#dd4b39;
 }
 :root:not([data-theme="light"]){ }
 @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --ls-bg:#ecf0f5; } }
@@ -75,6 +75,7 @@ th{background:var(--ls-th);border:1px solid var(--ls-line);padding:12px 8px;text
 td{border:1px solid var(--ls-line);padding:12px 8px;vertical-align:middle}
 td:nth-child(-n+2){white-space:nowrap}
 tbody tr{cursor:pointer}
+tbody tr:nth-child(odd){background:#f9f9f9}   /* LeanSys table-striped: tek satır #f9f9f9, çift satır #fff */
 tbody tr:hover{background:#f5f5f5}
 tbody tr.sel{background:var(--ls-sel);color:#fff}
 tbody tr.sel a,tbody tr.sel .lnk{color:#fff}
@@ -260,12 +261,13 @@ async function load(){
   page=1; selId=null; render();
 }
 
-// LeanSys sütun düzeni — TEK KAYNAK: başlıklar, hücreler ve Excel buradan.
+// LeanSys sütun düzeni — TEK KAYNAK: başlıklar, hücreler, mavi (link renkli) sütunlar ve Excel buradan.
+// [başlık, alan, 1=LeanSys'te mavi yazı]
 // giris: "Giriş Kalite Kontrol Kayıtları" ekranı (bayrak Evrak No hücresinde)
 // uretim: "Seri Başı Onayı Kontrol Kayıtları" ekranı (seri başı / proses / son aynı düzen)
 const KOLON={
-  giris:[['Evrak No','evrak'],['Tarih','tarih'],['Stok Kodu','stok'],['Stok Adı','ad'],['Cari','cari'],['Miktar','miktar'],['Birim','birim'],['Kontrol','kontrolNo']],
-  uretim:[['⚑','bayrak'],['Tarih','tarih'],['Vardiya','vardiya'],['Cari','cari'],['Stok Kodu','stok'],['Stok Adı','ad'],['Bölüm','bolum'],['Makine','makine'],['Başlama','bas'],['Bitiş','bit'],['Üretim Miktarı','miktar'],['Birim','birim']]
+  giris:[['Evrak No','evrak',1],['Tarih','tarih',1],['Stok Kodu','stok',1],['Stok Adı','ad'],['Cari','cari'],['Miktar','miktar'],['Birim','birim',1],['Kontrol','kontrolNo',1]],
+  uretim:[['⚑','bayrak'],['Tarih','tarih'],['Vardiya','vardiya',1],['Cari','cari'],['Stok Kodu','stok'],['Stok Adı','ad'],['Bölüm','bolum'],['Makine','makine'],['Başlama','bas'],['Bitiş','bit'],['Üretim Miktarı','miktar'],['Birim','birim',1]]
 };
 const kolonlar=()=>KOLON[stage==='giris'?'giris':'uretim'];
 
@@ -298,10 +300,9 @@ function render(){
   const len=Number($('#pLen').value)||50, pages=Math.max(1,Math.ceil(view.length/len)); if(page>pages)page=pages;
   const tb=$('#tbody'); tb.innerHTML='';
   if(!view.length){ tb.innerHTML='<tr><td colspan="'+K.length+'" class="loading">Kayıt yok</td></tr>'; }
-  const LNK=new Set(['evrak','tarih','stok','cari','makine','bas','bit','birim','kontrolNo']);   // LeanSys'te mavi görünen sütunlar
   view.slice((page-1)*len,page*len).forEach(s=>{
     const tr=el('tr',{class:s.id===selId?'sel':'',onclick:()=>{selId=s.id;render();},ondblclick:()=>olcumler(s)},
-      ...K.map(([_,key])=>el('td',{class:LNK.has(key)?'lnk':''},hucre(s,key))));
+      ...K.map(([_,key,mavi])=>el('td',{class:mavi?'lnk':''},hucre(s,key))));
     tb.append(tr);
   });
   $('#info').textContent=view.length?`${view.length} kayıttan ${(page-1)*len+1} - ${Math.min(page*len,view.length)} arasındaki kayıtlar gösteriliyor`:'';

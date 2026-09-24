@@ -42,6 +42,8 @@ assert.strictEqual(s.kontrolNo, '4415829', 'Kontrol = mal kabul kayıt no'); ass
 // 4) LeanSys sütun düzeni birebir (KOLON tek kaynak) + Ölçümler sırası + yalnız "Kayıt yok"
 const KOLON = new Function(js.slice(js.indexOf('const KOLON='), js.indexOf('const kolonlar=')) + 'return KOLON;')();
 assert.deepStrictEqual(KOLON.giris.map(k => k[0]), ['Evrak No', 'Tarih', 'Stok Kodu', 'Stok Adı', 'Cari', 'Miktar', 'Birim', 'Kontrol']);
+assert.deepStrictEqual(KOLON.giris.filter(k => k[2]).map(k => k[1]), ['evrak', 'tarih', 'stok', 'birim', 'kontrolNo'], 'girişte mavi sütunlar LeanSys gibi');
+assert.deepStrictEqual(KOLON.uretim.filter(k => k[2]).map(k => k[1]), ['vardiya', 'birim'], 'üretimde yalnız Vardiya ve Birim mavi');
 assert.deepStrictEqual(KOLON.uretim.map(k => k[0]), ['⚑', 'Tarih', 'Vardiya', 'Cari', 'Stok Kodu', 'Stok Adı', 'Bölüm', 'Makine', 'Başlama', 'Bitiş', 'Üretim Miktarı', 'Birim']);
 const OB = new Function(js.slice(js.indexOf('const OLCUM_BASLIK='), js.indexOf('function olcumler(')) + 'return OLCUM_BASLIK;')();
 assert.deepStrictEqual(OB, ['Ölçülecek Değer', 'Alt Limit', 'Hedef', 'Üst Limit', 'Ölçüm', 'Uygunluk', 'Sonuç', 'Açıklama', 'Nitel Hedef', 'Örnekleme', 'Sıklık', 'Kontrol Eden']);
@@ -49,6 +51,7 @@ assert(js.includes('class="loading">Kayıt yok</td>') && !/Kayıt yok\./.test(js
 assert(js.includes("'✖ Kapat'") && html.includes('.btn-r{background:#dd4b39'), 'Ölçümler altında kırmızı ✖ Kapat');
 assert(html.includes('font-awesome/4.7.0') && js.includes("'fa fa-flag flag'") && !js.includes("'⚑');"), 'bayrak LeanSys ile aynı glif (FA4 fa-flag)');
 assert(html.includes('<div class="lsfoot"><img src="leansys_logo.png"') && fs.existsSync(__dirname + '/leansys_logo.png'), 'alt LeanSys logosu');
+assert(html.includes('tbody tr:nth-child(odd){background:#f9f9f9}') && html.includes('--ls-th:#efefef'), 'LeanSys satır tonları (zebra) + başlık tonu');
 assert(html.includes("body{font-family:'Source Sans 3'") && html.includes('fonts.googleapis.com/css2?family=Source+Sans+3'), 'LeanSys yazı tipi');
 
 // portal kartı: DEFAULT_MODULES'un İLK öğesi
